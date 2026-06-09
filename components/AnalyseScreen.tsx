@@ -56,6 +56,15 @@ interface Props {
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }
 
+// ── Extraction automatique des références produits ───────────────────────────
+function extractRefs(text: string): string[] {
+  const numRefs = text.match(/\b\d{5,}\b/g);
+  if (numRefs && numRefs.length >= 2) return [...new Set(numRefs)];
+  const alphaRefs = text.match(/\b(?=[A-Z0-9]*\d)[A-Z0-9-_]{4,}\b/gi);
+  if (alphaRefs && alphaRefs.length >= 1) return [...new Set(alphaRefs)];
+  return text.split(/[\n\r,;]+/).map(r => r.trim()).filter(Boolean);
+}
+
 // ── LocalStorage helpers ─────────────────────────────────────────────────────
 const LS_KEY = "ao_offres_config";
 
@@ -309,8 +318,34 @@ function ParametrageTab({ onToast }: { onToast: Props["onToast"] }) {
           ))}
           <div>
             <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" as const, letterSpacing: "0.06em", display: "block", marginBottom: 6 }}>Références produits * <span style={{ fontWeight: 400, textTransform: "none" as const }}>— une par ligne</span></label>
-            <textarea value={formProduits} onChange={e => setFormProduits(e.target.value)} placeholder={"REF001\nREF002\nREF003"} rows={6} style={{ width: "100%", boxSizing: "border-box" as const, padding: "10px 12px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "monospace", background: C.bg, color: C.text, resize: "vertical" as const }} />
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>{formProduits.split(/[\n\r,;]+/).filter(r => r.trim()).length} produit(s) saisi(s)</div>
+            <textarea
+              value={formProduits}
+              onChange={e => setFormProduits(e.target.value)}
+              onPaste={e => {
+                const pasted = e.clipboardData.getData("text");
+                const refs = extractRefs(pasted);
+                if (refs.length >= 2) {
+                  e.preventDefault();
+                  setFormProduits(refs.join("\n"));
+                }
+              }}
+              placeholder={"REF001\nREF002\nREF003"}
+              rows={6}
+              style={{ width: "100%", boxSizing: "border-box" as const, padding: "10px 12px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "monospace", background: C.bg, color: C.text, resize: "vertical" as const }}
+            />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: C.textMuted }}>{formProduits.split(/[\n\r,;]+/).filter(r => r.trim()).length} produit(s) saisi(s)</div>
+              <button
+                type="button"
+                onClick={() => {
+                  const refs = extractRefs(formProduits);
+                  setFormProduits(refs.join("\n"));
+                }}
+                style={{ fontSize: 11, padding: "3px 10px", background: "transparent", border: `1px solid ${C.border}`, borderRadius: 6, color: C.textMuted, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                🧹 Nettoyer
+              </button>
+            </div>
           </div>
         </div>
         <button onClick={save} style={{ marginTop: 20, width: "100%", padding: "13px 0", background: C.blue, color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
