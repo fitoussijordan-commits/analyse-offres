@@ -22,7 +22,7 @@ type ProjetStatus = "planning" | "en_attente" | "stock_ok" | "reserve" | "envoye
 interface ProjetKit {
   id: string; nom: string; qtyKits: number;
   composants: ComposantKit[];
-  dateEsat: string;
+  dateLancement?: string; dateEsat: string;
   notes?: string; status: ProjetStatus; createdAt: string;
 }
 interface StockInfo { ref: string; nom: string; dispo: number; productId: number; }
@@ -78,6 +78,7 @@ function FormulaireProjet({ projet, onSave, onCancel, onToast }: {
 }) {
   const [nom, setNom] = useState(projet?.nom || "");
   const [qtyKits, setQtyKits] = useState(String(projet?.qtyKits || ""));
+  const [dateLancement, setDateLancement] = useState(projet?.dateLancement || "");
   const [dateEsat, setDateEsat] = useState(projet?.dateEsat || "");
   const [notes, setNotes] = useState(projet?.notes || "");
   const [composants, setComposants] = useState<ComposantKit[]>(projet?.composants || []);
@@ -106,7 +107,7 @@ function FormulaireProjet({ projet, onSave, onCancel, onToast }: {
     if (!dateEsat) { onToast("Date ESAT requise", "error"); return; }
     const p: ProjetKit = {
       id: projet?.id || genId(), nom: nom.trim(), qtyKits: qty,
-      composants, dateEsat,
+      composants, dateLancement: dateLancement || undefined, dateEsat,
       notes: notes.trim() || undefined,
       status: projet?.status || "planning",
       createdAt: projet?.createdAt || new Date().toISOString(),
@@ -141,9 +142,15 @@ function FormulaireProjet({ projet, onSave, onCancel, onToast }: {
                 <input type="number" min="1" value={qtyKits} onChange={e=>setQtyKits(e.target.value)} placeholder="500" style={{ ...inp, width:120 }} />
               </div>
             </div>
-            <div style={{ marginTop:12 }}>
-              <label style={lbl}>Date envoi ESAT *</label>
-              <input type="date" value={dateEsat} onChange={e=>setDateEsat(e.target.value)} style={{ ...inp, width:240 }} />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginTop:12 }}>
+              <div>
+                <label style={lbl}>Date de lancement</label>
+                <input type="date" value={dateLancement} onChange={e=>setDateLancement(e.target.value)} style={{ ...inp, width:"100%" }} />
+              </div>
+              <div>
+                <label style={lbl}>Date envoi ESAT *</label>
+                <input type="date" value={dateEsat} onChange={e=>setDateEsat(e.target.value)} style={{ ...inp, width:"100%" }} />
+              </div>
             </div>
             <div style={{ marginTop:12 }}>
               <label style={lbl}>Notes (optionnel)</label>
@@ -247,6 +254,8 @@ function DetailProjet({ projet, session, onBack, onUpdate, onToast }: {
   const [lastCheck, setLastCheck] = useState<Date|null>(null);
   const [editing, setEditing] = useState(false);
 
+  useEffect(() => { verifierStock(); }, []);
+
   const verifierStock = async () => {
     setLoading(true);
     try {
@@ -335,6 +344,7 @@ function DetailProjet({ projet, session, onBack, onUpdate, onToast }: {
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px,1fr))", gap:12, marginBottom:20 }}>
               {[
                 { label:"Qté de kits", value:fmt(projet.qtyKits), color:C.blue, icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg> },
+                ...(projet.dateLancement ? [{ label:`Lancement${daysUntil(projet.dateLancement)<Infinity?(daysUntil(projet.dateLancement)>0?` (J-${daysUntil(projet.dateLancement)})`:" ✓"):""}`, value:fmtDate(projet.dateLancement), color:daysUntil(projet.dateLancement)<=0?C.green:daysUntil(projet.dateLancement)<=7?C.amber:C.text, icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> }] : []),
                 ...(lastArr ? [{ label:`Dernier arrivage${daysLast<Infinity?(daysLast>0?` (J-${daysLast})`:" ✓"):""}`, value:fmtDate(lastArr), color:daysLast<=0?C.green:daysLast<=7?C.amber:C.text, icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> }] : []),
                 { label:`Envoi ESAT${daysEsat<Infinity?(daysEsat>0?` (J-${daysEsat})`:" (passé)"):""}`, value:fmtDate(projet.dateEsat), color:daysEsat<=7?C.red:C.text, icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg> },
               ].map(item => (
@@ -367,15 +377,14 @@ function DetailProjet({ projet, session, onBack, onUpdate, onToast }: {
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
             <thead>
               <tr style={{ background:C.bg }}>
-                <th style={{ padding:"9px 16px", textAlign:"left", fontWeight:600, color:C.textMuted, fontSize:11 }}>Référence</th>
-                <th style={{ padding:"9px 16px", textAlign:"left", fontWeight:600, color:C.textMuted, fontSize:11 }}>Produit</th>
-                <th style={{ padding:"9px 16px", textAlign:"right", fontWeight:600, color:C.textMuted, fontSize:11 }}>Qté / kit</th>
-                <th style={{ padding:"9px 16px", textAlign:"right", fontWeight:600, color:C.textMuted, fontSize:11 }}>Qté totale</th>
-                <th style={{ padding:"9px 16px", textAlign:"center", fontWeight:600, color:C.textMuted, fontSize:11 }}>Arrivage prévu</th>
-                {stock.length > 0 && <>
-                  <th style={{ padding:"9px 16px", textAlign:"right", fontWeight:600, color:C.textMuted, fontSize:11 }}>Stock dispo</th>
-                  <th style={{ padding:"9px 16px", textAlign:"center", fontWeight:600, color:C.textMuted, fontSize:11 }}>Statut</th>
-                </>}
+                <th style={{ padding:"10px 16px", width:52 }}></th>
+                <th style={{ padding:"10px 16px", textAlign:"left", fontWeight:600, color:C.textMuted, fontSize:11, width:110 }}>Référence</th>
+                <th style={{ padding:"10px 16px", textAlign:"left", fontWeight:600, color:C.textMuted, fontSize:11 }}>Désignation</th>
+                <th style={{ padding:"10px 16px", textAlign:"center", fontWeight:600, color:C.textMuted, fontSize:11, width:130 }}>Arrivage prévu</th>
+                <th style={{ padding:"10px 16px", textAlign:"right", fontWeight:600, color:C.textMuted, fontSize:11, width:80 }}>Qté/kit</th>
+                <th style={{ padding:"10px 16px", textAlign:"right", fontWeight:600, color:C.textMuted, fontSize:11, width:110 }}>Besoin total</th>
+                <th style={{ padding:"10px 16px", textAlign:"right", fontWeight:600, color:C.textMuted, fontSize:11, width:110 }}>Dispo Odoo</th>
+                <th style={{ padding:"10px 16px", textAlign:"right", fontWeight:600, color:C.textMuted, fontSize:11, width:120 }}>Écart</th>
               </tr>
             </thead>
             <tbody>
@@ -441,7 +450,7 @@ function DetailProjet({ projet, session, onBack, onUpdate, onToast }: {
           </div>
         )}
       </div>
-      <style>{`@keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }`}</style>
+      <style>{`@keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } } @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }`}</style>
     </div>
   );
 }
