@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import AnalyseScreen from "@/components/AnalyseScreen";
+import ProjetScreen from "@/components/ProjetScreen";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const D = {
@@ -26,7 +27,7 @@ function saveSession(s: odoo.OdooSession) { try { localStorage.setItem(LS_SESSIO
 function clearSession() { try { localStorage.removeItem(LS_SESSION); } catch {} }
 
 interface Toast { msg: string; type: "success" | "error" | "info"; id: number; }
-type AppView = "hub" | "analyse";
+type AppView = "hub" | "analyse" | "projets";
 
 // ── Nav item ──────────────────────────────────────────────────────────────────
 function NavItem({ icon, label, active, locked, onClick }: { icon: React.ReactNode; label: string; active?: boolean; locked?: boolean; onClick?: () => void; }) {
@@ -62,12 +63,13 @@ function HubView({ onNavigate }: { onNavigate: (v: AppView) => void }) {
       active: true,
     },
     {
-      id: null, icon: (
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.8">
-          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+      id: "projets" as AppView, icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="1.8">
+          <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>
         </svg>
       ),
-      label: "Outil 2", desc: "Prochainement disponible", active: false,
+      label: "Projets Kits", desc: "Suivi des kits : composants, stock, dates arrivage et envoi ESAT",
+      active: true,
     },
     {
       id: null, icon: (
@@ -233,8 +235,8 @@ export default function Home() {
             label="Analyse des Offres" active={view === "analyse"} onClick={() => setView("analyse")}
           />
           <NavItem
-            icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>}
-            label="Outil 2" locked
+            icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>}
+            label="Projets Kits" active={view === "projets"} onClick={() => setView("projets")}
           />
           <NavItem
             icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>}
@@ -255,10 +257,9 @@ export default function Home() {
 
       {/* Main */}
       <main style={{ flex: 1, display: "flex", flexDirection: "column" as const, overflow: "hidden", minWidth: 0 }}>
-        {view === "hub"
-          ? <HubView onNavigate={setView} />
-          : <AnalyseScreen session={session} onToast={showToast} />
-        }
+        {view === "hub" && <HubView onNavigate={setView} />}
+        {view === "analyse" && <AnalyseScreen session={session} onToast={showToast} />}
+        {view === "projets" && <ProjetScreen session={session} onToast={showToast} />}
       </main>
 
       <style>{`* { box-sizing: border-box; } @keyframes spin { to { transform: rotate(360deg); } }`}</style>
