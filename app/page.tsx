@@ -217,12 +217,12 @@ export default function Home() {
       <aside style={{ width: 220, background: D.sidebar, display: "flex", flexDirection: "column" as const, flexShrink: 0, zIndex: 10 }}>
         {/* Logo */}
         <div style={{ padding: "20px 16px 16px", borderBottom: "1px solid #1e293b" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={() => setView("hub")} style={{ display: "flex", alignItems: "center", gap: 10, background: "transparent", border: "none", cursor: "pointer", padding: 0, width: "100%" }}>
             <div style={{ width: 34, height: 34, background: D.accent, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
             </div>
             <span style={{ fontSize: 17, fontWeight: 800, color: "#fff", letterSpacing: "-0.02em" }}>ANALYSE</span>
-          </div>
+          </button>
         </div>
 
         {/* Nav */}
