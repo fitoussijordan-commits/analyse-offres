@@ -64,6 +64,24 @@ async function dbUpdate(p: ProjetKit, userLogin: string): Promise<void> {
     .update(projetToRow(p, userLogin)).eq("id", p.id);
   if (error) throw error;
 }
+
+// Migration localStorage → Supabase (one-shot)
+const LS_MIGRATE_KEY = "ao_kits_migrated_v1";
+async function migrateFromLocalStorage(userLogin: string): Promise<number> {
+  if (typeof window === "undefined") return 0;
+  if (localStorage.getItem(LS_MIGRATE_KEY)) return 0;
+  const raw = localStorage.getItem("ao_projets_kits");
+  if (!raw) { localStorage.setItem(LS_MIGRATE_KEY, "1"); return 0; }
+  try {
+    const projets: ProjetKit[] = JSON.parse(raw);
+    if (!projets.length) { localStorage.setItem(LS_MIGRATE_KEY, "1"); return 0; }
+    const rows = projets.map(p => projetToRow(p, userLogin));
+    const { error } = await supabase.from("projets_kits").upsert(rows, { onConflict: "id" });
+    if (error) throw error;
+    localStorage.setItem(LS_MIGRATE_KEY, "1");
+    return projets.length;
+  } catch(e) { console.error("Migration failed", e); return 0; }
+}
 function fmt(n: number) { return new Intl.NumberFormat("fr-FR").format(n); }
 function fmtDate(iso?: string) {
   if (!iso) return "—";
@@ -672,6 +690,8 @@ export default function ProjetScreen({ session, onToast }: Props) {
   const loadAll = async () => {
     setDbLoading(true);
     try {
+      const migrated = await migrateFromLocalStorage(session.login);
+      if (migrated > 0) onToast(`${migrated} projet(s) importé(s) depuis la version précédente`, "success");
       const data = await dbLoad(session.login);
       setProjets(data);
     } catch (e: any) {
