@@ -58,7 +58,8 @@ interface Props {
 
 // ── Extraction automatique des références produits ───────────────────────────
 function extractRefs(text: string): string[] {
-  const numRefs = text.match(/\b\d{5,}\b/g);
+  // Extrait les séquences de 5+ chiffres consécutifs, même entourées de lettres (ex: ml1010302Cr → 1010302)
+  const numRefs = text.match(/\d{5,}/g);
   if (numRefs && numRefs.length >= 2) return [...new Set(numRefs)];
   const alphaRefs = text.match(/\b(?=[A-Z0-9]*\d)[A-Z0-9-_]{4,}\b/gi);
   if (alphaRefs && alphaRefs.length >= 1) return [...new Set(alphaRefs)];
