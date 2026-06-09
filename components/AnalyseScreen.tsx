@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as odoo from "@/lib/odoo";
+import { supabase } from "@/lib/supabase";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const C = {
@@ -39,9 +40,43 @@ function extractRefs(text: string): string[] {
 }
 
 // ── LocalStorage ──────────────────────────────────────────────────────────────
-const LS_KEY = "ao_offres_config";
-function loadOffres(): Offre[] { try { const r = localStorage.getItem(LS_KEY); return r ? JSON.parse(r) : []; } catch { return []; } }
-function saveOffres(o: Offre[]) { localStorage.setItem(LS_KEY, JSON.stringify(o)); }
+// ── Supabase CRUD offres ──────────────────────────────────────────────────────
+function rowToOffre(row: any): Offre {
+  return { id: row.id, code: row.code, label: row.label || "", produits: row.produits || [], codeInterne: row.code_interne || undefined };
+}
+function offreToRow(o: Offre) {
+  return { id: o.id, code: o.code, label: o.label || "", produits: o.produits, code_interne: o.codeInterne || null };
+}
+async function dbLoadOffres(): Promise<Offre[]> {
+  const { data, error } = await supabase.from("analyse_offres").select("*").order("created_at");
+  if (error) throw error;
+  return (data || []).map(rowToOffre);
+}
+async function dbUpsertOffre(o: Offre): Promise<void> {
+  const { error } = await supabase.from("analyse_offres").upsert(offreToRow(o));
+  if (error) throw error;
+}
+async function dbDeleteOffre(id: string): Promise<void> {
+  const { error } = await supabase.from("analyse_offres").delete().eq("id", id);
+  if (error) throw error;
+}
+// Migration localStorage → Supabase (one-shot)
+const LS_OFFRES_KEY = "ao_offres_config";
+const LS_OFFRES_MIGRATED = "ao_offres_migrated_v1";
+async function migrateOffresFromLS(): Promise<number> {
+  if (typeof window === "undefined") return 0;
+  if (localStorage.getItem(LS_OFFRES_MIGRATED)) return 0;
+  const raw = localStorage.getItem(LS_OFFRES_KEY);
+  if (!raw) { localStorage.setItem(LS_OFFRES_MIGRATED, "1"); return 0; }
+  try {
+    const offres: Offre[] = JSON.parse(raw);
+    if (!offres.length) { localStorage.setItem(LS_OFFRES_MIGRATED, "1"); return 0; }
+    const { error } = await supabase.from("analyse_offres").upsert(offres.map(offreToRow), { onConflict: "id" });
+    if (error) throw error;
+    localStorage.setItem(LS_OFFRES_MIGRATED, "1");
+    return offres.length;
+  } catch(e) { console.error("Migration offres failed", e); return 0; }
+}
 function genId() { return Math.random().toString(36).slice(2, 10); }
 
 // ── Filtre Odoo ───────────────────────────────────────────────────────────────
@@ -188,7 +223,12 @@ function OffresPanel({ onClose, onToast }: { onClose: ()=>void; onToast: Props["
   const [formProduits, setFormProduits] = useState("");
   const [formCodeInterne, setFormCodeInterne] = useState("");
 
-  useEffect(() => { setOffres(loadOffres()); }, []);
+  useEffect(() => {
+    migrateOffresFromLS().then(n => {
+      if (n > 0) onToast(`${n} offre(s) importée(s)`, "success");
+    });
+    dbLoadOffres().then(setOffres).catch(e => onToast("Erreur chargement offres : " + e.message, "error"));
+  }, []);
 
   const openNew = () => { setEditId(null); setFormCode(""); setFormLabel(""); setFormProduits(""); setFormCodeInterne(""); setShowForm(true); };
   const openEdit = (o: Offre) => { setEditId(o.id); setFormCode(o.code); setFormLabel(o.label); setFormProduits(o.produits.join("\n")); setFormCodeInterne(o.codeInterne||""); setShowForm(true); };
@@ -199,19 +239,27 @@ function OffresPanel({ onClose, onToast }: { onClose: ()=>void; onToast: Props["
     const codeInterne=formCodeInterne.trim()||undefined;
     if (!code) { onToast("Code offre requis","error"); return; }
     if (!produits.length) { onToast("Au moins un produit requis","error"); return; }
-    let updated: Offre[];
-    if (editId) { updated=offres.map(o=>o.id===editId?{...o,code,label,produits,codeInterne}:o); }
-    else {
+    if (editId) {
+      const offre = { id: editId, code, label, produits, codeInterne };
+      dbUpsertOffre(offre).then(() => {
+        setOffres(prev => prev.map(o => o.id === editId ? offre : o));
+        setShowForm(false); onToast("Offre mise à jour", "success");
+      }).catch(e => onToast("Erreur : " + e.message, "error"));
+    } else {
       if (offres.some(o=>o.code.toLowerCase()===code.toLowerCase())) { onToast("Ce code offre existe déjà","error"); return; }
-      updated=[...offres,{id:genId(),code,label,produits,codeInterne}];
+      const offre = { id: genId(), code, label, produits, codeInterne };
+      dbUpsertOffre(offre).then(() => {
+        setOffres(prev => [...prev, offre]);
+        setShowForm(false); onToast("Offre créée", "success");
+      }).catch(e => onToast("Erreur : " + e.message, "error"));
     }
-    saveOffres(updated); setOffres(updated); setShowForm(false);
-    onToast(editId?"Offre mise à jour":"Offre créée","success");
   };
 
   const deleteOffre = (id: string) => {
     if (!confirm("Supprimer cette offre ?")) return;
-    const updated=offres.filter(o=>o.id!==id); saveOffres(updated); setOffres(updated); onToast("Offre supprimée","info");
+    dbDeleteOffre(id).then(() => {
+      setOffres(prev => prev.filter(o => o.id !== id)); onToast("Offre supprimée", "info");
+    }).catch(e => onToast("Erreur suppression : " + e.message, "error"));
   };
 
   const inputStyle = { width:"100%", padding:"9px 12px", border:`1.5px solid ${C.border}`, borderRadius:8, fontSize:13, fontFamily:"inherit", background:C.white, color:C.text, outline:"none" };
@@ -340,7 +388,7 @@ function AnalyseTab({ session, onToast, filter, sharedCodes, onCodesChange }: { 
     return () => document.removeEventListener("mousedown", handler);
   }, [dropdownOpen]);
 
-  useEffect(() => { setConfigOffres(loadOffres()); }, []);
+  useEffect(() => { dbLoadOffres().then(setConfigOffres).catch(console.error); }, []);
   useEffect(() => {
     if (sharedCodes.length > 0 && configOffres.length > 0) {
       const valid = sharedCodes.filter(c => configOffres.some(o => o.code.toLowerCase() === c.toLowerCase()));
