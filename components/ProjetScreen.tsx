@@ -51,8 +51,7 @@ function projetToRow(p: ProjetKit, userLogin: string) {
 }
 async function dbLoad(userLogin: string): Promise<ProjetKit[]> {
   const { data, error } = await supabase
-    .from("projets_kits").select("*").eq("user_login", userLogin)
-    .order("created_at", { ascending: false });
+    .from("projets_kits").select("*").order("created_at", { ascending: false });
   if (error) throw error;
   return (data || []).map(rowToProjet);
 }
