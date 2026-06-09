@@ -2,6 +2,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import * as odoo from "@/lib/odoo";
+import { supabase } from "@/lib/supabase";
 
 const C = {
   bg: "#f1f5f9", surface: "#ffffff",
@@ -26,10 +27,44 @@ interface ProjetKit {
 interface StockInfo { ref: string; nom: string; dispo: number; productId: number; }
 interface Props { session: odoo.OdooSession; onToast: (msg: string, type?: "success"|"error"|"info") => void; }
 
-const LS_KEY = "ao_projets_kits";
-function loadProjets(): ProjetKit[] { try { const r = localStorage.getItem(LS_KEY); return r ? JSON.parse(r) : []; } catch { return []; } }
-function saveProjets(p: ProjetKit[]) { localStorage.setItem(LS_KEY, JSON.stringify(p)); }
 function genId() { return Math.random().toString(36).slice(2, 10); }
+
+// ── Supabase CRUD ─────────────────────────────────────────────────────────────
+function rowToProjet(row: any): ProjetKit {
+  return {
+    id: row.id, nom: row.nom, refFinale: row.ref_finale || undefined,
+    qtyKits: row.qty_kits, composants: row.composants || [],
+    photo: row.photo || undefined,
+    dateLancement: row.date_lancement || undefined, dateEsat: row.date_esat,
+    notes: row.notes || undefined, status: row.status as ProjetStatus,
+    createdAt: row.created_at,
+  };
+}
+function projetToRow(p: ProjetKit, userLogin: string) {
+  return {
+    id: p.id, user_login: userLogin, nom: p.nom,
+    ref_finale: p.refFinale || null, qty_kits: p.qtyKits,
+    composants: p.composants, photo: p.photo || null,
+    date_lancement: p.dateLancement || null, date_esat: p.dateEsat,
+    notes: p.notes || null, status: p.status, created_at: p.createdAt,
+  };
+}
+async function dbLoad(userLogin: string): Promise<ProjetKit[]> {
+  const { data, error } = await supabase
+    .from("projets_kits").select("*").eq("user_login", userLogin)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(rowToProjet);
+}
+async function dbUpsert(p: ProjetKit, userLogin: string): Promise<void> {
+  const { error } = await supabase.from("projets_kits").upsert(projetToRow(p, userLogin));
+  if (error) throw error;
+}
+async function dbUpdate(p: ProjetKit, userLogin: string): Promise<void> {
+  const { error } = await supabase.from("projets_kits")
+    .update(projetToRow(p, userLogin)).eq("id", p.id);
+  if (error) throw error;
+}
 function fmt(n: number) { return new Intl.NumberFormat("fr-FR").format(n); }
 function fmtDate(iso?: string) {
   if (!iso) return "—";
@@ -631,22 +666,42 @@ export default function ProjetScreen({ session, onToast }: Props) {
   const [projets, setProjets] = useState<ProjetKit[]>([]);
   const [view, setView] = useState<"liste"|"detail"|"nouveau">("liste");
   const [selectedId, setSelectedId] = useState<string|null>(null);
+  const [dbLoading, setDbLoading] = useState(true);
 
-  useEffect(() => { setProjets(loadProjets()); }, []);
+  useEffect(() => { loadAll(); }, []);
+
+  const loadAll = async () => {
+    setDbLoading(true);
+    try {
+      const data = await dbLoad(session.login);
+      setProjets(data);
+    } catch (e: any) {
+      onToast("Erreur chargement : " + e.message, "error");
+    } finally {
+      setDbLoading(false);
+    }
+  };
 
   const selected = projets.find(p => p.id === selectedId) || null;
 
-  const handleSave = (p: ProjetKit) => {
-    const updated = projets.find(x => x.id === p.id)
-      ? projets.map(x => x.id === p.id ? p : x)
-      : [...projets, p];
-    saveProjets(updated); setProjets(updated);
-    setSelectedId(p.id); setView("detail");
-    onToast("Projet enregistré", "success");
+  const handleSave = async (p: ProjetKit) => {
+    try {
+      await dbUpsert(p, session.login);
+      const exists = projets.find(x => x.id === p.id);
+      setProjets(exists ? projets.map(x => x.id === p.id ? p : x) : [p, ...projets]);
+      setSelectedId(p.id); setView("detail");
+      onToast("Projet enregistré", "success");
+    } catch (e: any) {
+      onToast("Erreur sauvegarde : " + e.message, "error");
+    }
   };
-  const handleUpdate = (p: ProjetKit) => {
-    const updated = projets.map(x => x.id === p.id ? p : x);
-    saveProjets(updated); setProjets(updated);
+  const handleUpdate = async (p: ProjetKit) => {
+    try {
+      await dbUpdate(p, session.login);
+      setProjets(prev => prev.map(x => x.id === p.id ? p : x));
+    } catch (e: any) {
+      onToast("Erreur mise à jour : " + e.message, "error");
+    }
   };
 
   return (
@@ -660,9 +715,18 @@ export default function ProjetScreen({ session, onToast }: Props) {
           </button>
         )}
       </div>
-      {view==="liste" && <ListeProjets projets={projets} onSelect={p=>{ setSelectedId(p.id); setView("detail"); }} onNew={()=>setView("nouveau")} />}
-      {view==="nouveau" && <FormulaireProjet onSave={handleSave} onCancel={()=>setView("liste")} onToast={onToast} />}
-      {view==="detail" && selected && <DetailProjet projet={selected} session={session} onBack={()=>setView("liste")} onUpdate={handleUpdate} onToast={onToast} />}
+      {dbLoading
+        ? <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted, gap:10, fontSize:13 }}>
+            <span style={{ width:16,height:16,border:`2px solid ${C.blue}`,borderTopColor:"transparent",borderRadius:"50%",display:"inline-block",animation:"spin 0.8s linear infinite" }}/>
+            Chargement des projets…
+            <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
+          </div>
+        : <>
+            {view==="liste" && <ListeProjets projets={projets} onSelect={p=>{ setSelectedId(p.id); setView("detail"); }} onNew={()=>setView("nouveau")} />}
+            {view==="nouveau" && <FormulaireProjet onSave={handleSave} onCancel={()=>setView("liste")} onToast={onToast} />}
+            {view==="detail" && selected && <DetailProjet projet={selected} session={session} onBack={()=>setView("liste")} onUpdate={handleUpdate} onToast={onToast} />}
+          </>
+      }
     </div>
   );
 }
