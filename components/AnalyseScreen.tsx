@@ -328,6 +328,17 @@ function AnalyseTab({ session, onToast, filter, sharedCodes, onCodesChange }: { 
   const [expandedId, setExpandedId] = useState<string|null>(null);
   const [detailMode, setDetailMode] = useState<Record<string,"produits"|"delegues"|"debug">>({});
   const [exporting, setExporting] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setDropdownOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [dropdownOpen]);
 
   useEffect(() => { setConfigOffres(loadOffres()); }, []);
   useEffect(() => {
@@ -440,22 +451,59 @@ function AnalyseTab({ session, onToast, filter, sharedCodes, onCodesChange }: { 
       {/* Barre de sélection */}
       <div style={{ padding:"16px 24px", background:C.white, borderBottom:`1px solid ${C.border}`, flexShrink:0 }}>
         <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
-          {/* Dropdown */}
-          <div style={{ flex:"1 1 240px", position:"relative" }}>
-            <select
-              value=""
-              onChange={e => { addCode(e.target.value); (e.target as HTMLSelectElement).value = ""; }}
-              style={{ width:"100%", padding:"9px 36px 9px 12px", border:`1.5px solid ${C.border}`, borderRadius:9, fontSize:13, fontFamily:"inherit", background:C.white, color:availableOffres.length?C.text:C.textMuted, cursor:availableOffres.length?"pointer":"default", appearance:"none", WebkitAppearance:"none" as any, outline:"none" }}
+          {/* Dropdown multi-sélection */}
+          <div ref={dropdownRef} style={{ flex:"1 1 240px", position:"relative" }}>
+            <button
+              onClick={() => setDropdownOpen(o => !o)}
               disabled={availableOffres.length === 0}
+              style={{ width:"100%", padding:"9px 36px 9px 12px", border:`1.5px solid ${dropdownOpen?C.blue:C.border}`, borderRadius:9, fontSize:13, fontFamily:"inherit", background:C.white, color:availableOffres.length?C.text:C.textMuted, cursor:availableOffres.length?"pointer":"default", textAlign:"left", outline:"none", boxShadow:dropdownOpen?`0 0 0 3px ${C.blue}18`:"none" }}
             >
-              <option value="">{availableOffres.length===0?"— Toutes les offres ajoutées —":"Sélectionner une offre…"}</option>
-              {availableOffres.map(o => (
-                <option key={o.id} value={o.code}>{o.code}{o.label ? ` — ${o.label}` : ""}</option>
-              ))}
-            </select>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.textMuted} strokeWidth="2" style={{ position:"absolute", right:11, top:"50%", transform:"translateY(-50%)", pointerEvents:"none" }}>
+              {availableOffres.length === 0 ? "— Toutes les offres ajoutées —" : pendingCodes.length > 0 ? `${pendingCodes.length} offre(s) sélectionnée(s)` : "Sélectionner des offres…"}
+            </button>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.textMuted} strokeWidth="2" style={{ position:"absolute", right:11, top:"50%", transform:`translateY(-50%) rotate(${dropdownOpen?180:0}deg)`, pointerEvents:"none", transition:"transform 0.15s" }}>
               <polyline points="6 9 12 15 18 9"/>
             </svg>
+            {dropdownOpen && availableOffres.length > 0 && (
+              <div style={{ position:"absolute", top:"calc(100% + 6px)", left:0, right:0, background:C.white, border:`1.5px solid ${C.blue}44`, borderRadius:10, boxShadow:"0 8px 32px rgba(0,0,0,0.13)", zIndex:50, overflow:"hidden" }}>
+                {/* Tout sélectionner */}
+                <div
+                  onClick={() => {
+                    const allCodes = availableOffres.map(o => o.code);
+                    const allSelected = allCodes.every(c => pendingCodes.includes(c));
+                    if (allSelected) setPendingCodes(p => p.filter(c => !allCodes.includes(c)));
+                    else setPendingCodes(p => [...p, ...allCodes.filter(c => !p.includes(c))]);
+                  }}
+                  style={{ padding:"10px 14px", display:"flex", alignItems:"center", gap:10, cursor:"pointer", borderBottom:`1px solid ${C.border}`, background:C.bg }}
+                >
+                  <div style={{ width:16, height:16, border:`2px solid ${availableOffres.every(o=>pendingCodes.includes(o.code))?C.blue:C.border}`, borderRadius:4, background:availableOffres.every(o=>pendingCodes.includes(o.code))?C.blue:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                    {availableOffres.every(o=>pendingCodes.includes(o.code)) && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                  </div>
+                  <span style={{ fontSize:12, fontWeight:700, color:C.textSec }}>Tout sélectionner</span>
+                </div>
+                {/* Liste des offres */}
+                <div style={{ maxHeight:260, overflowY:"auto" }}>
+                  {availableOffres.map(o => {
+                    const checked = pendingCodes.includes(o.code);
+                    return (
+                      <div key={o.id}
+                        onClick={() => setPendingCodes(p => checked ? p.filter(c=>c!==o.code) : [...p, o.code])}
+                        style={{ padding:"9px 14px", display:"flex", alignItems:"center", gap:10, cursor:"pointer", background:checked?C.blueSoft:"transparent", borderBottom:`1px solid ${C.border}` }}
+                        onMouseEnter={e => { if(!checked)(e.currentTarget as HTMLDivElement).style.background=C.bg; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background=checked?C.blueSoft:"transparent"; }}
+                      >
+                        <div style={{ width:16, height:16, border:`2px solid ${checked?C.blue:C.border}`, borderRadius:4, background:checked?C.blue:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                          {checked && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                        </div>
+                        <div style={{ minWidth:0 }}>
+                          <span style={{ fontSize:12, fontWeight:700, color:C.text, fontFamily:"'SF Mono','Fira Code',monospace" }}>{o.code}</span>
+                          {o.label && <span style={{ fontSize:12, color:C.textMuted }}> — {o.label}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Chips en attente */}
