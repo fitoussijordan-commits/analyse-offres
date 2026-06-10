@@ -214,11 +214,12 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const { res: standalone, recs: standaloneRecs } = await analyseStandalone(session, campagne.produits, filter, offerLineIds);
   if (standalone) { results.push(standalone); allRecs.push(...standaloneRecs); }
 
-  // 3. Notes (uniquement réfs campagne : offres composants + produits autonomes)
-  const campaignRefs = [...new Set([...offresCfg.flatMap(o => o.produits), ...campagne.produits])];
+  // 3. Notes : tout le CA des commandes rattachées par note interne (hors commandes déjà
+  //    comptées dans une offre). On ne filtre PAS par références produits, sinon le CA des
+  //    articles non listés ailleurs serait exclu du total campagne.
   const catchalls: CatchallResult[] = [];
   for (const note of campagne.notes) {
-    const { res, recs } = await analyseNote(session, note, [...offerOrderIds], campagne.offres, filter, campaignRefs);
+    const { res, recs } = await analyseNote(session, note, [...offerOrderIds], campagne.offres, filter, []);
     catchalls.push(res);
     allRecs.push(...recs);
   }
