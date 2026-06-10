@@ -323,6 +323,14 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const caDetail = results.reduce((s, r) => s + (r.caTotal || 0), 0) + catchalls.reduce((s, c) => s + (c.data?.caTotal || 0), 0);
   caTotal = caDetail;
 
+  // Le split validé/à venir doit lui aussi sommer au CA total. On rattache au "à venir"
+  // l'écart non couvert par l'agrégation par ligne (notamment le CA des notes).
+  if (filter === "all") {
+    const splitSum = split.valide.ca + split.avenir.ca;
+    const missing = caTotal - splitSum;
+    if (Math.abs(missing) > 0.5) split.avenir.ca += missing;
+  }
+
   // Quantité campagne = offres vendues (packs) + unités produits autonomes + commandes notées
   // (et NON la somme des unités de composants, qui gonfle le chiffre)
   const qtyOffres = results.reduce((s, r) => s + (r.qtyTotal || 0), 0) + catchalls.reduce((s, c) => s + (c.data?.qtyTotal || 0), 0);
