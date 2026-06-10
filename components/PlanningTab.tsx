@@ -42,6 +42,15 @@ interface Props {
   onToast: (msg: string, type?: 'success' | 'error' | 'info') => void
 }
 
+// ── Wrapper scrollable (comme les autres écrans) ──────────────────────────────
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ flex: 1, height: '100%', overflowY: 'auto', background: C.bg, padding: '24px 28px' }}>
+      <div style={{ maxWidth: 1280, margin: '0 auto' }}>{children}</div>
+    </div>
+  )
+}
+
 // ── Styles partagés ───────────────────────────────────────────────────────────
 const thBase: React.CSSProperties = {
   padding: '9px 8px',
@@ -185,50 +194,52 @@ export default function PlanningTab({ onToast }: Props) {
     }
   }
 
-  // ── Export CSV ───────────────────────────────────────────────────────────────
-  const exportCSV = () => {
-    const rows = [
-      ['REF', 'Produit', 'Gamme', ...MONTH_SHORT.map(m => `${m} ${year}`), 'Total'],
-      ...filtered.map(p => {
-        const qtys = months.map(m => qtyMap[p.ref]?.[m] ?? 0)
-        return [p.ref, p.material_text, p.product_range, ...qtys, qtys.reduce((a, b) => a + b, 0)]
-      }),
-    ]
-    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n')
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `planning_${year}${search || rangeFilter ? '_filtre' : ''}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-    onToast('Export CSV téléchargé', 'success')
+  // ── Export Excel (calqué sur le fichier d'origine) ────────────────────────────
+  const [exporting, setExporting] = useState(false)
+  const exportExcel = async () => {
+    setExporting(true)
+    try {
+      const res = await fetch(`/api/export-planning?year=${year}`)
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Planning_${year}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+      onToast('Export Excel téléchargé', 'success')
+    } catch (e: any) {
+      onToast('Erreur export: ' + e.message, 'error')
+    } finally {
+      setExporting(false)
+    }
   }
 
   // ── Rendu loading ────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div style={{ textAlign: 'center', padding: '60px 0', color: C.textMuted }}>
+      <Shell><div style={{ textAlign: 'center', padding: '60px 0', color: C.textMuted }}>
         <div style={{ width: 22, height: 22, border: `3px solid ${C.blue}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 12px' }} />
         Chargement du planning…
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
+      </div></Shell>
     )
   }
 
   if (produits.length === 0) {
     return (
-      <div style={{ textAlign: 'center', padding: '60px 20px', color: C.textMuted }}>
+      <Shell><div style={{ textAlign: 'center', padding: '60px 20px', color: C.textMuted }}>
         <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
         <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 6 }}>Planning vide</div>
         <div style={{ fontSize: 13 }}>Les données vont être importées depuis votre fichier Excel.</div>
-      </div>
+      </div></Shell>
     )
   }
 
   // ── Rendu principal ──────────────────────────────────────────────────────────
   return (
-    <div style={{ paddingBottom: 40 }}>
+    <Shell><div style={{ paddingBottom: 40 }}>
 
       {/* ── Modal édition ───────────────────────────────────────────────────── */}
       {editCell && (
@@ -325,10 +336,11 @@ export default function PlanningTab({ onToast }: Props) {
             </button>
             {view === 'grid' && (
               <button
-                onClick={exportCSV}
-                style={{ padding: '7px 12px', background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: C.green, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}
+                onClick={exportExcel}
+                disabled={exporting}
+                style={{ padding: '7px 12px', background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 8, cursor: exporting ? 'default' : 'pointer', fontSize: 12, fontWeight: 600, color: C.green, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5, opacity: exporting ? 0.6 : 1 }}
               >
-                ⬇ Export CSV
+                {exporting ? 'Export…' : '⬇ Export Excel'}
               </button>
             )}
           </div>
@@ -484,6 +496,6 @@ export default function PlanningTab({ onToast }: Props) {
       )}
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
+    </div></Shell>
   )
 }

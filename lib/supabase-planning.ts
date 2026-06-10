@@ -73,7 +73,7 @@ export const upsertQuantite = (data: {
   mois: string
   quantite: number
 }) =>
-  req<Quantite[]>('/planning_quantites', {
+  req<Quantite[]>('/planning_quantites?on_conflict=ref,mois', {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
     body: JSON.stringify(data),
@@ -99,14 +99,14 @@ export const getHistorique = (limit = 100) =>
   )
 
 export const insertProduits = (produits: Omit<Produit, 'actif'>[]) =>
-  req('/planning_produits', {
+  req('/planning_produits?on_conflict=ref', {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
     body: JSON.stringify(produits),
   })
 
 export const insertQuantites = (quantites: { ref: string; mois: string; quantite: number }[]) =>
-  req('/planning_quantites', {
+  req('/planning_quantites?on_conflict=ref,mois', {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
     body: JSON.stringify(quantites),
