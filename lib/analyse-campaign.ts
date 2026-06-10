@@ -224,11 +224,14 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     allRecs.push(...recs);
   }
 
-  // 4. Déduplication par ligne — on inclut explicitement les lignes des notes,
-  //    même si analyseNote n'a pas pu les renvoyer (recs vide), via leurs CA agrégés.
+  // 4. Déduplication par ligne. On isole les commandes notées : leur CA sera rattaché
+  //    en bloc plus bas (via catchalls), donc on les retire ici pour éviter tout double
+  //    comptage ou comptage partiel.
+  const noteOrderIdSet = new Set<number>();
+  for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) noteOrderIdSet.add(o.id);
   const byId = new Map<number, LineRec>();
   for (const r of allRecs) if (!byId.has(r.id)) byId.set(r.id, r);
-  const lines = [...byId.values()];
+  const lines = [...byId.values()].filter(l => !noteOrderIdSet.has(l.orderId));
 
   const perOffre = results.map(r => ({ code: r.offre.code, label: r.offre.label, caTotal: r.caTotal, qtyTotal: r.qtyTotal, error: r.error }));
 
@@ -294,17 +297,14 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const finalize = (m: Record<string, ClientStat & { orders: Set<number> }>): ClientStat[] =>
     Object.values(m).map(({ orders, ...rest }) => ({ ...rest, nbCommandes: orders.size })).sort((a, b) => b.ca - a.ca);
 
-  // Garde-fou : le CA des notes doit toujours être compté. Si les lignes des notes
-  // n'ont pas été agrégées dans `lines` (recs manquantes), on rattache leur CA + détails.
-  const lineOrderIds = new Set(lines.map(l => l.orderId));
+  // Les commandes notées sont orphelines (analyseNote les a déjà exclues des offres),
+  // donc leur CA n'est jamais dans `lines`. On le rattache systématiquement au total
+  // et aux détails, en ne dédoublonnant que les lignes réellement déjà comptées.
+  const lineIds = new Set(lines.map(l => l.id));
   let extraNoteOrders = 0;
   for (const c of catchalls) {
-    if (!c.data) continue;
-    const noteOrderIds = new Set(c.data.debugOrders.map(o => o.id));
-    const alreadyCounted = [...noteOrderIds].some(id => lineOrderIds.has(id));
-    if (alreadyCounted || c.data.caTotal <= 0) continue;
-    extraNoteOrders += noteOrderIds.size;
-    // CA de la note absent du total agrégé -> on le rattache
+    if (!c.data || c.data.caTotal <= 0) continue;
+    extraNoteOrders += c.data.debugOrders.length;
     caTotal += c.data.caTotal;
     for (const p of c.data.produits) {
       if (!prodMap[p.productId]) prodMap[p.productId] = { productId: p.productId, ref: p.ref, name: p.name, qtyVendue: 0, ca: 0 };
@@ -316,6 +316,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     }
     if (filter === "all") { split.avenir.qty += c.data.qtyTotal; split.avenir.ca += c.data.caTotal; }
   }
+  void lineIds;
 
   // Quantité campagne = offres vendues (packs) + unités produits autonomes + commandes notées
   // (et NON la somme des unités de composants, qui gonfle le chiffre)
