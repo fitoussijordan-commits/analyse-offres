@@ -325,7 +325,6 @@ export default function PlanningTab({ onToast }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <div style={{ fontSize: 12, color: C.textMuted }}>
             {filtered.length}/{produits.length} produits
-            {filtered.length > 200 && <span style={{ color: C.orange }}> · affichage limité à 200</span>}
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button
@@ -418,7 +417,7 @@ export default function PlanningTab({ onToast }: Props) {
             </thead>
 
             <tbody>
-              {filtered.slice(0, 200).map((p, idx) => {
+              {filtered.map((p, idx) => {
                 const rowQtys = months.map(m => qtyMap[p.ref]?.[m] ?? 0)
                 const rowTotal = rowQtys.reduce((a, b) => a + b, 0)
                 const even = idx % 2 === 0
@@ -487,11 +486,6 @@ export default function PlanningTab({ onToast }: Props) {
             </tbody>
           </table>
 
-          {filtered.length > 200 && (
-            <div style={{ padding: '8px 14px', fontSize: 11, color: C.orange, borderTop: `1px solid ${C.border}`, fontWeight: 600 }}>
-              ⚠ {filtered.length - 200} produits masqués — utilisez la recherche pour affiner
-            </div>
-          )}
         </div>
       )}
 

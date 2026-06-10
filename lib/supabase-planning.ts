@@ -18,8 +18,10 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     const text = await res.text()
     throw new Error(`Supabase ${res.status}: ${text}`)
   }
-  if (res.status === 204) return [] as unknown as T
-  return res.json()
+  // Réponses sans corps (204, ou 201 avec Prefer: return=minimal) → pas de JSON à parser
+  const body = await res.text()
+  if (!body) return [] as unknown as T
+  return JSON.parse(body) as T
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
