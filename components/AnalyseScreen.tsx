@@ -2,7 +2,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as odoo from "@/lib/odoo";
 import { supabase } from "@/lib/supabase";
-import PlanningTab from "@/components/PlanningTab";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const C = {
@@ -869,7 +868,6 @@ function AnalyseTab({ session, onToast, filter, sharedCodes, onCodesChange }: { 
 // COMPOSANT PRINCIPAL
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnalyseScreen({ session, onToast }: Props) {
-  const [view, setView] = useState<"analyse" | "planning">("analyse");
   const [filter, setFilter] = useState<StateFilter>("all");
   const [sharedCodes, setSharedCodes] = useState<string[]>([]);
   const [showOffresPanel, setShowOffresPanel] = useState(false);
@@ -879,61 +877,33 @@ export default function AnalyseScreen({ session, onToast }: Props) {
   return (
     <div style={{ flex:1, display:"flex", flexDirection:"column", height:"100%", overflow:"hidden", background:C.bg }}>
       {/* Topbar */}
-      <div style={{ background:C.white, borderBottom:`1px solid ${C.border}`, padding:"0 24px", display:"flex", alignItems:"center", gap:12, height:56, flexShrink:0 }}>
-        <div style={{ fontSize:15, fontWeight:700, color:C.text, flexShrink:0 }}>
-          {view === "planning" ? "Planning" : "Analyse des Offres"}
-        </div>
+      <div style={{ background:C.white, borderBottom:`1px solid ${C.border}`, padding:"0 24px", display:"flex", alignItems:"center", gap:16, height:56, flexShrink:0 }}>
+        <div style={{ fontSize:15, fontWeight:700, color:C.text, flexShrink:0 }}>Analyse des Offres</div>
         <div style={{ flex:1 }}/>
 
-        {/* View switcher */}
+        {/* Filter tabs */}
         <div style={{ display:"flex", gap:2, background:C.bg, border:`1px solid ${C.border}`, borderRadius:9, padding:3 }}>
-          <button onClick={()=>setView("analyse")}
-            style={{ padding:"5px 14px", border:"none", borderRadius:7, cursor:"pointer", fontFamily:"inherit", fontSize:12, fontWeight:600,
-              background:view==="analyse"?C.white:"transparent",
-              color:view==="analyse"?C.blue:C.textMuted,
-              boxShadow:view==="analyse"?C.shadow:"none" }}>
-            Analyse
-          </button>
-          <button onClick={()=>setView("planning")}
-            style={{ padding:"5px 14px", border:"none", borderRadius:7, cursor:"pointer", fontFamily:"inherit", fontSize:12, fontWeight:600,
-              background:view==="planning"?C.white:"transparent",
-              color:view==="planning"?C.teal:C.textMuted,
-              boxShadow:view==="planning"?C.shadow:"none" }}>
-            📋 Planning
-          </button>
+          {FILTERS.map(([key,label]) => (
+            <button key={key} onClick={()=>setFilter(key)}
+              style={{ padding:"5px 14px", border:"none", borderRadius:7, cursor:"pointer", fontFamily:"inherit", fontSize:12, fontWeight:600,
+                background:filter===key?C.white:"transparent",
+                color:filter===key?(key==="valide"?C.green:key==="avenir"?C.amber:C.blue):C.textMuted,
+                boxShadow:filter===key?C.shadow:"none" }}>
+              {label}
+            </button>
+          ))}
         </div>
 
-        {/* Filter tabs — Analyse only */}
-        {view === "analyse" && (
-          <div style={{ display:"flex", gap:2, background:C.bg, border:`1px solid ${C.border}`, borderRadius:9, padding:3 }}>
-            {FILTERS.map(([key,label]) => (
-              <button key={key} onClick={()=>setFilter(key)}
-                style={{ padding:"5px 14px", border:"none", borderRadius:7, cursor:"pointer", fontFamily:"inherit", fontSize:12, fontWeight:600,
-                  background:filter===key?C.white:"transparent",
-                  color:filter===key?(key==="valide"?C.green:key==="avenir"?C.amber:C.blue):C.textMuted,
-                  boxShadow:filter===key?C.shadow:"none" }}>
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Gérer les offres — Analyse only */}
-        {view === "analyse" && (
-          <button onClick={()=>setShowOffresPanel(true)}
-            style={{ padding:"7px 14px", background:C.bg, border:`1px solid ${C.border}`, borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600, color:C.textSec, fontFamily:"inherit", display:"flex", alignItems:"center", gap:6 }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>
-            Gérer les offres
-          </button>
-        )}
+        {/* Gérer les offres */}
+        <button onClick={()=>setShowOffresPanel(true)}
+          style={{ padding:"7px 14px", background:C.bg, border:`1px solid ${C.border}`, borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600, color:C.textSec, fontFamily:"inherit", display:"flex", alignItems:"center", gap:6 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>
+          Gérer les offres
+        </button>
       </div>
 
       {/* Contenu */}
-      {view === "planning" ? (
-        <PlanningTab onToast={onToast} />
-      ) : (
-        <AnalyseTab key={filter} session={session} onToast={onToast} filter={filter} sharedCodes={sharedCodes} onCodesChange={setSharedCodes} />
-      )}
+      <AnalyseTab key={filter} session={session} onToast={onToast} filter={filter} sharedCodes={sharedCodes} onCodesChange={setSharedCodes} />
 
       {/* Panneau offres */}
       {showOffresPanel && <OffresPanel onClose={()=>setShowOffresPanel(false)} onToast={onToast} />}
