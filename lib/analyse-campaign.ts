@@ -318,6 +318,11 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   }
   void lineIds;
 
+  // Le CA total doit toujours égaler la somme du détail affiché (offres + standalone + notes).
+  // On le recalcule explicitement pour éviter toute divergence avec les lignes agrégées.
+  const caDetail = results.reduce((s, r) => s + (r.caTotal || 0), 0) + catchalls.reduce((s, c) => s + (c.data?.caTotal || 0), 0);
+  caTotal = caDetail;
+
   // Quantité campagne = offres vendues (packs) + unités produits autonomes + commandes notées
   // (et NON la somme des unités de composants, qui gonfle le chiffre)
   const qtyOffres = results.reduce((s, r) => s + (r.qtyTotal || 0), 0) + catchalls.reduce((s, c) => s + (c.data?.qtyTotal || 0), 0);
