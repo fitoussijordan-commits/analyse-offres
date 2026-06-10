@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as odoo from "@/lib/odoo";
+import PlanningTab from "@/components/PlanningTab";
 
 // ── Couleurs ────────────────────────────────────────────────────────────────
 const C = {
@@ -13,7 +14,7 @@ const C = {
   teal: "#0d9488", tealSoft: "#f0fdfa",
   shadow: "0 1px 4px rgba(0,0,0,0.07)",
   shadowMd: "0 4px 12px rgba(0,0,0,0.10)",
-};
+} as const;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 interface Offre {
@@ -790,13 +791,14 @@ function AnalyseTab({ session, onToast, filter, sharedCodes, onCodesChange }: { 
 // COMPOSANT PRINCIPAL
 // ═══════════════════════════════════════════════════════════════════════════
 export default function AnalyseScreen({ session, onToast }: Props) {
-  const [tab, setTab] = useState<"all" | "avenir" | "valide" | "parametrage">("all");
+  const [tab, setTab] = useState<"all" | "avenir" | "valide" | "planning" | "parametrage">("all");
   const [sharedCodes, setSharedCodes] = useState<string[]>([]);
 
   const TABS: [string, string, string][] = [
     ["all", "📊 Tout", C.blue],
     ["avenir", "🔜 À venir", C.orange],
     ["valide", "✅ Validé", C.green],
+    ["planning", "📋 Planning", C.teal],
     ["parametrage", "⚙️ Config", C.textMuted],
   ];
 
@@ -813,6 +815,8 @@ export default function AnalyseScreen({ session, onToast }: Props) {
 
       {tab === "parametrage" ? (
         <ParametrageTab onToast={onToast} />
+      ) : tab === "planning" ? (
+        <PlanningTab onToast={onToast} />
       ) : (
         <AnalyseTab key={tab} session={session} onToast={onToast} filter={tab as StateFilter} sharedCodes={sharedCodes} onCodesChange={setSharedCodes} />
       )}
