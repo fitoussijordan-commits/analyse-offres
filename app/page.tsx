@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
-import AnalyseScreen from "@/components/AnalyseScreen";
+import CampagneScreen from "@/components/CampagneScreen";
 import ProjetScreen from "@/components/ProjetScreen";
 import PlanningTab from "@/components/PlanningTab";
 
@@ -60,7 +60,7 @@ function HubView({ onNavigate }: { onNavigate: (v: AppView) => void }) {
           <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
         </svg>
       ),
-      label: "Analyse des Offres", desc: "Suivi du CA, délégués et produits par offre commerciale Odoo",
+      label: "Analyse des Campagnes", desc: "CA, délégués, produits et clients par campagne (offres + produits + notes), sans doublons",
       active: true,
     },
     {
@@ -242,7 +242,7 @@ export default function Home() {
           <div style={{ fontSize: 10, fontWeight: 700, color: "#334155", textTransform: "uppercase" as const, letterSpacing: "0.08em", padding: "0 8px 8px" }}>Outils</div>
           <NavItem
             icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>}
-            label="Analyse des Offres" active={view === "analyse"} onClick={() => setView("analyse")}
+            label="Analyse des Campagnes" active={view === "analyse"} onClick={() => setView("analyse")}
           />
           <NavItem
             icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>}
@@ -272,7 +272,7 @@ export default function Home() {
       {/* Main */}
       <main style={{ flex: 1, display: "flex", flexDirection: "column" as const, overflow: "hidden", minWidth: 0 }}>
         {view === "hub" && <HubView onNavigate={setView} />}
-        {view === "analyse" && <AnalyseScreen session={session} onToast={showToast} />}
+        {view === "analyse" && <CampagneScreen session={session} onToast={showToast} />}
         {view === "projets" && <ProjetScreen session={session} onToast={showToast} />}
         {view === "planning" && <PlanningTab onToast={showToast} />}
       </main>

@@ -1,0 +1,91 @@
+// lib/campaigns.ts — Gestion des campagnes (Supabase) + chargement des offres
+import { supabase } from "@/lib/supabase";
+
+export interface Offre {
+  id: string;
+  code: string;
+  label: string;
+  produits: string[];
+  codeInterne?: string;
+}
+
+export interface Campagne {
+  id: string;
+  nom: string;
+  offres: string[];   // codes d'offres (référencent analyse_offres.code)
+  produits: string[]; // références produits autonomes
+  notes: string[];    // notes internes (x_note_interne)
+  createdAt?: string;
+}
+
+export function genId() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+// ─── Offres (réutilise la table analyse_offres) ───────────────────────────────
+function rowToOffre(row: any): Offre {
+  return {
+    id: row.id,
+    code: row.code,
+    label: row.label || "",
+    produits: row.produits || [],
+    codeInterne: row.code_interne || undefined,
+  };
+}
+
+function offreToRow(o: Offre) {
+  return { id: o.id, code: o.code, label: o.label || "", produits: o.produits, code_interne: o.codeInterne || null };
+}
+
+export async function loadOffres(): Promise<Offre[]> {
+  const { data, error } = await supabase.from("analyse_offres").select("*").order("created_at");
+  if (error) throw new Error(error.message);
+  return (data || []).map(rowToOffre);
+}
+
+export async function upsertOffre(o: Offre): Promise<void> {
+  const { error } = await supabase.from("analyse_offres").upsert(offreToRow(o));
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteOffre(id: string): Promise<void> {
+  const { error } = await supabase.from("analyse_offres").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+// ─── Campagnes ────────────────────────────────────────────────────────────────
+function rowToCampagne(row: any): Campagne {
+  return {
+    id: row.id,
+    nom: row.nom,
+    offres: row.offres || [],
+    produits: row.produits || [],
+    notes: row.notes || [],
+    createdAt: row.created_at,
+  };
+}
+function campagneToRow(c: Campagne) {
+  return {
+    id: c.id,
+    nom: c.nom,
+    offres: c.offres,
+    produits: c.produits,
+    notes: c.notes,
+  };
+}
+
+export async function loadCampagnes(): Promise<Campagne[]> {
+  const { data, error } = await supabase.from("campagnes").select("*").order("created_at");
+  if (error) throw new Error(error.message);
+  return (data || []).map(rowToCampagne);
+}
+
+export async function upsertCampagne(c: Campagne): Promise<void> {
+  const { error } = await supabase.from("campagnes").upsert(campagneToRow(c));
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteCampagne(id: string): Promise<void> {
+  const { error } = await supabase.from("campagnes").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
