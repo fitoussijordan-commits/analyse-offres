@@ -162,12 +162,13 @@ async function analyseNote(session: odoo.OdooSession, note: string, excludeOrder
 }
 
 // ── Produits autonomes (réfs campagne hors offres/notes) ──────────────────────
-async function analyseStandalone(session: odoo.OdooSession, refs: string[], filter: StateFilter): Promise<{ res: OffreAnalyse | null; recs: LineRec[] }> {
+async function analyseStandalone(session: odoo.OdooSession, refs: string[], filter: StateFilter, excludeLineIds: Set<number>): Promise<{ res: OffreAnalyse | null; recs: LineRec[] }> {
   const { ids, refByPid } = await resolveRefs(session, refs);
   if (!ids.length) return { res: null, recs: [] };
   const lineDom = orderLineDomain(filter);
   const lines = await odoo.searchRead(session, "sale.order.line", [["product_id", "in", ids], ...lineDom, ["display_type", "=", false], ["is_downpayment", "=", false]], ["order_id", "product_id", "product_uom_qty", "price_subtotal", "state"], 0);
-  const recs = toRecs(lines, refByPid);
+  // exclure les lignes déjà comptées dans une offre (dédoublonnage "hors offre")
+  const recs = toRecs(lines, refByPid).filter(r => !excludeLineIds.has(r.id));
   if (!recs.length) return { res: null, recs: [] };
 
   const pm: Record<number, ProduitCA> = {};
@@ -208,8 +209,9 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     for (const d of res.debugOrders) offerOrderIds.add(d.id);
   }
 
-  // 2. Produits autonomes
-  const { res: standalone, recs: standaloneRecs } = await analyseStandalone(session, campagne.produits, filter);
+  // 2. Produits autonomes (en excluant les lignes déjà comptées dans une offre)
+  const offerLineIds = new Set<number>(allRecs.map(r => r.id));
+  const { res: standalone, recs: standaloneRecs } = await analyseStandalone(session, campagne.produits, filter, offerLineIds);
   if (standalone) { results.push(standalone); allRecs.push(...standaloneRecs); }
 
   // 3. Notes (uniquement réfs campagne : offres composants + produits autonomes)
