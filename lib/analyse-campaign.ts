@@ -224,7 +224,8 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     allRecs.push(...recs);
   }
 
-  // 4. Déduplication par ligne
+  // 4. Déduplication par ligne — on inclut explicitement les lignes des notes,
+  //    même si analyseNote n'a pas pu les renvoyer (recs vide), via leurs CA agrégés.
   const byId = new Map<number, LineRec>();
   for (const r of allRecs) if (!byId.has(r.id)) byId.set(r.id, r);
   const lines = [...byId.values()];
@@ -293,13 +294,36 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const finalize = (m: Record<string, ClientStat & { orders: Set<number> }>): ClientStat[] =>
     Object.values(m).map(({ orders, ...rest }) => ({ ...rest, nbCommandes: orders.size })).sort((a, b) => b.ca - a.ca);
 
+  // Garde-fou : le CA des notes doit toujours être compté. Si les lignes des notes
+  // n'ont pas été agrégées dans `lines` (recs manquantes), on rattache leur CA + détails.
+  const lineOrderIds = new Set(lines.map(l => l.orderId));
+  let extraNoteOrders = 0;
+  for (const c of catchalls) {
+    if (!c.data) continue;
+    const noteOrderIds = new Set(c.data.debugOrders.map(o => o.id));
+    const alreadyCounted = [...noteOrderIds].some(id => lineOrderIds.has(id));
+    if (alreadyCounted || c.data.caTotal <= 0) continue;
+    extraNoteOrders += noteOrderIds.size;
+    // CA de la note absent du total agrégé -> on le rattache
+    caTotal += c.data.caTotal;
+    for (const p of c.data.produits) {
+      if (!prodMap[p.productId]) prodMap[p.productId] = { productId: p.productId, ref: p.ref, name: p.name, qtyVendue: 0, ca: 0 };
+      prodMap[p.productId].qtyVendue += p.qtyVendue; prodMap[p.productId].ca += p.ca;
+    }
+    for (const d of c.data.delegues) {
+      if (!delMap[d.userId]) delMap[d.userId] = { userId: d.userId, name: d.name, qtyVendue: 0, ca: 0 };
+      delMap[d.userId].qtyVendue += d.qtyVendue; delMap[d.userId].ca += d.ca;
+    }
+    if (filter === "all") { split.avenir.qty += c.data.qtyTotal; split.avenir.ca += c.data.caTotal; }
+  }
+
   // Quantité campagne = offres vendues (packs) + unités produits autonomes + commandes notées
   // (et NON la somme des unités de composants, qui gonfle le chiffre)
   const qtyOffres = results.reduce((s, r) => s + (r.qtyTotal || 0), 0) + catchalls.reduce((s, c) => s + (c.data?.qtyTotal || 0), 0);
 
   return {
     nom: campagne.nom,
-    caTotal, qtyTotal: qtyOffres, nbCommandes: orderIds.length,
+    caTotal, qtyTotal: qtyOffres, nbCommandes: orderIds.length + extraNoteOrders,
     produits: Object.values(prodMap).sort((a, b) => b.ca - a.ca),
     delegues: Object.values(delMap).sort((a, b) => b.ca - a.ca),
     categories: finalize(catMap), adherents: finalize(adhMap),
