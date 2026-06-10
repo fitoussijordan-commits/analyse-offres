@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import * as odoo from "@/lib/odoo";
 import * as cp from "@/lib/campaigns";
 import { fetchCampaign, type CampaignResult, type StateFilter } from "@/lib/analyse-campaign";
+import { ChartCard, HBarChart, PieChart, SplitBar, fmtEurShort } from "./CampagneCharts";
 
 const C = {
   bg: "#f1f5f9", white: "#ffffff",
@@ -206,8 +207,38 @@ function CampagnePanel({ onClose, onToast, offres, onChanged }: { onClose: () =>
 // ════════════════════════════════════════════════════════════════════════════
 // ÉCRAN PRINCIPAL
 // ════════════════════════════════════════════════════════════════════════════
-type Tab = "produits" | "delegues" | "categories" | "adherents" | "offres";
+type Tab = "produits" | "delegues" | "categories" | "adherents" | "offres" | "commandes";
 const FILTERS: [StateFilter, string][] = [["all", "Tout"], ["avenir", "À venir"], ["valide", "Validé"]];
+
+// URL vers la fiche commande Odoo (vue formulaire)
+function odooOrderUrl(baseUrl: string, orderId: number): string {
+  const base = (baseUrl || "").replace(/\/+$/, "");
+  return `${base}/web#id=${orderId}&model=sale.order&view_type=form`;
+}
+
+// Construit la liste dédoublonnée des commandes (offres + notes), comme l'onglet Excel "Toutes Commandes"
+interface CmdRow { id: number; name: string; partner: string; code: string; label: string; type: "Offre" | "Note"; }
+function buildCommandes(result: CampaignResult): CmdRow[] {
+  const seen = new Set<string>();
+  const rows: CmdRow[] = [];
+  for (const r of result.results) {
+    for (const o of r.debugOrders) {
+      const n = o.name.replace(" (note)", "");
+      if (seen.has(n)) continue;
+      seen.add(n);
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre" });
+    }
+  }
+  for (const c of result.catchalls) {
+    for (const o of c.data?.debugOrders ?? []) {
+      const n = o.name.replace(" (note)", "");
+      if (seen.has(n)) continue;
+      seen.add(n);
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note" });
+    }
+  }
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export default function CampagneScreen({ session, onToast }: Props) {
   const [offres, setOffres] = useState<cp.Offre[]>([]);
@@ -271,7 +302,7 @@ export default function CampagneScreen({ session, onToast }: Props) {
     </div>
   );
 
-  const TABS: [Tab, string][] = [["produits", "Produits"], ["delegues", "Délégués"], ["categories", "Catégorie statistique"], ["adherents", "Adhérent réseau"], ["offres", "Par offre"]];
+  const TABS: [Tab, string][] = [["produits", "Produits"], ["delegues", "Délégués"], ["categories", "Catégorie statistique"], ["adherents", "Adhérent réseau"], ["offres", "Par offre"], ["commandes", "Commandes"]];
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: C.bg }}>
@@ -335,6 +366,40 @@ export default function CampagneScreen({ session, onToast }: Props) {
               {result.split && filter === "all" && kpi("CA à venir", fmtEur(result.split.avenir.ca), C.amber)}
             </div>
 
+            {/* Graphiques */}
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+              {filter === "all" && result.split && (result.split.valide.ca > 0 || result.split.avenir.ca > 0) && (
+                <ChartCard title="Validé vs à venir">
+                  <SplitBar valide={result.split.valide.ca} avenir={result.split.avenir.ca} />
+                </ChartCard>
+              )}
+              {result.perOffre.filter(o => o.caTotal > 0).length > 0 && (
+                <ChartCard title="CA par offre">
+                  <HBarChart data={result.perOffre.filter(o => o.caTotal > 0).sort((a, b) => b.caTotal - a.caTotal).map(o => ({ label: o.label || o.code, value: o.caTotal }))} color={C.teal} valueFmt={fmtEurShort} />
+                </ChartCard>
+              )}
+              {result.categories.filter(c => c.ca > 0).length > 0 && (
+                <ChartCard title="Répartition par catégorie statistique">
+                  <PieChart data={result.categories.map(c => ({ label: c.name, value: c.ca }))} />
+                </ChartCard>
+              )}
+              {result.adherents.filter(a => a.ca > 0).length > 0 && (
+                <ChartCard title="Répartition par adhérent réseau">
+                  <PieChart data={result.adherents.map(a => ({ label: a.name, value: a.ca }))} />
+                </ChartCard>
+              )}
+              {result.delegues.filter(d => d.ca > 0).length > 0 && (
+                <ChartCard title="Top délégués (CA)">
+                  <HBarChart data={result.delegues.slice(0, 8).map(d => ({ label: d.name, value: d.ca }))} color={C.purple} valueFmt={fmtEurShort} />
+                </ChartCard>
+              )}
+              {result.produits.filter(p => p.ca > 0).length > 0 && (
+                <ChartCard title="Top produits (CA)">
+                  <HBarChart data={result.produits.slice(0, 8).map(p => ({ label: p.name, value: p.ca }))} color={C.blue} valueFmt={fmtEurShort} />
+                </ChartCard>
+              )}
+            </div>
+
             {/* Tabs */}
             <div style={{ display: "flex", gap: 4, marginBottom: 12, flexWrap: "wrap" }}>
               {TABS.map(([k, l]) => (
@@ -343,13 +408,34 @@ export default function CampagneScreen({ session, onToast }: Props) {
             </div>
 
             {/* Tables */}
-            <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
-              {tab === "produits" && <Tbl head={["Réf", "Produit", "Qté", "CA"]} aligns={["left", "left", "right", "right"]} rows={result.produits.map(p => [p.ref, p.name, fmtNum(p.qtyVendue), fmtEur(p.ca)])} />}
-              {tab === "delegues" && <Tbl head={["Délégué", "Qté", "CA", "% CA"]} aligns={["left", "right", "right", "right"]} rows={result.delegues.map(d => [d.name, fmtNum(d.qtyVendue), fmtEur(d.ca), result.caTotal ? ((d.ca / result.caTotal) * 100).toFixed(1) + " %" : "—"])} />}
-              {tab === "categories" && <Tbl head={["Catégorie statistique", "Cmd", "Qté", "CA", "% CA"]} aligns={["left", "right", "right", "right", "right"]} rows={result.categories.map(c => [c.name, fmtNum(c.nbCommandes), fmtNum(c.qtyVendue), fmtEur(c.ca), result.caTotal ? ((c.ca / result.caTotal) * 100).toFixed(1) + " %" : "—"])} />}
-              {tab === "adherents" && <Tbl head={["Adhérent réseau", "Cmd", "Qté", "CA", "% CA"]} aligns={["left", "right", "right", "right", "right"]} rows={result.adherents.map(a => [a.name, fmtNum(a.nbCommandes), fmtNum(a.qtyVendue), fmtEur(a.ca), result.caTotal ? ((a.ca / result.caTotal) * 100).toFixed(1) + " %" : "—"])} />}
-              {tab === "offres" && <Tbl head={["Code offre", "Libellé", "Qté", "CA"]} aligns={["left", "left", "right", "right"]} rows={result.perOffre.map(o => [o.code, o.label || (o.error ? "⚠ " + o.error : ""), fmtNum(o.qtyTotal), fmtEur(o.caTotal)])} />}
-            </div>
+            {tab === "offres" ? (
+              <OffresDrillDown result={result} />
+            ) : tab === "commandes" ? (
+              <CommandesTab result={result} baseUrl={session.config.url} />
+            ) : (
+              <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+                {tab === "produits" && <Tbl
+                  head={["Réf", "Produit", "Qté", "CA", "% CA"]} aligns={["left", "left", "right", "right", "right"]}
+                  rows={result.produits.map(p => [p.ref, p.name, fmtNum(p.qtyVendue), fmtEur(p.ca), pctOf(p.ca, result.caTotal)])}
+                  total={["TOTAL", "", fmtNum(result.produits.reduce((s, p) => s + p.qtyVendue, 0)), fmtEur(result.caTotal), "100,0 %"]}
+                />}
+                {tab === "delegues" && <Tbl
+                  head={["Délégué", "Qté", "CA", "% CA"]} aligns={["left", "right", "right", "right"]}
+                  rows={result.delegues.map(d => [d.name, fmtNum(d.qtyVendue), fmtEur(d.ca), pctOf(d.ca, result.caTotal)])}
+                  total={["TOTAL", fmtNum(result.delegues.reduce((s, d) => s + d.qtyVendue, 0)), fmtEur(result.caTotal), "100,0 %"]}
+                />}
+                {tab === "categories" && <Tbl
+                  head={["Catégorie statistique", "Cmd", "Qté", "CA", "% CA"]} aligns={["left", "right", "right", "right", "right"]}
+                  rows={result.categories.map(c => [c.name, fmtNum(c.nbCommandes), fmtNum(c.qtyVendue), fmtEur(c.ca), pctOf(c.ca, result.caTotal)])}
+                  total={["TOTAL", fmtNum(result.categories.reduce((s, c) => s + c.nbCommandes, 0)), fmtNum(result.categories.reduce((s, c) => s + c.qtyVendue, 0)), fmtEur(result.caTotal), "100,0 %"]}
+                />}
+                {tab === "adherents" && <Tbl
+                  head={["Adhérent réseau", "Cmd", "Qté", "CA", "% CA"]} aligns={["left", "right", "right", "right", "right"]}
+                  rows={result.adherents.map(a => [a.name, fmtNum(a.nbCommandes), fmtNum(a.qtyVendue), fmtEur(a.ca), pctOf(a.ca, result.caTotal)])}
+                  total={["TOTAL", fmtNum(result.adherents.reduce((s, a) => s + a.nbCommandes, 0)), fmtNum(result.adherents.reduce((s, a) => s + a.qtyVendue, 0)), fmtEur(result.caTotal), "100,0 %"]}
+                />}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -360,8 +446,14 @@ export default function CampagneScreen({ session, onToast }: Props) {
   );
 }
 
-// Petit composant table
-function Tbl({ head, aligns, rows }: { head: string[]; aligns: ("left" | "right" | "center")[]; rows: (string | number)[][] }) {
+// % d'une valeur sur un total, formaté fr-FR
+function pctOf(val: number, total: number): string {
+  if (!total) return "—";
+  return ((val / total) * 100).toFixed(1).replace(".", ",") + " %";
+}
+
+// Petit composant table (avec ligne TOTAL optionnelle)
+function Tbl({ head, aligns, rows, total }: { head: string[]; aligns: ("left" | "right" | "center")[]; rows: (string | number)[][]; total?: (string | number)[] }) {
   if (!rows.length) return <div style={{ padding: 30, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucune donnée</div>;
   return (
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -377,6 +469,112 @@ function Tbl({ head, aligns, rows }: { head: string[]; aligns: ("left" | "right"
           </tr>
         ))}
       </tbody>
+      {total && (
+        <tfoot>
+          <tr style={{ background: C.tealSoft }}>
+            {total.map((c, ci) => <td key={ci} style={{ padding: "10px 14px", fontSize: 13, fontWeight: 800, color: C.teal, textAlign: aligns[ci], borderTop: `2px solid ${C.teal}44` }}>{c}</td>)}
+          </tr>
+        </tfoot>
+      )}
     </table>
+  );
+}
+
+// ── Onglet "Par offre" : drill-down (produits composants + délégués par offre) ──
+function OffresDrillDown({ result }: { result: CampaignResult }) {
+  const [open, setOpen] = useState<string | null>(result.results[0]?.offre.code ?? null);
+  // sources = offres analysées + notes (catchalls avec données)
+  type Src = { key: string; code: string; label: string; ca: number; qty: number; cmd: number; produits: { ref: string; name: string; qtyVendue: number; ca: number }[]; delegues: { name: string; qtyVendue: number; ca: number }[]; error: string | null; note: boolean };
+  const sources: Src[] = [
+    ...result.results.map(r => ({ key: "o:" + r.offre.code, code: r.offre.code, label: r.offre.label, ca: r.caTotal, qty: r.qtyTotal, cmd: r.debugOrders.length, produits: r.produits, delegues: r.delegues, error: r.error, note: false })),
+    ...result.catchalls.filter(c => c.data && (c.data.debugOrders.length > 0 || c.data.caTotal > 0)).map(c => ({ key: "n:" + c.codeInterne, code: c.codeInterne, label: "Note interne", ca: c.data!.caTotal, qty: c.data!.qtyTotal, cmd: c.data!.debugOrders.length, produits: c.data!.produits, delegues: c.data!.delegues, error: null, note: true })),
+  ];
+  if (!sources.length) return <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: 30, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucune offre</div>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {sources.map(s => {
+        const isOpen = open === s.key;
+        return (
+          <div key={s.key} style={{ background: C.white, border: `1px solid ${isOpen ? C.teal + "66" : C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+            <div onClick={() => setOpen(isOpen ? null : s.key)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 16px", cursor: "pointer", background: isOpen ? C.tealSoft : C.white }}>
+              <span style={{ transform: `rotate(${isOpen ? 90 : 0}deg)`, transition: "transform .15s", color: C.textMuted, fontSize: 13 }}>▶</span>
+              <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "monospace", color: C.text }}>{s.code}</span>
+              <span style={{ fontSize: 12, color: C.textMuted, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {s.error ? <span style={{ color: C.amber }}>⚠ {s.error}</span> : s.label}
+                {s.note && <span style={{ marginLeft: 6, fontSize: 10, background: "#fff7ed", color: "#f97316", borderRadius: 4, padding: "1px 6px", fontWeight: 700 }}>NOTE</span>}
+              </span>
+              <span style={{ fontSize: 11, color: C.textMuted }}>{fmtNum(s.cmd)} cmd · {fmtNum(s.qty)} qté</span>
+              <span style={{ fontSize: 15, fontWeight: 800, color: s.note ? "#f97316" : C.teal, minWidth: 90, textAlign: "right" }}>{fmtEur(s.ca)}</span>
+            </div>
+            {isOpen && (
+              <div style={{ padding: "4px 16px 16px", borderTop: `1px solid ${C.border}` }}>
+                {s.produits.length > 0 && (
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Produits composants</div>
+                    <Tbl head={["Réf", "Produit", "Qté", "CA", "% CA"]} aligns={["left", "left", "right", "right", "right"]} rows={s.produits.map(p => [p.ref, p.name, fmtNum(p.qtyVendue), fmtEur(p.ca), pctOf(p.ca, s.ca)])} />
+                  </div>
+                )}
+                {s.delegues.length > 0 && (
+                  <div style={{ marginTop: 18 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.purple, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Par délégué</div>
+                    <Tbl head={["Délégué", "Qté", "CA", "% CA"]} aligns={["left", "right", "right", "right"]} rows={s.delegues.map(d => [d.name, fmtNum(d.qtyVendue), fmtEur(d.ca), pctOf(d.ca, s.ca)])} />
+                  </div>
+                )}
+                {!s.produits.length && !s.delegues.length && <div style={{ padding: 16, textAlign: "center", color: C.textMuted, fontSize: 12 }}>Aucun détail disponible</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Onglet "Commandes" : liste dédoublonnée avec lien Odoo ─────────────────────
+function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: string }) {
+  const [q, setQ] = useState("");
+  const all = buildCommandes(result);
+  const filtered = q.trim() ? all.filter(r => (r.name + " " + r.partner + " " + r.code + " " + r.label).toLowerCase().includes(q.trim().toLowerCase())) : all;
+  const nbOffre = all.filter(r => r.type === "Offre").length;
+  const nbNote = all.filter(r => r.type === "Note").length;
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Rechercher (commande, client, offre…)" style={{ flex: "1 1 240px", maxWidth: 360, padding: "7px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit", outline: "none", color: C.text }} />
+        <span style={{ fontSize: 12, color: C.textMuted }}>{fmtNum(filtered.length)} commande(s) · <span style={{ color: C.teal, fontWeight: 600 }}>{fmtNum(nbOffre)} offre</span> · <span style={{ color: "#f97316", fontWeight: 600 }}>{fmtNum(nbNote)} note</span></span>
+      </div>
+      {filtered.length === 0 ? (
+        <div style={{ padding: 30, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucune commande</div>
+      ) : (
+        <div style={{ maxHeight: 560, overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
+              <tr style={{ background: C.bg }}>
+                {["Commande", "Client", "Source", "Libellé", "Type", ""].map((h, i) => <th key={i} style={{ padding: "10px 14px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: i === 4 ? "center" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r, ri) => {
+                const isNote = r.type === "Note";
+                return (
+                  <tr key={r.name} style={{ background: isNote ? "#fff7ed" : ri % 2 ? "#f9fafb" : C.white }}>
+                    <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.border}`, fontFamily: "monospace" }}>{r.name}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{r.partner || "—"}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: isNote ? "#f97316" : C.teal, borderBottom: `1px solid ${C.border}`, fontFamily: "monospace" }}>{r.code}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{r.label}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 11, textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
+                      <span style={{ fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: isNote ? "#ffedd5" : C.tealSoft, color: isNote ? "#f97316" : C.teal }}>{r.type}</span>
+                    </td>
+                    <td style={{ padding: "9px 14px", textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
+                      <a href={odooOrderUrl(baseUrl, r.id)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontWeight: 600, color: C.blue, textDecoration: "none", whiteSpace: "nowrap" }} title="Ouvrir dans Odoo">Odoo ↗</a>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
