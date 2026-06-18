@@ -31,7 +31,7 @@ function dataRow(ws: ExcelJS.Worksheet, vals: any[], muted = false) {
 const eur = (c: ExcelJS.Cell) => { c.numFmt = '#,##0 "€"'; };
 const num = (c: ExcelJS.Cell) => { c.numFmt = "#,##0"; };
 
-interface PrecoLigne { ref: string; name: string; productId: number; ca: number; qty: number; conserve: boolean; }
+interface PrecoLigne { ref: string; name: string; productId: number; ca: number; qty: number; qtyParPack: number; conserve: boolean; }
 interface PrecoPalier { code: string; label: string; caTotal: number; qtyPacks: number; produits: PrecoLigne[]; }
 interface BesoinFournisseur { ref: string; name: string; productId: number; qty: number; ca: number; paliers: string[]; }
 interface PrecoResult { nom: string; paliers: PrecoPalier[]; besoins: BesoinFournisseur[]; totalQty: number; }
@@ -63,17 +63,17 @@ export async function POST(req: NextRequest) {
     for (const pal of p.paliers) {
       const safe = (pal.code || "Offre").replace(/[\\/?*[\]:]/g, "").slice(0, 28);
       const sw = wb.addWorksheet(safe, { views: [{ showGridLines: false }] });
-      sw.columns = [{ width: 16 }, { width: 46 }, { width: 14 }, { width: 14 }, { width: 12 }];
-      titleRow(sw, `Palier ${pal.code} — ${pal.label || "Offre"}`, BLUE, 5);
-      const info = sw.addRow([`CA palier : `, "", pal.caTotal, "", `${pal.qtyPacks} pack(s)`]);
+      sw.columns = [{ width: 16 }, { width: 46 }, { width: 12 }, { width: 13 }, { width: 13 }, { width: 12 }];
+      titleRow(sw, `Palier ${pal.code} — ${pal.label || "Offre"}`, BLUE, 6);
+      const info = sw.addRow([`CA palier : `, "", pal.caTotal, "", "", `${pal.qtyPacks} pack(s)`]);
       eur(info.getCell(3)); info.getCell(1).font = { bold: true, size: 10, name: "Calibri" };
       sw.addRow([]);
-      headRow(sw, ["Réf", "Produit", "Conservé", "Qté vendue", "CA"], BLUE);
+      headRow(sw, ["Réf", "Produit", "Conservé", "Qté vendue", "Qté / pack", "CA"], BLUE);
       for (const c of pal.produits) {
-        const r = dataRow(sw, [c.ref, c.name, c.conserve ? "OUI" : "—", c.qty, c.ca], !c.conserve);
-        num(r.getCell(4)); eur(r.getCell(5));
+        const r = dataRow(sw, [c.ref, c.name, c.conserve ? "OUI" : "—", c.qty, c.qtyParPack, c.ca], !c.conserve);
+        num(r.getCell(4)); num(r.getCell(5)); eur(r.getCell(6));
         r.getCell(3).alignment = { horizontal: "center" };
-        if (c.conserve) r.getCell(3).font = { bold: true, size: 10, name: "Calibri", color: { argb: "FF" + TEAL } };
+        if (c.conserve) { r.getCell(3).font = { bold: true, size: 10, name: "Calibri", color: { argb: "FF" + TEAL } }; r.getCell(5).font = { bold: true, size: 10, name: "Calibri", color: { argb: "FF" + BLUE } }; }
       }
     }
 

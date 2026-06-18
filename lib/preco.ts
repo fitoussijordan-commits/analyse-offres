@@ -6,7 +6,8 @@ import type { CampaignResult } from "@/lib/analyse-campaign";
 
 export interface PrecoLigne {
   ref: string; name: string; productId: number;
-  ca: number; qty: number;          // perf du produit sur ce palier (campagne actuelle)
+  ca: number; qty: number;          // qté totale vendue du produit sur ce palier (campagne actuelle)
+  qtyParPack: number;               // qté du produit dans 1 pack = round(qty / nb packs)
   conserve: boolean;
 }
 
@@ -40,9 +41,14 @@ export function buildPreco(result: CampaignResult, conservedIds: Record<string, 
     .filter(r => !r.error && (r.caTotal > 0 || r.qtyTotal > 0))
     .map(r => {
       const conserved = new Set(conservedIds[r.offre.code] ?? r.produits.map(p => p.productId));
+      const nbPacks = r.qtyTotal || 0;
       const produits: PrecoLigne[] = [...r.produits]
         .sort((a, b) => b.ca - a.ca)
-        .map(p => ({ ref: p.ref, name: p.name, productId: p.productId, ca: p.ca, qty: p.qtyVendue, conserve: conserved.has(p.productId) }));
+        .map(p => ({
+          ref: p.ref, name: p.name, productId: p.productId, ca: p.ca, qty: p.qtyVendue,
+          qtyParPack: nbPacks > 0 ? Math.round(p.qtyVendue / nbPacks) : 0,
+          conserve: conserved.has(p.productId),
+        }));
       return { code: r.offre.code, label: r.offre.label, caTotal: r.caTotal, qtyPacks: r.qtyTotal, produits };
     });
 

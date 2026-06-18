@@ -578,7 +578,7 @@ function PrecoTab({ result, onToast }: { result: CampaignResult; onToast: Props[
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
                   <tr style={{ background: C.bg }}>
-                    {["", "Réf", "Produit", "Qté vendue", "CA"].map((h, i) => <th key={i} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: i >= 3 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
+                    {["", "Réf", "Produit", "Qté vendue", "Qté / pack", "CA"].map((h, i) => <th key={i} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 700, color: i === 4 ? C.blue : C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: i >= 3 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -590,12 +590,35 @@ function PrecoTab({ result, onToast }: { result: CampaignResult; onToast: Props[
                       <td style={{ padding: "8px 14px", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.ref}</td>
                       <td style={{ padding: "8px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.name}</td>
                       <td style={{ padding: "8px 14px", fontSize: 13, fontWeight: 700, color: C.text, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtNum(p.qty)}</td>
+                      <td style={{ padding: "8px 14px", fontSize: 13, fontWeight: 800, color: C.blue, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtNum(p.qtyParPack)}</td>
                       <td style={{ padding: "8px 14px", fontSize: 13, color: C.textSec, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtEur(p.ca)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {/* Composition type d'1 pack (produits conservés) */}
+            {(() => {
+              const compo = pal.produits.filter(p => p.conserve && p.qtyParPack > 0);
+              const totalUnites = compo.reduce((s, p) => s + p.qtyParPack, 0);
+              if (!compo.length) return null;
+              return (
+                <div style={{ padding: "12px 16px", borderTop: `1px solid ${C.border}`, background: "#fafbff" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+                    🧱 Composition type d'1 pack — {fmtNum(totalUnites)} unités
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {compo.map(p => (
+                      <div key={p.productId} style={{ display: "flex", alignItems: "center", gap: 6, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 10px", fontSize: 12 }}>
+                        <span style={{ fontWeight: 800, color: C.blue }}>{fmtNum(p.qtyParPack)}×</span>
+                        <span style={{ fontFamily: "monospace", fontWeight: 600, color: C.text }}>{p.ref}</span>
+                        <span style={{ color: C.textMuted, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name.replace(/^\[\d+\]\s*/, "")}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         );
       })}
