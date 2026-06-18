@@ -9,7 +9,7 @@ export type StateFilter = "all" | "avenir" | "valide";
 export interface ProduitCA { ref: string; name: string; productId: number; qtyVendue: number; ca: number; }
 export interface DelegueCA { userId: number; name: string; qtyVendue: number; ca: number; }
 export interface ClientStat { id: number; name: string; qtyVendue: number; ca: number; nbCommandes: number; }
-export interface DebugOrder { id: number; name: string; partnerName?: string; invoiceStatus?: string; ca?: number; }
+export interface DebugOrder { id: number; name: string; partnerName?: string; invoiceStatus?: string; ca?: number; invoiced?: boolean; }
 
 export interface OffreAnalyse {
   offre: { code: string; label: string };
@@ -49,6 +49,36 @@ function noteDomain(notes: string[]): any[] {
 }
 
 interface LineRec { id: number; orderId: number; productId: number; productName: string; ref: string; qty: number; subtotal: number; }
+
+/**
+ * Détermine les commandes réellement facturées : celles ayant au moins une facture
+ * (account.move, type out_invoice/out_refund) en état 'posted'. Plus fiable que le
+ * champ invoice_status de la commande, qui ne reflète pas toujours la facturation réelle.
+ * Retourne un Set des orderId facturés.
+ */
+async function getInvoicedOrderIds(session: odoo.OdooSession, orderIds: number[]): Promise<Set<number>> {
+  const invoiced = new Set<number>();
+  if (!orderIds.length) return invoiced;
+  // On lit invoice_ids sur les commandes
+  const orders = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "invoice_ids"], 0);
+  const invToOrders: Record<number, number[]> = {};
+  const allInvIds = new Set<number>();
+  for (const o of orders as any[]) {
+    for (const invId of (o.invoice_ids || [])) {
+      allInvIds.add(invId);
+      (invToOrders[invId] ||= []).push(o.id);
+    }
+  }
+  if (!allInvIds.size) return invoiced;
+  // On ne garde que les factures clients postées (validées)
+  const moves = await odoo.searchRead(
+    session, "account.move",
+    [["id", "in", [...allInvIds]], ["state", "=", "posted"], ["move_type", "in", ["out_invoice", "out_refund"]]],
+    ["id"], 0
+  );
+  for (const m of moves as any[]) for (const oid of (invToOrders[m.id] || [])) invoiced.add(oid);
+  return invoiced;
+}
 
 async function resolveRefs(session: odoo.OdooSession, refs: string[]): Promise<{ ids: number[]; refByPid: Record<number, string> }> {
   const clean = [...new Set(refs.map(r => r.trim()).filter(Boolean))];
@@ -257,13 +287,24 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const orders = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "user_id", "partner_id", "invoice_status"], 0);
   const orderUser: Record<number, { id: number; name: string }> = {};
   const orderPartner: Record<number, number> = {};
-  const orderInv: Record<number, string> = {};
   const partnerIds = new Set<number>();
   for (const o of orders) {
     if (o.user_id) orderUser[o.id] = { id: o.user_id[0], name: o.user_id[1] };
     if (o.partner_id) { orderPartner[o.id] = o.partner_id[0]; partnerIds.add(o.partner_id[0]); }
-    orderInv[o.id] = o.invoice_status || "";
   }
+
+  // Facturation réelle : commandes avec une facture posée (toutes commandes confondues,
+  // lignes + notes), pour un découpage validé/à venir fiable.
+  const debugOrderIds: number[] = [];
+  for (const r of results) for (const o of r.debugOrders) debugOrderIds.push(o.id);
+  for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) debugOrderIds.push(o.id);
+  const allOrderIds = [...new Set([...orderIds, ...noteOrderIdSet, ...debugOrderIds])];
+  const invoicedOrderIds = await getInvoicedOrderIds(session, allOrderIds);
+  const isInvoiced = (oid: number) => invoicedOrderIds.has(oid);
+
+  // On propage le statut de facturation réel sur les debugOrders (utilisés par l'UI).
+  for (const r of results) for (const o of r.debugOrders) o.invoiced = isInvoiced(o.id);
+  for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) o.invoiced = isInvoiced(o.id);
 
   // 6. Clients → catégorie statistique + adhérent réseau
   const partnerCat: Record<number, { id: number; name: string }> = {};
@@ -303,7 +344,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     if (!adhMap[ak]) adhMap[ak] = { id: adh.id, name: adh.name, qtyVendue: 0, ca: 0, nbCommandes: 0, orders: new Set() };
     adhMap[ak].qtyVendue += l.qty; adhMap[ak].ca += l.subtotal; adhMap[ak].orders.add(l.orderId);
     if (filter === "all") {
-      if (orderInv[l.orderId] === "invoiced") { split.valide.qty += l.qty; split.valide.ca += l.subtotal; }
+      if (isInvoiced(l.orderId)) { split.valide.qty += l.qty; split.valide.ca += l.subtotal; }
       else { split.avenir.qty += l.qty; split.avenir.ca += l.subtotal; }
     }
   }
@@ -327,7 +368,14 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
       if (!delMap[d.userId]) delMap[d.userId] = { userId: d.userId, name: d.name, qtyVendue: 0, ca: 0 };
       delMap[d.userId].qtyVendue += d.qtyVendue; delMap[d.userId].ca += d.ca;
     }
-    if (filter === "all") { split.avenir.qty += c.data.qtyTotal; split.avenir.ca += c.data.caTotal; }
+    if (filter === "all") {
+      // Répartition validé / à venir par commande notée selon sa facturation réelle
+      for (const o of c.data.debugOrders) {
+        const ca = o.ca ?? 0;
+        if (isInvoiced(o.id)) { split.valide.qty += 1; split.valide.ca += ca; }
+        else { split.avenir.qty += 1; split.avenir.ca += ca; }
+      }
+    }
   }
   void lineIds;
 

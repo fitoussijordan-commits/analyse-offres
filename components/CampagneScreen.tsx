@@ -283,7 +283,7 @@ function buildCommandes(result: CampaignResult): CmdRow[] {
       const n = o.name.replace(" (note)", "");
       if (seen.has(n)) continue;
       seen.add(n);
-      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", ca: o.ca ?? 0, avenir: o.invoiceStatus !== "invoiced" });
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", ca: o.ca ?? 0, avenir: !o.invoiced });
     }
   }
   for (const c of result.catchalls) {
@@ -291,7 +291,7 @@ function buildCommandes(result: CampaignResult): CmdRow[] {
       const n = o.name.replace(" (note)", "");
       if (seen.has(n)) continue;
       seen.add(n);
-      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", ca: o.ca ?? 0, avenir: o.invoiceStatus !== "invoiced" });
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", ca: o.ca ?? 0, avenir: !o.invoiced });
     }
   }
   return rows.sort((a, b) => a.name.localeCompare(b.name));
