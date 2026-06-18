@@ -34,17 +34,51 @@ const labelStyle: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: 
 // ════════════════════════════════════════════════════════════════════════════
 // Panneau : gestion des OFFRES
 // ════════════════════════════════════════════════════════════════════════════
-function OffrePanel({ onClose, onToast, onChanged }: { onClose: () => void; onToast: Props["onToast"]; onChanged: () => void }) {
+function OffrePanel({ onClose, onToast, onChanged, session }: { onClose: () => void; onToast: Props["onToast"]; onChanged: () => void; session: odoo.OdooSession }) {
   const [offres, setOffres] = useState<cp.Offre[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [code, setCode] = useState(""); const [label, setLabel] = useState(""); const [produits, setProduits] = useState(""); const [codeInterne, setCodeInterne] = useState("");
 
+  // MEA search
+  const [meaQuery, setMeaQuery] = useState("");
+  const [meaSuggestions, setMeaSuggestions] = useState<odoo.MeaTemplate[]>([]);
+  const [meaLoading, setMeaLoading] = useState(false);
+  const [meaDropOpen, setMeaDropOpen] = useState(false);
+  const meaRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!meaDropOpen) return;
+    const handler = (e: MouseEvent) => { if (meaRef.current && !meaRef.current.contains(e.target as Node)) setMeaDropOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [meaDropOpen]);
+
+  const searchMea = async (q: string) => {
+    if (!q.trim()) { setMeaSuggestions([]); setMeaDropOpen(false); return; }
+    setMeaLoading(true); setMeaDropOpen(true);
+    try { const results = await odoo.searchMeaTemplates(session, q); setMeaSuggestions(results); }
+    catch { setMeaSuggestions([]); }
+    finally { setMeaLoading(false); }
+  };
+
+  const loadMea = async (tpl: odoo.MeaTemplate) => {
+    setMeaDropOpen(false); setMeaQuery(tpl.name); setMeaLoading(true);
+    try {
+      const lines = await odoo.getMeaTemplateLines(session, tpl.id);
+      if (!lines.length) { onToast("Aucun produit trouvé dans ce modèle", "error"); return; }
+      setProduits(lines.map(l => l.productCode).join("\n"));
+      if (!label) setLabel(tpl.name);
+      onToast(`${lines.length} produit(s) chargé(s) depuis "${tpl.name}"`, "success");
+    } catch (e: any) { onToast("Erreur chargement MEA : " + e.message, "error"); }
+    finally { setMeaLoading(false); }
+  };
+
   const reload = () => cp.loadOffres().then(setOffres).catch(e => onToast("Erreur : " + e.message, "error"));
   useEffect(() => { reload(); }, []);
 
-  const openNew = () => { setEditId(null); setCode(""); setLabel(""); setProduits(""); setCodeInterne(""); setShowForm(true); };
-  const openEdit = (o: cp.Offre) => { setEditId(o.id); setCode(o.code); setLabel(o.label); setProduits(o.produits.join("\n")); setCodeInterne(o.codeInterne || ""); setShowForm(true); };
+  const openNew = () => { setEditId(null); setCode(""); setLabel(""); setProduits(""); setCodeInterne(""); setMeaQuery(""); setMeaSuggestions([]); setShowForm(true); };
+  const openEdit = (o: cp.Offre) => { setEditId(o.id); setCode(o.code); setLabel(o.label); setProduits(o.produits.join("\n")); setCodeInterne(o.codeInterne || ""); setMeaQuery(""); setMeaSuggestions([]); setShowForm(true); };
 
   const save = async () => {
     const c = code.trim(); if (!c) { onToast("Code offre requis", "error"); return; }
@@ -66,6 +100,29 @@ function OffrePanel({ onClose, onToast, onChanged }: { onClose: () => void; onTo
         <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
           {showForm ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {/* Recherche MEA Odoo */}
+              <div ref={meaRef} style={{ position: "relative" }}>
+                <label style={labelStyle}>Charger depuis Odoo (modèle de devis)</label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input value={meaQuery} onChange={e => { setMeaQuery(e.target.value); searchMea(e.target.value); }} placeholder="Rechercher une MEA par nom…" style={{ ...inputStyle, flex: 1 }} />
+                  {meaLoading && <span style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${C.blue}`, borderTopColor: "transparent", display: "inline-block", animation: "spin 0.7s linear infinite", flexShrink: 0 }} />}
+                </div>
+                {meaDropOpen && meaSuggestions.length > 0 && (
+                  <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: C.white, border: `1.5px solid ${C.blue}44`, borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.13)", zIndex: 100, maxHeight: 220, overflowY: "auto" }}>
+                    {meaSuggestions.map(tpl => (
+                      <div key={tpl.id} onClick={() => loadMea(tpl)} style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 8 }}
+                        onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = C.bg}
+                        onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = C.white}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{tpl.name}</span>
+                        {!tpl.active && <span style={{ fontSize: 10, background: C.amberSoft, color: C.amber, borderRadius: 4, padding: "1px 6px", fontWeight: 600 }}>Archivé</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {meaDropOpen && !meaLoading && meaSuggestions.length === 0 && meaQuery.trim() && (
+                  <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", zIndex: 100, fontSize: 12, color: C.textMuted }}>Aucun modèle trouvé</div>
+                )}
+              </div>
               <div><label style={labelStyle}>Code offre *</label><input value={code} onChange={e => setCode(e.target.value)} placeholder="Ex: 7131482" style={inputStyle} /></div>
               <div><label style={labelStyle}>Libellé</label><input value={label} onChange={e => setLabel(e.target.value)} placeholder="Ex: Offre Noël" style={inputStyle} /></div>
               <div><label style={labelStyle}>Note interne (x_note_interne)</label><input value={codeInterne} onChange={e => setCodeInterne(e.target.value)} placeholder="Ex: NOEL26" style={inputStyle} /></div>
@@ -440,7 +497,7 @@ export default function CampagneScreen({ session, onToast }: Props) {
         )}
       </div>
 
-      {showOffrePanel && <OffrePanel onClose={() => setShowOffrePanel(false)} onToast={onToast} onChanged={reloadAll} />}
+      {showOffrePanel && <OffrePanel onClose={() => setShowOffrePanel(false)} onToast={onToast} onChanged={reloadAll} session={session} />}
       {showCampPanel && <CampagnePanel onClose={() => setShowCampPanel(false)} onToast={onToast} offres={offres} onChanged={reloadAll} />}
     </div>
   );
