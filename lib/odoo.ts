@@ -25,8 +25,8 @@ async function call(session: OdooSession, endpoint: string, params: any) {
   return result;
 }
 
-export async function searchRead(session: OdooSession, model: string, domain: any[], fields: string[], limit = 0, order = "") {
-  return call(session, "/web/dataset/call_kw", { model, method: "search_read", args: [domain], kwargs: { fields, limit, order } });
+export async function searchRead(session: OdooSession, model: string, domain: any[], fields: string[], limit = 0, order = "", context: Record<string,any> = {}) {
+  return call(session, "/web/dataset/call_kw", { model, method: "search_read", args: [domain], kwargs: { fields, limit, order, context } });
 }
 
 export interface MeaTemplate { id: number; name: string; active: boolean; }
@@ -34,9 +34,9 @@ export interface MeaTemplateLine { productCode: string; productName: string; }
 
 /** Cherche dans les modèles de devis (actifs + archivés) par nom */
 export async function searchMeaTemplates(session: OdooSession, query: string): Promise<MeaTemplate[]> {
-  const active = await searchRead(session, "sale.order.template", [["name","ilike",query.trim()],["active","=",true]], ["id","name","active"], 20);
-  const archived = await searchRead(session, "sale.order.template", [["name","ilike",query.trim()],["active","=",false]], ["id","name","active"], 20);
-  return [...(active||[]).map((r:any) => ({ id:r.id, name:r.name, active:true })), ...(archived||[]).map((r:any) => ({ id:r.id, name:r.name, active:false }))];
+  // active_test:false force Odoo à inclure les enregistrements archivés
+  const all = await searchRead(session, "sale.order.template", [["name","ilike",query.trim()]], ["id","name","active"], 40, "", { active_test: false });
+  return (all||[]).map((r:any) => ({ id: r.id, name: r.name, active: r.active !== false }));
 }
 
 /** Récupère les lignes produits d'un modèle de devis */
