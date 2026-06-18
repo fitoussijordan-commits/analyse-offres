@@ -45,7 +45,7 @@ interface OffreAnalyse { offre: { code: string; label: string }; caTotal: number
 interface CatchallResult { codeInterne: string; data: { caTotal: number; qtyTotal: number; produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[] } | null; }
 interface Payload {
   nom: string; caTotal: number; qtyTotal: number; nbCommandes: number;
-  produits: ProduitCA[]; delegues: DelegueCA[]; categories: ClientStat[]; adherents: ClientStat[];
+  produits: ProduitCA[]; delegues: DelegueCA[]; categories: ClientStat[]; adherents: ClientStat[]; statuts?: ClientStat[];
   results: OffreAnalyse[]; catchalls: CatchallResult[];
   split?: { valide: { qty: number; ca: number }; avenir: { qty: number; ca: number } };
   filterLabel?: string;
@@ -204,6 +204,7 @@ export async function POST(req: NextRequest) {
     buildSyntheseDelegues(wb, p.delegues, p.caTotal);
     buildSyntheseClient(wb, "Catégorie statistique", AMBER, "Catégorie statistique", p.categories, p.caTotal);
     buildSyntheseClient(wb, "Adhérent réseau", GREEN, "Adhérent réseau", p.adherents, p.caTotal);
+    if (p.statuts?.length) buildSyntheseClient(wb, "Statut client", AMBER, "Statut client", p.statuts, p.caTotal);
     for (const r of p.results) buildOffreSheet(wb, r);
     if (p.catchalls.some(c => (c.data?.debugOrders?.length ?? 0) > 0)) buildCommandesNote(wb, p.catchalls);
     buildToutesCommandes(wb, p.results, p.catchalls);

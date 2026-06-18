@@ -264,7 +264,7 @@ function CampagnePanel({ onClose, onToast, offres, onChanged }: { onClose: () =>
 // ════════════════════════════════════════════════════════════════════════════
 // ÉCRAN PRINCIPAL
 // ════════════════════════════════════════════════════════════════════════════
-type Tab = "produits" | "delegues" | "categories" | "adherents" | "offres" | "commandes";
+type Tab = "produits" | "delegues" | "categories" | "adherents" | "statuts" | "offres" | "commandes";
 const FILTERS: [StateFilter, string][] = [["all", "Tout"], ["avenir", "À venir"], ["valide", "Validé"]];
 
 // URL vers la fiche commande Odoo (vue formulaire)
@@ -274,7 +274,7 @@ function odooOrderUrl(baseUrl: string, orderId: number): string {
 }
 
 // Construit la liste dédoublonnée des commandes (offres + notes), comme l'onglet Excel "Toutes Commandes"
-interface CmdRow { id: number; name: string; partner: string; code: string; label: string; type: "Offre" | "Note"; ca: number; avenir: boolean; }
+interface CmdRow { id: number; name: string; partner: string; code: string; label: string; type: "Offre" | "Note"; ca: number; avenir: boolean; orderTotal: number; }
 function buildCommandes(result: CampaignResult): CmdRow[] {
   const seen = new Set<string>();
   const rows: CmdRow[] = [];
@@ -283,7 +283,7 @@ function buildCommandes(result: CampaignResult): CmdRow[] {
       const n = o.name.replace(" (note)", "");
       if (seen.has(n)) continue;
       seen.add(n);
-      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", ca: o.ca ?? 0, avenir: !o.invoiced });
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", ca: o.ca ?? 0, avenir: !o.invoiced, orderTotal: o.orderTotal ?? 0 });
     }
   }
   for (const c of result.catchalls) {
@@ -291,7 +291,7 @@ function buildCommandes(result: CampaignResult): CmdRow[] {
       const n = o.name.replace(" (note)", "");
       if (seen.has(n)) continue;
       seen.add(n);
-      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", ca: o.ca ?? 0, avenir: !o.invoiced });
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", ca: o.ca ?? 0, avenir: !o.invoiced, orderTotal: o.orderTotal ?? 0 });
     }
   }
   return rows.sort((a, b) => a.name.localeCompare(b.name));
@@ -359,7 +359,7 @@ export default function CampagneScreen({ session, onToast }: Props) {
     </div>
   );
 
-  const TABS: [Tab, string][] = [["produits", "Produits"], ["delegues", "Délégués"], ["categories", "Catégorie statistique"], ["adherents", "Adhérent réseau"], ["offres", "Par offre"], ["commandes", "Commandes"]];
+  const TABS: [Tab, string][] = [["produits", "Produits"], ["delegues", "Délégués"], ["categories", "Catégorie statistique"], ["adherents", "Adhérent réseau"], ["statuts", "Statut client"], ["offres", "Par offre"], ["commandes", "Commandes"]];
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: C.bg }}>
@@ -445,6 +445,11 @@ export default function CampagneScreen({ session, onToast }: Props) {
                   <PieChart data={result.adherents.map(a => ({ label: a.name, value: a.ca }))} />
                 </ChartCard>
               )}
+              {result.statuts.filter(s => s.ca > 0).length > 0 && (
+                <ChartCard title="Répartition par statut client">
+                  <PieChart data={result.statuts.map(s => ({ label: s.name, value: s.ca }))} />
+                </ChartCard>
+              )}
               {result.delegues.filter(d => d.ca > 0).length > 0 && (
                 <ChartCard title="Top délégués (CA)">
                   <HBarChart data={result.delegues.slice(0, 8).map(d => ({ label: d.name, value: d.ca }))} color={C.purple} valueFmt={fmtEurShort} />
@@ -490,6 +495,11 @@ export default function CampagneScreen({ session, onToast }: Props) {
                   head={["Adhérent réseau", "Cmd", "Qté", "CA", "% CA"]} aligns={["left", "right", "right", "right", "right"]}
                   rows={result.adherents.map(a => [a.name, fmtNum(a.nbCommandes), fmtNum(a.qtyVendue), fmtEur(a.ca), pctOf(a.ca, result.caTotal)])}
                   total={["TOTAL", fmtNum(result.adherents.reduce((s, a) => s + a.nbCommandes, 0)), fmtNum(result.adherents.reduce((s, a) => s + a.qtyVendue, 0)), fmtEur(result.caTotal), "100,0 %"]}
+                />}
+                {tab === "statuts" && <Tbl
+                  head={["Statut client", "Cmd", "Qté", "CA", "% CA"]} aligns={["left", "right", "right", "right", "right"]}
+                  rows={result.statuts.map(s => [s.name, fmtNum(s.nbCommandes), fmtNum(s.qtyVendue), fmtEur(s.ca), pctOf(s.ca, result.caTotal)])}
+                  total={["TOTAL", fmtNum(result.statuts.reduce((s, x) => s + x.nbCommandes, 0)), fmtNum(result.statuts.reduce((s, x) => s + x.qtyVendue, 0)), fmtEur(result.caTotal), "100,0 %"]}
                 />}
               </div>
             )}
@@ -610,7 +620,7 @@ function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: st
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
               <tr style={{ background: C.bg }}>
-                {["Commande", "Client", "Source", "Libellé", "Type", ""].map((h, i) => <th key={i} style={{ padding: "10px 14px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: i === 4 ? "center" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
+                {["Commande", "Client", "Source", "Libellé", "CA offre", "Total cmd", "Poids", "Type", ""].map((h, i) => <th key={i} style={{ padding: "10px 14px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: (i >= 4 && i <= 6) || i === 7 ? (i === 7 ? "center" : "right") : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -622,6 +632,9 @@ function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: st
                     <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{r.partner || "—"}</td>
                     <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: isNote ? "#f97316" : C.teal, borderBottom: `1px solid ${C.border}`, fontFamily: "monospace" }}>{r.code}</td>
                     <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{r.label}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: C.text, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtEur(r.ca)}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{r.orderTotal > 0 ? fmtEur(r.orderTotal) : "—"}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 700, textAlign: "right", borderBottom: `1px solid ${C.border}`, color: r.orderTotal > 0 ? (r.ca / r.orderTotal >= 0.999 ? C.teal : C.textSec) : C.textMuted }}>{r.orderTotal > 0 ? pctOf(r.ca, r.orderTotal) : "—"}</td>
                     <td style={{ padding: "9px 14px", fontSize: 11, textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
                       <span style={{ fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: isNote ? "#ffedd5" : C.tealSoft, color: isNote ? "#f97316" : C.teal }}>{r.type}</span>
                     </td>

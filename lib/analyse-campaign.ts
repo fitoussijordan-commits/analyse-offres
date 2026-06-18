@@ -9,7 +9,7 @@ export type StateFilter = "all" | "avenir" | "valide";
 export interface ProduitCA { ref: string; name: string; productId: number; qtyVendue: number; ca: number; }
 export interface DelegueCA { userId: number; name: string; qtyVendue: number; ca: number; }
 export interface ClientStat { id: number; name: string; qtyVendue: number; ca: number; nbCommandes: number; }
-export interface DebugOrder { id: number; name: string; partnerName?: string; invoiceStatus?: string; ca?: number; invoiced?: boolean; }
+export interface DebugOrder { id: number; name: string; partnerName?: string; invoiceStatus?: string; ca?: number; invoiced?: boolean; orderTotal?: number; }
 
 export interface OffreAnalyse {
   offre: { code: string; label: string };
@@ -23,7 +23,7 @@ export interface CampaignResult {
   nom: string;
   caTotal: number; qtyTotal: number; nbCommandes: number;
   produits: ProduitCA[]; delegues: DelegueCA[];
-  categories: ClientStat[]; adherents: ClientStat[];
+  categories: ClientStat[]; adherents: ClientStat[]; statuts: ClientStat[];
   perOffre: { code: string; label: string; caTotal: number; qtyTotal: number; error: string | null }[];
   results: OffreAnalyse[];        // détail par offre (+ produits autonomes)
   catchalls: CatchallResult[];    // détail par note
@@ -132,11 +132,11 @@ async function analyseOffre(session: odoo.OdooSession, offre: Offre, filter: Sta
 
   const caByOrder: Record<number, number> = {};
   for (const r of recs) caByOrder[r.orderId] = (caByOrder[r.orderId] || 0) + r.subtotal;
-  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status"], 0);
+  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed"], 0);
   const userByOrder: Record<number, { id: number; name: string }> = {};
   const debugOrders: DebugOrder[] = ords.map((o: any) => {
     if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0 };
+    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0 };
   });
 
   // délégués : qté depuis les packs, CA depuis les composants
@@ -151,7 +151,7 @@ async function analyseOffre(session: odoo.OdooSession, offre: Offre, filter: Sta
 // ── Analyse d'une note interne (catchall historique) ──────────────────────────
 async function analyseNote(session: odoo.OdooSession, note: string, excludeOrderIds: number[], excludeOfferCodes: string[], filter: StateFilter, produitRefs: string[]): Promise<{ res: CatchallResult; recs: LineRec[] }> {
   const oDom = orderDomain(filter);
-  const noteOrders = await odoo.searchRead(session, "sale.order", [["x_note_interne", "ilike", note.trim()], ...oDom], ["id", "name", "user_id", "partner_id", "invoice_status"], 0);
+  const noteOrders = await odoo.searchRead(session, "sale.order", [["x_note_interne", "ilike", note.trim()], ...oDom], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed"], 0);
   const exclude = new Set(excludeOrderIds);
   let orphans = noteOrders.filter((o: any) => !exclude.has(o.id));
   if (orphans.length && excludeOfferCodes.length) {
@@ -191,7 +191,7 @@ async function analyseNote(session: odoo.OdooSession, note: string, excludeOrder
     .filter((o: any) => matchedOrderIds.has(o.id))
     .map((o: any) => {
       if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-      return { id: o.id, name: `${o.name} (note)`, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0 };
+      return { id: o.id, name: `${o.name} (note)`, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0 };
     });
   const um: Record<number, DelegueCA> = {};
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].qtyVendue += r.qty; um[u.id].ca += r.subtotal; }
@@ -219,11 +219,11 @@ async function analyseStandalone(session: odoo.OdooSession, refs: string[], filt
   const orderIds = [...new Set(recs.map(r => r.orderId))];
   const caByOrder: Record<number, number> = {};
   for (const r of recs) caByOrder[r.orderId] = (caByOrder[r.orderId] || 0) + r.subtotal;
-  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status"], 0);
+  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed"], 0);
   const userByOrder: Record<number, { id: number; name: string }> = {};
   const debugOrders: DebugOrder[] = ords.map((o: any) => {
     if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0 };
+    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0 };
   });
   const um: Record<number, DelegueCA> = {};
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].qtyVendue += r.qty; um[u.id].ca += r.subtotal; }
@@ -279,7 +279,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const perOffre = results.map(r => ({ code: r.offre.code, label: r.offre.label, caTotal: r.caTotal, qtyTotal: r.qtyTotal, error: r.error }));
 
   if (!lines.length) {
-    return { nom: campagne.nom, caTotal: 0, qtyTotal: 0, nbCommandes: 0, produits: [], delegues: [], categories: [], adherents: [], perOffre, results, catchalls, split: { valide: { qty: 0, ca: 0 }, avenir: { qty: 0, ca: 0 } }, error: null };
+    return { nom: campagne.nom, caTotal: 0, qtyTotal: 0, nbCommandes: 0, produits: [], delegues: [], categories: [], adherents: [], statuts: [], perOffre, results, catchalls, split: { valide: { qty: 0, ca: 0 }, avenir: { qty: 0, ca: 0 } }, error: null };
   }
 
   // 5. Commandes → user / partner / invoice
@@ -306,15 +306,17 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   for (const r of results) for (const o of r.debugOrders) o.invoiced = isInvoiced(o.id);
   for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) o.invoiced = isInvoiced(o.id);
 
-  // 6. Clients → catégorie statistique + adhérent réseau
+  // 6. Clients → catégorie statistique + adhérent réseau + statut client
   const partnerCat: Record<number, { id: number; name: string }> = {};
   const partnerAdh: Record<number, { id: number; name: string }> = {};
+  const partnerStat: Record<number, { id: number; name: string }> = {};
   if (partnerIds.size) {
     try {
-      const partners = await odoo.searchRead(session, "res.partner", [["id", "in", [...partnerIds]]], ["id", "x_categorie_statistique_id", "x_adherent_reseau_id"], 0);
+      const partners = await odoo.searchRead(session, "res.partner", [["id", "in", [...partnerIds]]], ["id", "x_categorie_statistique_id", "x_adherent_reseau_id", "x_statut_client_id"], 0);
       for (const p of partners) {
         if (p.x_categorie_statistique_id) partnerCat[p.id] = { id: p.x_categorie_statistique_id[0], name: p.x_categorie_statistique_id[1] };
         if (p.x_adherent_reseau_id) partnerAdh[p.id] = { id: p.x_adherent_reseau_id[0], name: p.x_adherent_reseau_id[1] };
+        if (p.x_statut_client_id) partnerStat[p.id] = { id: p.x_statut_client_id[0], name: p.x_statut_client_id[1] };
       }
     } catch { /* champs clients indisponibles */ }
   }
@@ -325,6 +327,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const delMap: Record<number, DelegueCA> = {};
   const catMap: Record<string, ClientStat & { orders: Set<number> }> = {};
   const adhMap: Record<string, ClientStat & { orders: Set<number> }> = {};
+  const statMap: Record<string, ClientStat & { orders: Set<number> }> = {};
   const split = { valide: { qty: 0, ca: 0 }, avenir: { qty: 0, ca: 0 } };
   const NONE = { id: 0, name: "— Non renseigné —" };
 
@@ -343,6 +346,10 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     const ak = String(adh.id);
     if (!adhMap[ak]) adhMap[ak] = { id: adh.id, name: adh.name, qtyVendue: 0, ca: 0, nbCommandes: 0, orders: new Set() };
     adhMap[ak].qtyVendue += l.qty; adhMap[ak].ca += l.subtotal; adhMap[ak].orders.add(l.orderId);
+    const stat = (pid && partnerStat[pid]) || NONE;
+    const sk = String(stat.id);
+    if (!statMap[sk]) statMap[sk] = { id: stat.id, name: stat.name, qtyVendue: 0, ca: 0, nbCommandes: 0, orders: new Set() };
+    statMap[sk].qtyVendue += l.qty; statMap[sk].ca += l.subtotal; statMap[sk].orders.add(l.orderId);
     // Split validé/à venir recalculé une seule fois plus bas (source unique de vérité).
   }
   const finalize = (m: Record<string, ClientStat & { orders: Set<number> }>): ClientStat[] =>
@@ -403,7 +410,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     caTotal, qtyTotal: qtyOffres, nbCommandes: orderIds.length + extraNoteOrders,
     produits: Object.values(prodMap).sort((a, b) => b.ca - a.ca),
     delegues: Object.values(delMap).sort((a, b) => b.ca - a.ca),
-    categories: finalize(catMap), adherents: finalize(adhMap),
+    categories: finalize(catMap), adherents: finalize(adhMap), statuts: finalize(statMap),
     perOffre, results, catchalls, split, error: null,
   };
 }
