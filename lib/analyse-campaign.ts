@@ -343,10 +343,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     const ak = String(adh.id);
     if (!adhMap[ak]) adhMap[ak] = { id: adh.id, name: adh.name, qtyVendue: 0, ca: 0, nbCommandes: 0, orders: new Set() };
     adhMap[ak].qtyVendue += l.qty; adhMap[ak].ca += l.subtotal; adhMap[ak].orders.add(l.orderId);
-    if (filter === "all") {
-      if (isInvoiced(l.orderId)) { split.valide.qty += l.qty; split.valide.ca += l.subtotal; }
-      else { split.avenir.qty += l.qty; split.avenir.ca += l.subtotal; }
-    }
+    // Split validé/à venir recalculé une seule fois plus bas (source unique de vérité).
   }
   const finalize = (m: Record<string, ClientStat & { orders: Set<number> }>): ClientStat[] =>
     Object.values(m).map(({ orders, ...rest }) => ({ ...rest, nbCommandes: orders.size })).sort((a, b) => b.ca - a.ca);
@@ -368,14 +365,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
       if (!delMap[d.userId]) delMap[d.userId] = { userId: d.userId, name: d.name, qtyVendue: 0, ca: 0 };
       delMap[d.userId].qtyVendue += d.qtyVendue; delMap[d.userId].ca += d.ca;
     }
-    if (filter === "all") {
-      // Répartition validé / à venir par commande notée selon sa facturation réelle
-      for (const o of c.data.debugOrders) {
-        const ca = o.ca ?? 0;
-        if (isInvoiced(o.id)) { split.valide.qty += 1; split.valide.ca += ca; }
-        else { split.avenir.qty += 1; split.avenir.ca += ca; }
-      }
-    }
+    // Le split validé/à venir est recalculé une seule fois plus bas (sur toutes les commandes).
   }
   void lineIds;
 
@@ -384,12 +374,24 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const caDetail = results.reduce((s, r) => s + (r.caTotal || 0), 0) + catchalls.reduce((s, c) => s + (c.data?.caTotal || 0), 0);
   caTotal = caDetail;
 
-  // Le split validé/à venir doit lui aussi sommer au CA total. On rattache au "à venir"
-  // l'écart non couvert par l'agrégation par ligne (notamment le CA des notes).
+  // Split validé / à venir : recalculé directement à partir du CA par commande et de son
+  // statut de facturation réel, sur TOUTES les commandes (offres + notes). Cela garantit
+  // valide + avenir = caTotal sans écart résiduel injecté artificiellement en "à venir".
   if (filter === "all") {
-    const splitSum = split.valide.ca + split.avenir.ca;
-    const missing = caTotal - splitSum;
-    if (Math.abs(missing) > 0.5) split.avenir.ca += missing;
+    split.valide = { qty: 0, ca: 0 };
+    split.avenir = { qty: 0, ca: 0 };
+    // On somme le CA propre de chaque commande de chaque source (offres + notes), exactement
+    // comme caTotal est construit, pour garantir valide + avenir = caTotal.
+    const seenForQty = new Set<number>();
+    const tally = (o: DebugOrder) => {
+      const ca = o.ca ?? 0;
+      const newOrder = !seenForQty.has(o.id);
+      if (newOrder) seenForQty.add(o.id);
+      if (isInvoiced(o.id)) { split.valide.ca += ca; if (newOrder) split.valide.qty += 1; }
+      else { split.avenir.ca += ca; if (newOrder) split.avenir.qty += 1; }
+    };
+    for (const r of results) for (const o of r.debugOrders) tally(o);
+    for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) tally(o);
   }
 
   // Quantité campagne = offres vendues (packs) + unités produits autonomes + commandes notées
