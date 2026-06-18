@@ -9,7 +9,7 @@ export type StateFilter = "all" | "avenir" | "valide";
 export interface ProduitCA { ref: string; name: string; productId: number; qtyVendue: number; ca: number; }
 export interface DelegueCA { userId: number; name: string; qtyVendue: number; ca: number; }
 export interface ClientStat { id: number; name: string; qtyVendue: number; ca: number; nbCommandes: number; }
-export interface DebugOrder { id: number; name: string; partnerName?: string; invoiceStatus?: string; }
+export interface DebugOrder { id: number; name: string; partnerName?: string; invoiceStatus?: string; ca?: number; }
 
 export interface OffreAnalyse {
   offre: { code: string; label: string };
@@ -100,11 +100,13 @@ async function analyseOffre(session: odoo.OdooSession, offre: Offre, filter: Sta
     caTotal = produits.reduce((s, p) => s + p.ca, 0);
   }
 
+  const caByOrder: Record<number, number> = {};
+  for (const r of recs) caByOrder[r.orderId] = (caByOrder[r.orderId] || 0) + r.subtotal;
   const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status"], 0);
   const userByOrder: Record<number, { id: number; name: string }> = {};
   const debugOrders: DebugOrder[] = ords.map((o: any) => {
     if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status };
+    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0 };
   });
 
   // délégués : qté depuis les packs, CA depuis les composants
@@ -152,12 +154,14 @@ async function analyseNote(session: odoo.OdooSession, note: string, excludeOrder
   // On ne retient que les commandes ayant au moins une ligne dans le périmètre campagne :
   // une commande notée sans aucun produit de la campagne ne doit pas être comptée.
   const matchedOrderIds = new Set(recs.map(r => r.orderId));
+  const caByOrder: Record<number, number> = {};
+  for (const r of recs) caByOrder[r.orderId] = (caByOrder[r.orderId] || 0) + r.subtotal;
   const userByOrder: Record<number, { id: number; name: string }> = {};
   const debugOrders: DebugOrder[] = orphans
     .filter((o: any) => matchedOrderIds.has(o.id))
     .map((o: any) => {
       if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-      return { id: o.id, name: `${o.name} (note)`, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status };
+      return { id: o.id, name: `${o.name} (note)`, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0 };
     });
   const um: Record<number, DelegueCA> = {};
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].qtyVendue += r.qty; um[u.id].ca += r.subtotal; }
@@ -183,11 +187,13 @@ async function analyseStandalone(session: odoo.OdooSession, refs: string[], filt
   const qtyTotal = produits.reduce((s, p) => s + p.qtyVendue, 0);
 
   const orderIds = [...new Set(recs.map(r => r.orderId))];
+  const caByOrder: Record<number, number> = {};
+  for (const r of recs) caByOrder[r.orderId] = (caByOrder[r.orderId] || 0) + r.subtotal;
   const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status"], 0);
   const userByOrder: Record<number, { id: number; name: string }> = {};
   const debugOrders: DebugOrder[] = ords.map((o: any) => {
     if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status };
+    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0 };
   });
   const um: Record<number, DelegueCA> = {};
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].qtyVendue += r.qty; um[u.id].ca += r.subtotal; }

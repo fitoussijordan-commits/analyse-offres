@@ -274,7 +274,7 @@ function odooOrderUrl(baseUrl: string, orderId: number): string {
 }
 
 // Construit la liste dédoublonnée des commandes (offres + notes), comme l'onglet Excel "Toutes Commandes"
-interface CmdRow { id: number; name: string; partner: string; code: string; label: string; type: "Offre" | "Note"; }
+interface CmdRow { id: number; name: string; partner: string; code: string; label: string; type: "Offre" | "Note"; ca: number; avenir: boolean; }
 function buildCommandes(result: CampaignResult): CmdRow[] {
   const seen = new Set<string>();
   const rows: CmdRow[] = [];
@@ -283,7 +283,7 @@ function buildCommandes(result: CampaignResult): CmdRow[] {
       const n = o.name.replace(" (note)", "");
       if (seen.has(n)) continue;
       seen.add(n);
-      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre" });
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", ca: o.ca ?? 0, avenir: o.invoiceStatus !== "invoiced" });
     }
   }
   for (const c of result.catchalls) {
@@ -291,7 +291,7 @@ function buildCommandes(result: CampaignResult): CmdRow[] {
       const n = o.name.replace(" (note)", "");
       if (seen.has(n)) continue;
       seen.add(n);
-      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note" });
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", ca: o.ca ?? 0, avenir: o.invoiceStatus !== "invoiced" });
     }
   }
   return rows.sort((a, b) => a.name.localeCompare(b.name));
@@ -594,7 +594,10 @@ function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: st
   const filtered = q.trim() ? all.filter(r => (r.name + " " + r.partner + " " + r.code + " " + r.label).toLowerCase().includes(q.trim().toLowerCase())) : all;
   const nbOffre = all.filter(r => r.type === "Offre").length;
   const nbNote = all.filter(r => r.type === "Note").length;
+  const avenir = all.filter(r => r.avenir).sort((a, b) => b.ca - a.ca);
+  const caAvenir = avenir.reduce((s, r) => s + r.ca, 0);
   return (
+   <>
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
       <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Rechercher (commande, client, offre…)" style={{ flex: "1 1 240px", maxWidth: 360, padding: "7px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit", outline: "none", color: C.text }} />
@@ -633,5 +636,42 @@ function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: st
         </div>
       )}
     </div>
+
+    {/* ── Section CA à venir ──────────────────────────────────────────────── */}
+    <div style={{ marginTop: 18, background: C.white, border: `1px solid ${C.amber}55`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: C.amberSoft }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#b45309" }}>Commandes — CA à venir</span>
+        <span style={{ fontSize: 12, color: C.textMuted }}>{fmtNum(avenir.length)} commande(s)</span>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 15, fontWeight: 800, color: C.amber }}>{fmtEur(caAvenir)}</span>
+      </div>
+      {avenir.length === 0 ? (
+        <div style={{ padding: 24, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucune commande à venir — tout est facturé</div>
+      ) : (
+        <div style={{ maxHeight: 420, overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
+              <tr style={{ background: C.bg }}>
+                {["Commande", "Client", "Source", "CA à venir", ""].map((h, i) => <th key={i} style={{ padding: "10px 14px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: i === 3 ? "right" : i === 4 ? "center" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {avenir.map((r, ri) => (
+                <tr key={r.name} style={{ background: ri % 2 ? "#f9fafb" : C.white }}>
+                  <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.border}`, fontFamily: "monospace" }}>{r.name}</td>
+                  <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{r.partner || "—"}</td>
+                  <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: r.type === "Note" ? "#f97316" : C.teal, borderBottom: `1px solid ${C.border}`, fontFamily: "monospace" }}>{r.code}</td>
+                  <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 700, color: C.amber, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtEur(r.ca)}</td>
+                  <td style={{ padding: "9px 14px", textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
+                    <a href={odooOrderUrl(baseUrl, r.id)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontWeight: 600, color: C.blue, textDecoration: "none", whiteSpace: "nowrap" }} title="Ouvrir dans Odoo">Odoo ↗</a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+   </>
   );
 }
