@@ -517,29 +517,31 @@ export default function CampagneScreen({ session, onToast }: Props) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Onglet "Préco N+1" : sélection des produits conservés → recommandation par statut
+// Onglet "Préco N+1" : produits conservés PAR PALIER (offre) → besoin fournisseur
 // ════════════════════════════════════════════════════════════════════════════
 function PrecoTab({ result, onToast }: { result: CampaignResult; onToast: Props["onToast"] }) {
-  // Produits sélectionnables = produits de la campagne actuelle (triés par CA)
-  const produits = result.produits.filter(p => p.ca > 0);
-  const [conserved, setConserved] = useState<Set<number>>(() => new Set(produits.map(p => p.productId)));
+  // État : produits conservés par code offre (palier). Par défaut, tout est conservé.
+  const initial = () => {
+    const m: Record<string, Set<number>> = {};
+    for (const r of result.results) if (!r.error) m[r.offre.code] = new Set(r.produits.map(p => p.productId));
+    return m;
+  };
+  const [conserved, setConserved] = useState<Record<string, Set<number>>>(initial);
   const [exporting, setExporting] = useState(false);
 
-  const toggle = (id: number) => setConserved(prev => {
-    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+  const toggle = (code: string, id: number) => setConserved(prev => {
+    const n = { ...prev }; const set = new Set(n[code] ?? []);
+    set.has(id) ? set.delete(id) : set.add(id); n[code] = set; return n;
   });
-  const allOn = () => setConserved(new Set(produits.map(p => p.productId)));
-  const allOff = () => setConserved(new Set());
 
-  const preco = buildPreco(result, [...conserved]);
+  const conservedIds: Record<string, number[]> = {};
+  for (const k of Object.keys(conserved)) conservedIds[k] = [...conserved[k]];
+  const preco = buildPreco(result, conservedIds);
 
   const exportPreco = async () => {
     setExporting(true);
     try {
-      const res = await fetch("/api/export-preco", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(preco),
-      });
+      const res = await fetch("/api/export-preco", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(preco) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = `preco_${result.nom.replace(/[^a-zA-Z0-9_-]+/g, "_")}.xlsx`; a.click(); URL.revokeObjectURL(url);
@@ -548,88 +550,89 @@ function PrecoTab({ result, onToast }: { result: CampaignResult; onToast: Props[
     finally { setExporting(false); }
   };
 
-  if (!produits.length) return <div style={{ padding: 30, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucun produit à analyser pour la préconisation.</div>;
+  if (!preco.paliers.length) return <div style={{ padding: 30, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucun palier (offre) à analyser pour la préconisation.</div>;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Sélection des produits conservés */}
-      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
-        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Produits conservés pour l'offre N+1</span>
-          <span style={{ fontSize: 12, color: C.textMuted }}>{conserved.size}/{produits.length} sélectionné(s)</span>
-          <div style={{ flex: 1 }} />
-          <button onClick={allOn} style={{ padding: "5px 10px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.textSec, fontFamily: "inherit" }}>Tout cocher</button>
-          <button onClick={allOff} style={{ padding: "5px 10px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.textSec, fontFamily: "inherit" }}>Tout décocher</button>
-          <button onClick={exportPreco} disabled={exporting} style={{ padding: "6px 14px", background: C.teal, border: "none", borderRadius: 7, cursor: exporting ? "default" : "pointer", fontSize: 12, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter la préco"}</button>
-        </div>
-        <div style={{ maxHeight: 280, overflowY: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <tbody>
-              {produits.map((p, ri) => {
-                const on = conserved.has(p.productId);
-                return (
-                  <tr key={p.productId} onClick={() => toggle(p.productId)} style={{ cursor: "pointer", background: on ? C.tealSoft : ri % 2 ? "#f9fafb" : C.white }}>
-                    <td style={{ padding: "8px 14px", width: 36, borderBottom: `1px solid ${C.border}` }}>
-                      <input type="checkbox" checked={on} onChange={() => toggle(p.productId)} style={{ cursor: "pointer" }} />
-                    </td>
-                    <td style={{ padding: "8px 14px", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.ref}</td>
-                    <td style={{ padding: "8px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.name}</td>
-                    <td style={{ padding: "8px 14px", fontSize: 13, color: C.textSec, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtEur(p.ca)}</td>
-                    <td style={{ padding: "8px 14px", fontSize: 12, color: C.textMuted, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{pctOf(p.ca, result.caTotal)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+      {/* Barre d'action */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Construction de l'offre N+1 par palier</span>
+        <span style={{ fontSize: 12, color: C.textMuted }}>Décoche les produits que tu ne reconduis pas dans chaque offre.</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={exportPreco} disabled={exporting} style={{ padding: "7px 16px", background: C.teal, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter (préco + besoin fournisseur)"}</button>
       </div>
 
-      {/* Recommandation par statut client */}
-      {preco.parStatut.filter(s => s.caSegment > 0).map(s => (
-        <div key={s.statut} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
-          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: C.purpleSoft, display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 14, fontWeight: 800, color: C.purple }}>{s.statut}</span>
-            <span style={{ fontSize: 12, color: C.textMuted }}>CA segment : {fmtEur(s.caSegment)}</span>
-          </div>
-          <div style={{ padding: "14px 16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            {/* Conservés */}
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.teal, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>✓ Conservés — perf sur ce statut</div>
-              {s.conserves.length === 0 ? <div style={{ fontSize: 12, color: C.textMuted }}>Aucun produit conservé ne vend sur ce segment.</div> : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {s.conserves.map(p => (
-                    <div key={p.productId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                      <span style={{ fontFamily: "monospace", fontWeight: 600, color: C.text }}>{p.ref}</span>
-                      <span style={{ color: C.textSec, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-                      <span style={{ color: C.textMuted }}>{fmtEur(p.ca)}</span>
-                      <span style={{ fontWeight: 700, color: p.pctSegment < 0.02 ? C.red : C.teal, width: 52, textAlign: "right" }}>{(p.pctSegment * 100).toFixed(1).replace(".", ",")}%</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {s.aRetirer.length > 0 && (
-                <div style={{ marginTop: 10, fontSize: 11, color: C.red }}>⚠ Faibles sur ce statut (&lt;2%) : {s.aRetirer.map(p => p.ref).join(", ")}</div>
-              )}
+      {/* Un bloc par palier (offre) */}
+      {preco.paliers.map(pal => {
+        const nbConserves = pal.produits.filter(p => p.conserve).length;
+        return (
+          <div key={pal.code} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+            <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: C.blueSoft, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: C.blue, color: "#fff", borderRadius: 5, padding: "2px 8px" }}>{pal.code}</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{pal.label || "Offre"}</span>
+              <span style={{ fontSize: 12, color: C.textMuted }}>{fmtEur(pal.caTotal)} · {fmtNum(pal.qtyPacks)} pack(s)</span>
+              <div style={{ flex: 1 }} />
+              <span style={{ fontSize: 12, color: C.textMuted }}>{nbConserves}/{pal.produits.length} conservé(s)</span>
             </div>
-            {/* Candidats à ajouter */}
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>★ À ajouter — top ventes du segment</div>
-              {s.candidats.length === 0 ? <div style={{ fontSize: 12, color: C.textMuted }}>Pas de candidat hors produits conservés.</div> : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {s.candidats.map(p => (
-                    <div key={p.productId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                      <span style={{ fontFamily: "monospace", fontWeight: 600, color: C.text }}>{p.ref}</span>
-                      <span style={{ color: C.textSec, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-                      <span style={{ color: C.textMuted }}>{fmtEur(p.ca)}</span>
-                      <span style={{ fontWeight: 700, color: C.amber, width: 52, textAlign: "right" }}>{(p.pctSegment * 100).toFixed(1).replace(".", ",")}%</span>
-                    </div>
+            <div style={{ maxHeight: 320, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
+                  <tr style={{ background: C.bg }}>
+                    {["", "Réf", "Produit", "Qté vendue", "CA"].map((h, i) => <th key={i} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: i >= 3 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pal.produits.map((p, ri) => (
+                    <tr key={p.productId} onClick={() => toggle(pal.code, p.productId)} style={{ cursor: "pointer", background: p.conserve ? C.tealSoft : ri % 2 ? "#f9fafb" : C.white, opacity: p.conserve ? 1 : 0.55 }}>
+                      <td style={{ padding: "8px 14px", width: 36, borderBottom: `1px solid ${C.border}` }}>
+                        <input type="checkbox" checked={p.conserve} onChange={() => toggle(pal.code, p.productId)} style={{ cursor: "pointer" }} />
+                      </td>
+                      <td style={{ padding: "8px 14px", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.ref}</td>
+                      <td style={{ padding: "8px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.name}</td>
+                      <td style={{ padding: "8px 14px", fontSize: 13, fontWeight: 700, color: C.text, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtNum(p.qty)}</td>
+                      <td style={{ padding: "8px 14px", fontSize: 13, color: C.textSec, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtEur(p.ca)}</td>
+                    </tr>
                   ))}
-                </div>
-              )}
+                </tbody>
+              </table>
             </div>
           </div>
+        );
+      })}
+
+      {/* Récap besoin fournisseur (par produit, total) */}
+      <div style={{ background: C.white, border: `2px solid ${C.teal}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadowMd }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: C.tealSoft, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: C.teal }}>📦 Besoin en commande fournisseur</span>
+          <span style={{ fontSize: 12, color: C.textMuted }}>Quantités à commander pour l'offre N+1 (base : ventes campagne actuelle)</span>
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 13, fontWeight: 800, color: C.teal }}>Total : {fmtNum(preco.totalQty)} u</span>
         </div>
-      ))}
+        {preco.besoins.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucun produit conservé — coche des produits dans les paliers ci-dessus.</div>
+        ) : (
+          <div style={{ maxHeight: 480, overflowY: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
+                <tr style={{ background: C.bg }}>
+                  {["Réf", "Produit", "Paliers", "Qté à commander", "CA associé"].map((h, i) => <th key={i} style={{ padding: "10px 14px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: i >= 3 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {preco.besoins.map((b, ri) => (
+                  <tr key={b.productId} style={{ background: ri % 2 ? "#f9fafb" : C.white }}>
+                    <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{b.ref}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{b.name}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 12, color: C.textMuted, fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{b.paliers.join(", ")}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 14, fontWeight: 800, color: C.teal, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtNum(b.qty)}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtEur(b.ca)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

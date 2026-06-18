@@ -1,96 +1,64 @@
 // lib/preco.ts — Préconisation d'offre N+1 (rôle trade marketing / chef de projet)
-// À partir des produits conservés + du croisement produit × statut client de la campagne
-// actuelle, génère une recommandation d'offre par statut client.
-import type { CampaignResult, ProduitStatut } from "@/lib/analyse-campaign";
+// Logique : un PALIER = un code offre de la campagne. L'utilisateur conserve des produits
+// par palier ; on en déduit le besoin de commande fournisseur (quantités vendues campagne,
+// agrégées par produit, tous paliers confondus).
+import type { CampaignResult } from "@/lib/analyse-campaign";
 
-export interface PrecoProduit {
+export interface PrecoLigne {
   ref: string; name: string; productId: number;
-  ca: number; qty: number;          // perf sur le segment concerné
-  pctSegment: number;               // part du CA produit dans le CA total du segment
-  conserve: boolean;                // fait partie des produits conservés
+  ca: number; qty: number;          // perf du produit sur ce palier (campagne actuelle)
+  conserve: boolean;
 }
 
-export interface PrecoStatut {
-  statut: string;
-  caSegment: number;                // CA total du segment (tous produits campagne)
-  conserves: PrecoProduit[];        // produits conservés, perf sur ce segment
-  candidats: PrecoProduit[];        // produits à AJOUTER : performants sur ce segment, non conservés
-  aRetirer: PrecoProduit[];         // produits conservés mais faibles sur ce segment
+export interface PrecoPalier {
+  code: string; label: string;      // code offre + libellé
+  caTotal: number; qtyPacks: number;
+  produits: PrecoLigne[];           // composants du palier, triés par CA
+}
+
+export interface BesoinFournisseur {
+  ref: string; name: string; productId: number;
+  qty: number;                      // quantité totale à commander (somme paliers conservés)
+  ca: number;                       // CA associé (info)
+  paliers: string[];               // codes offre où ce produit est conservé
 }
 
 export interface PrecoResult {
   nom: string;
-  produitsConserves: { ref: string; name: string; productId: number }[];
-  parStatut: PrecoStatut[];
-  global: { candidats: PrecoProduit[]; conserves: PrecoProduit[] };
+  paliers: PrecoPalier[];
+  besoins: BesoinFournisseur[];     // récap commande fournisseur, par produit
+  totalQty: number;
 }
 
-// Seuils (ajustables)
-const TOP_CANDIDATS = 5;          // nb max de candidats proposés par segment
-const SEUIL_FAIBLE = 0.02;        // < 2% du CA segment => produit conservé jugé faible sur ce segment
-
 /**
- * Construit la préconisation N+1.
- * @param result  résultat d'analyse de la campagne actuelle
- * @param conservedIds  ids des produits (productId) que l'utilisateur conserve dans l'offre
+ * Construit la préconisation N+1 par palier (offre) + le besoin fournisseur.
+ * @param result        résultat d'analyse de la campagne actuelle
+ * @param conservedIds  ids des produits conservés, par code offre : { [code]: number[] }
  */
-export function buildPreco(result: CampaignResult, conservedIds: number[]): PrecoResult {
-  const conserved = new Set(conservedIds);
-  const pps = result.produitsParStatut;
-
-  // Référentiel produits conservés (nom/ref via le croisement, sinon via produits)
-  const refIndex = new Map<number, ProduitStatut>();
-  for (const p of pps) refIndex.set(p.productId, p);
-  const produitsConserves = conservedIds.map(id => {
-    const p = refIndex.get(id) || result.produits.find(x => x.productId === id);
-    return { ref: p?.ref || "", name: p?.name || "", productId: id };
-  });
-
-  // CA par statut (segment) à partir des stats globales
-  const caParStatut = new Map<string, number>();
-  for (const s of result.statuts) caParStatut.set(s.name, s.ca);
-
-  // Liste des statuts présents, triés par CA décroissant
-  const statutsTries = [...result.statuts].sort((a, b) => b.ca - a.ca).map(s => s.name);
-
-  const parStatut: PrecoStatut[] = statutsTries.map(statut => {
-    const caSegment = caParStatut.get(statut) || 0;
-    // Tous les produits ayant vendu sur ce segment, triés par CA segment
-    const surSegment = pps
-      .map(p => {
-        const v = p.parStatut[statut];
-        return v ? { p, ca: v.ca, qty: v.qty } : null;
-      })
-      .filter((x): x is { p: ProduitStatut; ca: number; qty: number } => !!x && x.ca > 0)
-      .sort((a, b) => b.ca - a.ca);
-
-    const mk = (x: { p: ProduitStatut; ca: number; qty: number }): PrecoProduit => ({
-      ref: x.p.ref, name: x.p.name, productId: x.p.productId,
-      ca: x.ca, qty: x.qty,
-      pctSegment: caSegment > 0 ? x.ca / caSegment : 0,
-      conserve: conserved.has(x.p.productId),
+export function buildPreco(result: CampaignResult, conservedIds: Record<string, number[]>): PrecoResult {
+  const paliers: PrecoPalier[] = result.results
+    .filter(r => !r.error && (r.caTotal > 0 || r.qtyTotal > 0))
+    .map(r => {
+      const conserved = new Set(conservedIds[r.offre.code] ?? r.produits.map(p => p.productId));
+      const produits: PrecoLigne[] = [...r.produits]
+        .sort((a, b) => b.ca - a.ca)
+        .map(p => ({ ref: p.ref, name: p.name, productId: p.productId, ca: p.ca, qty: p.qtyVendue, conserve: conserved.has(p.productId) }));
+      return { code: r.offre.code, label: r.offre.label, caTotal: r.caTotal, qtyPacks: r.qtyTotal, produits };
     });
 
-    const conserves = surSegment.filter(x => conserved.has(x.p.productId)).map(mk);
-    // Candidats à ajouter : non conservés, meilleurs vendeurs du segment
-    const candidats = surSegment.filter(x => !conserved.has(x.p.productId)).slice(0, TOP_CANDIDATS).map(mk);
-    // Produits conservés mais faibles sur ce segment
-    const aRetirer = conserves.filter(c => c.pctSegment < SEUIL_FAIBLE);
+  // Besoin fournisseur : agrégation par produit des quantités CONSERVÉES, tous paliers
+  const besoinMap = new Map<number, BesoinFournisseur>();
+  for (const pal of paliers) {
+    for (const p of pal.produits) {
+      if (!p.conserve) continue;
+      let b = besoinMap.get(p.productId);
+      if (!b) { b = { ref: p.ref, name: p.name, productId: p.productId, qty: 0, ca: 0, paliers: [] }; besoinMap.set(p.productId, b); }
+      b.qty += p.qty; b.ca += p.ca;
+      if (!b.paliers.includes(pal.code)) b.paliers.push(pal.code);
+    }
+  }
+  const besoins = [...besoinMap.values()].sort((a, b) => b.qty - a.qty);
+  const totalQty = besoins.reduce((s, b) => s + b.qty, 0);
 
-    return { statut, caSegment, conserves, candidats, aRetirer };
-  });
-
-  // Reco globale (tous segments confondus)
-  const sortedAll = [...pps].sort((a, b) => b.ca - a.ca);
-  const caTotal = result.caTotal || 0;
-  const toGlobal = (p: ProduitStatut): PrecoProduit => ({
-    ref: p.ref, name: p.name, productId: p.productId, ca: p.ca, qty: p.qtyVendue,
-    pctSegment: caTotal > 0 ? p.ca / caTotal : 0, conserve: conserved.has(p.productId),
-  });
-  const global = {
-    conserves: sortedAll.filter(p => conserved.has(p.productId)).map(toGlobal),
-    candidats: sortedAll.filter(p => !conserved.has(p.productId)).slice(0, TOP_CANDIDATS).map(toGlobal),
-  };
-
-  return { nom: result.nom, produitsConserves, parStatut, global };
+  return { nom: result.nom, paliers, besoins, totalQty };
 }

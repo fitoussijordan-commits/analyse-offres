@@ -1,14 +1,12 @@
-// app/api/export-preco/route.ts — Export Excel de la préconisation d'offre N+1
+// app/api/export-preco/route.ts — Export Excel de la préco N+1 par palier + besoin fournisseur
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 
 export const maxDuration = 30;
 
 const TEAL = "0D9488";
-const AMBER = "F59E0B";
-const PURPLE = "7C3AED";
-const RED = "EF4444";
-const DARK = "1A1A2E", WHITE = "FFFFFF";
+const BLUE = "3B82F6";
+const DARK = "1A1A2E", WHITE = "FFFFFF", GRAY = "9CA3AF";
 
 function border(): any { return { top: { style: "thin", color: { argb: "FFE5E7EB" } }, bottom: { style: "thin", color: { argb: "FFE5E7EB" } }, left: { style: "thin", color: { argb: "FFE5E7EB" } }, right: { style: "thin", color: { argb: "FFE5E7EB" } } }; }
 function headRow(ws: ExcelJS.Worksheet, cols: string[], bg: string) {
@@ -25,17 +23,18 @@ function titleRow(ws: ExcelJS.Worksheet, text: string, bg: string, span: number)
   c.alignment = { horizontal: "left", vertical: "middle", indent: 1 };
   return r;
 }
-const eur = (c: ExcelJS.Cell) => { c.numFmt = '#,##0 "€"'; };
-const pct = (c: ExcelJS.Cell) => { c.numFmt = "0.0%"; };
-
-interface PrecoProduit { ref: string; name: string; productId: number; ca: number; qty: number; pctSegment: number; conserve: boolean; }
-interface PrecoStatut { statut: string; caSegment: number; conserves: PrecoProduit[]; candidats: PrecoProduit[]; aRetirer: PrecoProduit[]; }
-interface PrecoResult {
-  nom: string;
-  produitsConserves: { ref: string; name: string; productId: number }[];
-  parStatut: PrecoStatut[];
-  global: { candidats: PrecoProduit[]; conserves: PrecoProduit[] };
+function dataRow(ws: ExcelJS.Worksheet, vals: any[], muted = false) {
+  const r = ws.addRow(vals);
+  r.eachCell(cell => { cell.border = border(); cell.font = { size: 10, name: "Calibri", color: { argb: "FF" + (muted ? GRAY : DARK) } }; });
+  return r;
 }
+const eur = (c: ExcelJS.Cell) => { c.numFmt = '#,##0 "€"'; };
+const num = (c: ExcelJS.Cell) => { c.numFmt = "#,##0"; };
+
+interface PrecoLigne { ref: string; name: string; productId: number; ca: number; qty: number; conserve: boolean; }
+interface PrecoPalier { code: string; label: string; caTotal: number; qtyPacks: number; produits: PrecoLigne[]; }
+interface BesoinFournisseur { ref: string; name: string; productId: number; qty: number; ca: number; paliers: string[]; }
+interface PrecoResult { nom: string; paliers: PrecoPalier[]; besoins: BesoinFournisseur[]; totalQty: number; }
 
 export async function POST(req: NextRequest) {
   try {
@@ -43,68 +42,38 @@ export async function POST(req: NextRequest) {
     const wb = new ExcelJS.Workbook();
     wb.creator = "Analyse Offres"; wb.created = new Date();
 
-    // ── Onglet Synthèse ───────────────────────────────────────────────────────
-    const ws = wb.addWorksheet("Préco N+1", { views: [{ showGridLines: false }] });
-    ws.columns = [{ width: 16 }, { width: 44 }, { width: 14 }, { width: 12 }, { width: 12 }];
-
-    titleRow(ws, `Préconisation offre N+1 — basée sur « ${p.nom} »`, PURPLE, 5);
-    ws.addRow([]);
-
-    // Produits conservés
-    titleRow(ws, "Produits conservés dans l'offre", TEAL, 5);
-    headRow(ws, ["Réf", "Produit", "", "", ""], TEAL);
-    for (const c of p.produitsConserves) {
-      const r = ws.addRow([c.ref, c.name]);
-      r.eachCell(cell => { cell.border = border(); cell.font = { size: 10, name: "Calibri", color: { argb: "FF" + DARK } }; });
+    // ── Onglet 1 : Besoin fournisseur (la finalité) ─────────────────────────────
+    const fw = wb.addWorksheet("Besoin fournisseur", { views: [{ showGridLines: false }] });
+    fw.columns = [{ width: 16 }, { width: 46 }, { width: 18 }, { width: 18 }, { width: 14 }];
+    titleRow(fw, `Besoin en commande fournisseur — offre N+1 (base « ${p.nom} »)`, TEAL, 5);
+    fw.addRow([]);
+    headRow(fw, ["Réf", "Produit", "Paliers", "Qté à commander", "CA associé"], TEAL);
+    for (const b of p.besoins) {
+      const r = dataRow(fw, [b.ref, b.name, b.paliers.join(", "), b.qty, b.ca]);
+      num(r.getCell(4)); eur(r.getCell(5));
+      r.getCell(4).font = { bold: true, size: 11, name: "Calibri", color: { argb: "FF" + DARK } };
     }
-    if (!p.produitsConserves.length) ws.addRow(["—", "Aucun produit conservé"]);
-    ws.addRow([]);
+    // Ligne total
+    const tr = fw.addRow(["", "TOTAL", "", p.totalQty, ""]);
+    tr.eachCell(c => { c.border = border(); c.font = { bold: true, size: 11, name: "Calibri", color: { argb: "FF" + WHITE } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } }; });
+    num(tr.getCell(4));
+    if (!p.besoins.length) fw.addRow(["—", "Aucun produit conservé"]);
 
-    // Reco globale — candidats à ajouter
-    titleRow(ws, "Candidats à ajouter (top ventes campagne)", AMBER, 5);
-    headRow(ws, ["Réf", "Produit", "CA", "Qté", "% CA"], AMBER);
-    for (const c of p.global.candidats) {
-      const r = ws.addRow([c.ref, c.name, c.ca, c.qty, c.pctSegment]);
-      r.eachCell(cell => { cell.border = border(); cell.font = { size: 10, name: "Calibri", color: { argb: "FF" + DARK } }; });
-      eur(r.getCell(3)); pct(r.getCell(5));
-    }
-    ws.addRow([]);
-
-    // ── Un onglet par statut client ───────────────────────────────────────────
-    for (const s of p.parStatut.filter(x => x.caSegment > 0)) {
-      const safe = s.statut.replace(/[\\/?*[\]:]/g, "").slice(0, 28) || "Statut";
+    // ── Un onglet par palier (offre) ────────────────────────────────────────────
+    for (const pal of p.paliers) {
+      const safe = (pal.code || "Offre").replace(/[\\/?*[\]:]/g, "").slice(0, 28);
       const sw = wb.addWorksheet(safe, { views: [{ showGridLines: false }] });
-      sw.columns = [{ width: 16 }, { width: 44 }, { width: 14 }, { width: 12 }, { width: 12 }];
-
-      titleRow(sw, `Statut client : ${s.statut}`, PURPLE, 5);
-      const caRow = sw.addRow(["CA du segment", "", s.caSegment]); eur(caRow.getCell(3));
-      caRow.getCell(1).font = { bold: true, size: 10, name: "Calibri" };
+      sw.columns = [{ width: 16 }, { width: 46 }, { width: 14 }, { width: 14 }, { width: 12 }];
+      titleRow(sw, `Palier ${pal.code} — ${pal.label || "Offre"}`, BLUE, 5);
+      const info = sw.addRow([`CA palier : `, "", pal.caTotal, "", `${pal.qtyPacks} pack(s)`]);
+      eur(info.getCell(3)); info.getCell(1).font = { bold: true, size: 10, name: "Calibri" };
       sw.addRow([]);
-
-      titleRow(sw, "✓ Produits conservés — perf sur ce statut", TEAL, 5);
-      headRow(sw, ["Réf", "Produit", "CA", "Qté", "% segment"], TEAL);
-      for (const c of s.conserves) {
-        const r = sw.addRow([c.ref, c.name, c.ca, c.qty, c.pctSegment]);
-        r.eachCell(cell => { cell.border = border(); cell.font = { size: 10, name: "Calibri", color: { argb: "FF" + (c.pctSegment < 0.02 ? RED : DARK) } }; });
-        eur(r.getCell(3)); pct(r.getCell(5));
-      }
-      if (!s.conserves.length) sw.addRow(["—", "Aucun produit conservé ne vend sur ce segment"]);
-      sw.addRow([]);
-
-      titleRow(sw, "★ À ajouter — top ventes du segment", AMBER, 5);
-      headRow(sw, ["Réf", "Produit", "CA", "Qté", "% segment"], AMBER);
-      for (const c of s.candidats) {
-        const r = sw.addRow([c.ref, c.name, c.ca, c.qty, c.pctSegment]);
-        r.eachCell(cell => { cell.border = border(); cell.font = { size: 10, name: "Calibri", color: { argb: "FF" + DARK } }; });
-        eur(r.getCell(3)); pct(r.getCell(5));
-      }
-      if (!s.candidats.length) sw.addRow(["—", "Pas de candidat hors produits conservés"]);
-
-      if (s.aRetirer.length) {
-        sw.addRow([]);
-        const r = sw.addRow([`⚠ Faibles sur ce statut (<2%) : ${s.aRetirer.map(x => x.ref).join(", ")}`]);
-        sw.mergeCells(r.number, 1, r.number, 5);
-        r.getCell(1).font = { italic: true, size: 10, color: { argb: "FF" + RED }, name: "Calibri" };
+      headRow(sw, ["Réf", "Produit", "Conservé", "Qté vendue", "CA"], BLUE);
+      for (const c of pal.produits) {
+        const r = dataRow(sw, [c.ref, c.name, c.conserve ? "OUI" : "—", c.qty, c.ca], !c.conserve);
+        num(r.getCell(4)); eur(r.getCell(5));
+        r.getCell(3).alignment = { horizontal: "center" };
+        if (c.conserve) r.getCell(3).font = { bold: true, size: 10, name: "Calibri", color: { argb: "FF" + TEAL } };
       }
     }
 
