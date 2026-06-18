@@ -28,3 +28,31 @@ async function call(session: OdooSession, endpoint: string, params: any) {
 export async function searchRead(session: OdooSession, model: string, domain: any[], fields: string[], limit = 0, order = "") {
   return call(session, "/web/dataset/call_kw", { model, method: "search_read", args: [domain], kwargs: { fields, limit, order } });
 }
+
+export interface MeaTemplate { id: number; name: string; active: boolean; }
+export interface MeaTemplateLine { productCode: string; productName: string; }
+
+/** Cherche dans les modèles de devis (actifs + archivés) par nom */
+export async function searchMeaTemplates(session: OdooSession, query: string): Promise<MeaTemplate[]> {
+  const active = await searchRead(session, "sale.order.template", [["name","ilike",query.trim()],["active","=",true]], ["id","name","active"], 20);
+  const archived = await searchRead(session, "sale.order.template", [["name","ilike",query.trim()],["active","=",false]], ["id","name","active"], 20);
+  return [...(active||[]).map((r:any) => ({ id:r.id, name:r.name, active:true })), ...(archived||[]).map((r:any) => ({ id:r.id, name:r.name, active:false }))];
+}
+
+/** Récupère les lignes produits d'un modèle de devis */
+export async function getMeaTemplateLines(session: OdooSession, templateId: number): Promise<MeaTemplateLine[]> {
+  const lines = await searchRead(session, "sale.order.template.line", [["sale_order_template_id","=",templateId],["product_id","!=",false]], ["product_id","display_type"], 0);
+  const productLines = (lines||[]).filter((l:any) => !l.display_type && l.product_id);
+  if (!productLines.length) return [];
+  const productIds: number[] = [...new Set<number>(productLines.map((l:any) => l.product_id[0] as number))];
+  const prods = await searchRead(session, "product.product", [["id","in",productIds]], ["id","default_code","name"], 0);
+  const prodMap: Record<number,{code:string;name:string}> = {};
+  for (const p of (prods||[]) as any[]) if (p.default_code) prodMap[p.id] = { code: p.default_code, name: p.name };
+  const seen = new Set<string>();
+  const result: MeaTemplateLine[] = [];
+  for (const l of productLines) {
+    const entry = prodMap[(l as any).product_id[0]];
+    if (entry && !seen.has(entry.code)) { seen.add(entry.code); result.push({ productCode: entry.code, productName: entry.name }); }
+  }
+  return result;
+}

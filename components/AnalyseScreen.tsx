@@ -215,7 +215,7 @@ async function exportToExcel(results: OffreAnalyse[], catchalls: CatchallResult[
 // ─────────────────────────────────────────────────────────────────────────────
 // GESTION DES OFFRES (modal/panneau)
 // ─────────────────────────────────────────────────────────────────────────────
-function OffresPanel({ onClose, onToast }: { onClose: ()=>void; onToast: Props["onToast"]; }) {
+function OffresPanel({ onClose, onToast, session }: { onClose: ()=>void; onToast: Props["onToast"]; session: odoo.OdooSession; }) {
   const [offres, setOffres] = useState<Offre[]>([]);
   const [editId, setEditId] = useState<string|null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -224,6 +224,43 @@ function OffresPanel({ onClose, onToast }: { onClose: ()=>void; onToast: Props["
   const [formProduits, setFormProduits] = useState("");
   const [formCodeInterne, setFormCodeInterne] = useState("");
 
+  // MEA search
+  const [meaQuery, setMeaQuery] = useState("");
+  const [meaSuggestions, setMeaSuggestions] = useState<odoo.MeaTemplate[]>([]);
+  const [meaLoading, setMeaLoading] = useState(false);
+  const [meaDropOpen, setMeaDropOpen] = useState(false);
+  const meaRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!meaDropOpen) return;
+    const handler = (e: MouseEvent) => { if (meaRef.current && !meaRef.current.contains(e.target as Node)) setMeaDropOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [meaDropOpen]);
+
+  const searchMea = async (q: string) => {
+    if (!q.trim()) { setMeaSuggestions([]); setMeaDropOpen(false); return; }
+    setMeaLoading(true); setMeaDropOpen(true);
+    try {
+      const results = await odoo.searchMeaTemplates(session, q);
+      setMeaSuggestions(results);
+    } catch { setMeaSuggestions([]); }
+    finally { setMeaLoading(false); }
+  };
+
+  const loadMea = async (tpl: odoo.MeaTemplate) => {
+    setMeaDropOpen(false); setMeaQuery(tpl.name);
+    setMeaLoading(true);
+    try {
+      const lines = await odoo.getMeaTemplateLines(session, tpl.id);
+      if (!lines.length) { onToast("Aucun produit trouvé dans ce modèle de devis", "error"); return; }
+      setFormProduits(lines.map(l => l.productCode).join("\n"));
+      if (!formLabel) setFormLabel(tpl.name);
+      onToast(`${lines.length} produit(s) chargé(s) depuis "${tpl.name}"`, "success");
+    } catch(e:any) { onToast("Erreur chargement MEA : " + e.message, "error"); }
+    finally { setMeaLoading(false); }
+  };
+
   useEffect(() => {
     migrateOffresFromLS().then(n => {
       if (n > 0) onToast(`${n} offre(s) importée(s)`, "success");
@@ -231,8 +268,8 @@ function OffresPanel({ onClose, onToast }: { onClose: ()=>void; onToast: Props["
     dbLoadOffres().then(setOffres).catch(e => onToast("Erreur chargement offres : " + e.message, "error"));
   }, []);
 
-  const openNew = () => { setEditId(null); setFormCode(""); setFormLabel(""); setFormProduits(""); setFormCodeInterne(""); setShowForm(true); };
-  const openEdit = (o: Offre) => { setEditId(o.id); setFormCode(o.code); setFormLabel(o.label); setFormProduits(o.produits.join("\n")); setFormCodeInterne(o.codeInterne||""); setShowForm(true); };
+  const openNew = () => { setEditId(null); setFormCode(""); setFormLabel(""); setFormProduits(""); setFormCodeInterne(""); setMeaQuery(""); setMeaSuggestions([]); setShowForm(true); };
+  const openEdit = (o: Offre) => { setEditId(o.id); setFormCode(o.code); setFormLabel(o.label); setFormProduits(o.produits.join("\n")); setFormCodeInterne(o.codeInterne||""); setMeaQuery(""); setMeaSuggestions([]); setShowForm(true); };
 
   const save = () => {
     const code=formCode.trim(); const label=formLabel.trim();
@@ -288,6 +325,44 @@ function OffresPanel({ onClose, onToast }: { onClose: ()=>void; onToast: Props["
         <div style={{ flex:1, overflowY:"auto", padding:"20px 24px" }}>
           {showForm ? (
             <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              {/* Recherche MEA Odoo */}
+              <div ref={meaRef} style={{ position:"relative" }}>
+                <label style={labelStyle}>Charger depuis Odoo (modèle de devis)</label>
+                <div style={{ display:"flex", gap:8 }}>
+                  <input
+                    value={meaQuery}
+                    onChange={e => { setMeaQuery(e.target.value); searchMea(e.target.value); }}
+                    placeholder="Rechercher une MEA par nom…"
+                    style={{ ...inputStyle, flex:1 }}
+                  />
+                  {meaLoading && <div style={{ width:36, height:36, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                    <span style={{ width:16,height:16,borderRadius:"50%",border:`2px solid ${C.blue}`,borderTopColor:"transparent",display:"inline-block",animation:"spin 0.7s linear infinite" }}/>
+                  </div>}
+                </div>
+                {meaDropOpen && meaSuggestions.length > 0 && (
+                  <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:C.white, border:`1.5px solid ${C.blue}44`, borderRadius:10, boxShadow:"0 8px 32px rgba(0,0,0,0.13)", zIndex:100, overflow:"hidden", maxHeight:220, overflowY:"auto" }}>
+                    {meaSuggestions.map(tpl => (
+                      <div key={tpl.id} onClick={() => loadMea(tpl)}
+                        style={{ padding:"10px 14px", cursor:"pointer", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:10 }}
+                        onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background=C.bg}
+                        onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background=C.white}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue} strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <div>
+                          <span style={{ fontSize:13, fontWeight:600, color:C.text }}>{tpl.name}</span>
+                          {!tpl.active && <span style={{ marginLeft:8, fontSize:10, background:C.amberSoft, color:C.amber, borderRadius:4, padding:"1px 6px", fontWeight:600 }}>Archivé</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {meaDropOpen && !meaLoading && meaSuggestions.length === 0 && meaQuery.trim() && (
+                  <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:C.white, border:`1.5px solid ${C.border}`, borderRadius:10, padding:"12px 14px", zIndex:100, fontSize:12, color:C.textMuted }}>
+                    Aucun modèle de devis trouvé
+                  </div>
+                )}
+              </div>
+
               {[
                 { label:"Code offre *", value:formCode, set:setFormCode, placeholder:"Ex: 7131482" },
                 { label:"Libellé (optionnel)", value:formLabel, set:setFormLabel, placeholder:"Ex: Offre été 2024" },
@@ -906,7 +981,7 @@ export default function AnalyseScreen({ session, onToast }: Props) {
       <AnalyseTab key={filter} session={session} onToast={onToast} filter={filter} sharedCodes={sharedCodes} onCodesChange={setSharedCodes} />
 
       {/* Panneau offres */}
-      {showOffresPanel && <OffresPanel onClose={()=>setShowOffresPanel(false)} onToast={onToast} />}
+      {showOffresPanel && <OffresPanel onClose={()=>setShowOffresPanel(false)} onToast={onToast} session={session} />}
     </div>
   );
 }
