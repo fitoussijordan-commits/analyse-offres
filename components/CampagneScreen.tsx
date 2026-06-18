@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import * as odoo from "@/lib/odoo";
 import * as cp from "@/lib/campaigns";
 import { fetchCampaign, type CampaignResult, type StateFilter } from "@/lib/analyse-campaign";
+import { buildPreco } from "@/lib/preco";
 import { ChartCard, HBarChart, PieChart, SplitBar, fmtEurShort } from "./CampagneCharts";
 
 const C = {
@@ -264,7 +265,7 @@ function CampagnePanel({ onClose, onToast, offres, onChanged }: { onClose: () =>
 // ════════════════════════════════════════════════════════════════════════════
 // ÉCRAN PRINCIPAL
 // ════════════════════════════════════════════════════════════════════════════
-type Tab = "produits" | "delegues" | "categories" | "adherents" | "statuts" | "offres" | "commandes";
+type Tab = "produits" | "delegues" | "categories" | "adherents" | "statuts" | "offres" | "commandes" | "preco";
 const FILTERS: [StateFilter, string][] = [["all", "Tout"], ["avenir", "À venir"], ["valide", "Validé"]];
 
 // URL vers la fiche commande Odoo (vue formulaire)
@@ -359,7 +360,7 @@ export default function CampagneScreen({ session, onToast }: Props) {
     </div>
   );
 
-  const TABS: [Tab, string][] = [["produits", "Produits"], ["delegues", "Délégués"], ["categories", "Catégorie statistique"], ["adherents", "Adhérent réseau"], ["statuts", "Statut client"], ["offres", "Par offre"], ["commandes", "Commandes"]];
+  const TABS: [Tab, string][] = [["produits", "Produits"], ["delegues", "Délégués"], ["categories", "Catégorie statistique"], ["adherents", "Adhérent réseau"], ["statuts", "Statut client"], ["offres", "Par offre"], ["commandes", "Commandes"], ["preco", "Préco N+1"]];
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: C.bg }}>
@@ -474,6 +475,8 @@ export default function CampagneScreen({ session, onToast }: Props) {
               <OffresDrillDown result={result} />
             ) : tab === "commandes" ? (
               <CommandesTab result={result} baseUrl={session.config.url} />
+            ) : tab === "preco" ? (
+              <PrecoTab result={result} onToast={onToast} />
             ) : (
               <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
                 {tab === "produits" && <Tbl
@@ -509,6 +512,124 @@ export default function CampagneScreen({ session, onToast }: Props) {
 
       {showOffrePanel && <OffrePanel onClose={() => setShowOffrePanel(false)} onToast={onToast} onChanged={reloadAll} session={session} />}
       {showCampPanel && <CampagnePanel onClose={() => setShowCampPanel(false)} onToast={onToast} offres={offres} onChanged={reloadAll} />}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Onglet "Préco N+1" : sélection des produits conservés → recommandation par statut
+// ════════════════════════════════════════════════════════════════════════════
+function PrecoTab({ result, onToast }: { result: CampaignResult; onToast: Props["onToast"] }) {
+  // Produits sélectionnables = produits de la campagne actuelle (triés par CA)
+  const produits = result.produits.filter(p => p.ca > 0);
+  const [conserved, setConserved] = useState<Set<number>>(() => new Set(produits.map(p => p.productId)));
+  const [exporting, setExporting] = useState(false);
+
+  const toggle = (id: number) => setConserved(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+  const allOn = () => setConserved(new Set(produits.map(p => p.productId)));
+  const allOff = () => setConserved(new Set());
+
+  const preco = buildPreco(result, [...conserved]);
+
+  const exportPreco = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch("/api/export-preco", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(preco),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
+      const blob = await res.blob(); const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = `preco_${result.nom.replace(/[^a-zA-Z0-9_-]+/g, "_")}.xlsx`; a.click(); URL.revokeObjectURL(url);
+      onToast("Préco exportée", "success");
+    } catch (e: any) { onToast("Erreur export préco : " + e.message, "error"); }
+    finally { setExporting(false); }
+  };
+
+  if (!produits.length) return <div style={{ padding: 30, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucun produit à analyser pour la préconisation.</div>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Sélection des produits conservés */}
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Produits conservés pour l'offre N+1</span>
+          <span style={{ fontSize: 12, color: C.textMuted }}>{conserved.size}/{produits.length} sélectionné(s)</span>
+          <div style={{ flex: 1 }} />
+          <button onClick={allOn} style={{ padding: "5px 10px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.textSec, fontFamily: "inherit" }}>Tout cocher</button>
+          <button onClick={allOff} style={{ padding: "5px 10px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.textSec, fontFamily: "inherit" }}>Tout décocher</button>
+          <button onClick={exportPreco} disabled={exporting} style={{ padding: "6px 14px", background: C.teal, border: "none", borderRadius: 7, cursor: exporting ? "default" : "pointer", fontSize: 12, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter la préco"}</button>
+        </div>
+        <div style={{ maxHeight: 280, overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <tbody>
+              {produits.map((p, ri) => {
+                const on = conserved.has(p.productId);
+                return (
+                  <tr key={p.productId} onClick={() => toggle(p.productId)} style={{ cursor: "pointer", background: on ? C.tealSoft : ri % 2 ? "#f9fafb" : C.white }}>
+                    <td style={{ padding: "8px 14px", width: 36, borderBottom: `1px solid ${C.border}` }}>
+                      <input type="checkbox" checked={on} onChange={() => toggle(p.productId)} style={{ cursor: "pointer" }} />
+                    </td>
+                    <td style={{ padding: "8px 14px", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.ref}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.name}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 13, color: C.textSec, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtEur(p.ca)}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 12, color: C.textMuted, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{pctOf(p.ca, result.caTotal)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Recommandation par statut client */}
+      {preco.parStatut.filter(s => s.caSegment > 0).map(s => (
+        <div key={s.statut} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: C.purpleSoft, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 14, fontWeight: 800, color: C.purple }}>{s.statut}</span>
+            <span style={{ fontSize: 12, color: C.textMuted }}>CA segment : {fmtEur(s.caSegment)}</span>
+          </div>
+          <div style={{ padding: "14px 16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            {/* Conservés */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.teal, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>✓ Conservés — perf sur ce statut</div>
+              {s.conserves.length === 0 ? <div style={{ fontSize: 12, color: C.textMuted }}>Aucun produit conservé ne vend sur ce segment.</div> : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {s.conserves.map(p => (
+                    <div key={p.productId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                      <span style={{ fontFamily: "monospace", fontWeight: 600, color: C.text }}>{p.ref}</span>
+                      <span style={{ color: C.textSec, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                      <span style={{ color: C.textMuted }}>{fmtEur(p.ca)}</span>
+                      <span style={{ fontWeight: 700, color: p.pctSegment < 0.02 ? C.red : C.teal, width: 52, textAlign: "right" }}>{(p.pctSegment * 100).toFixed(1).replace(".", ",")}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {s.aRetirer.length > 0 && (
+                <div style={{ marginTop: 10, fontSize: 11, color: C.red }}>⚠ Faibles sur ce statut (&lt;2%) : {s.aRetirer.map(p => p.ref).join(", ")}</div>
+              )}
+            </div>
+            {/* Candidats à ajouter */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>★ À ajouter — top ventes du segment</div>
+              {s.candidats.length === 0 ? <div style={{ fontSize: 12, color: C.textMuted }}>Pas de candidat hors produits conservés.</div> : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {s.candidats.map(p => (
+                    <div key={p.productId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                      <span style={{ fontFamily: "monospace", fontWeight: 600, color: C.text }}>{p.ref}</span>
+                      <span style={{ color: C.textSec, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                      <span style={{ color: C.textMuted }}>{fmtEur(p.ca)}</span>
+                      <span style={{ fontWeight: 700, color: C.amber, width: 52, textAlign: "right" }}>{(p.pctSegment * 100).toFixed(1).replace(".", ",")}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

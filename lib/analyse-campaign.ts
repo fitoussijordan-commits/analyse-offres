@@ -9,6 +9,8 @@ export type StateFilter = "all" | "avenir" | "valide";
 export interface ProduitCA { ref: string; name: string; productId: number; qtyVendue: number; ca: number; }
 export interface DelegueCA { userId: number; name: string; qtyVendue: number; ca: number; }
 export interface ClientStat { id: number; name: string; qtyVendue: number; ca: number; nbCommandes: number; }
+// Perf d'un produit ventilée par statut client : { statutName -> { qty, ca } }
+export interface ProduitStatut { ref: string; name: string; productId: number; qtyVendue: number; ca: number; parStatut: Record<string, { qty: number; ca: number }>; }
 export interface DebugOrder { id: number; name: string; partnerName?: string; invoiceStatus?: string; ca?: number; invoiced?: boolean; orderTotal?: number; }
 
 export interface OffreAnalyse {
@@ -24,6 +26,7 @@ export interface CampaignResult {
   caTotal: number; qtyTotal: number; nbCommandes: number;
   produits: ProduitCA[]; delegues: DelegueCA[];
   categories: ClientStat[]; adherents: ClientStat[]; statuts: ClientStat[];
+  produitsParStatut: ProduitStatut[];  // croisement produit × statut client (pour préco N+1)
   perOffre: { code: string; label: string; caTotal: number; qtyTotal: number; error: string | null }[];
   results: OffreAnalyse[];        // détail par offre (+ produits autonomes)
   catchalls: CatchallResult[];    // détail par note
@@ -279,7 +282,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const perOffre = results.map(r => ({ code: r.offre.code, label: r.offre.label, caTotal: r.caTotal, qtyTotal: r.qtyTotal, error: r.error }));
 
   if (!lines.length) {
-    return { nom: campagne.nom, caTotal: 0, qtyTotal: 0, nbCommandes: 0, produits: [], delegues: [], categories: [], adherents: [], statuts: [], perOffre, results, catchalls, split: { valide: { qty: 0, ca: 0 }, avenir: { qty: 0, ca: 0 } }, error: null };
+    return { nom: campagne.nom, caTotal: 0, qtyTotal: 0, nbCommandes: 0, produits: [], delegues: [], categories: [], adherents: [], statuts: [], produitsParStatut: [], perOffre, results, catchalls, split: { valide: { qty: 0, ca: 0 }, avenir: { qty: 0, ca: 0 } }, error: null };
   }
 
   // 5. Commandes → user / partner / invoice
@@ -328,6 +331,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const catMap: Record<string, ClientStat & { orders: Set<number> }> = {};
   const adhMap: Record<string, ClientStat & { orders: Set<number> }> = {};
   const statMap: Record<string, ClientStat & { orders: Set<number> }> = {};
+  const prodStatMap: Record<number, ProduitStatut> = {};
   const split = { valide: { qty: 0, ca: 0 }, avenir: { qty: 0, ca: 0 } };
   const NONE = { id: 0, name: "— Non renseigné —" };
 
@@ -350,6 +354,12 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     const sk = String(stat.id);
     if (!statMap[sk]) statMap[sk] = { id: stat.id, name: stat.name, qtyVendue: 0, ca: 0, nbCommandes: 0, orders: new Set() };
     statMap[sk].qtyVendue += l.qty; statMap[sk].ca += l.subtotal; statMap[sk].orders.add(l.orderId);
+    // Croisement produit × statut client (pour la préco N+1)
+    if (!prodStatMap[l.productId]) prodStatMap[l.productId] = { productId: l.productId, ref: l.ref, name: l.productName, qtyVendue: 0, ca: 0, parStatut: {} };
+    const ps = prodStatMap[l.productId];
+    ps.qtyVendue += l.qty; ps.ca += l.subtotal;
+    if (!ps.parStatut[stat.name]) ps.parStatut[stat.name] = { qty: 0, ca: 0 };
+    ps.parStatut[stat.name].qty += l.qty; ps.parStatut[stat.name].ca += l.subtotal;
     // Split validé/à venir recalculé une seule fois plus bas (source unique de vérité).
   }
   const finalize = (m: Record<string, ClientStat & { orders: Set<number> }>): ClientStat[] =>
@@ -411,6 +421,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     produits: Object.values(prodMap).sort((a, b) => b.ca - a.ca),
     delegues: Object.values(delMap).sort((a, b) => b.ca - a.ca),
     categories: finalize(catMap), adherents: finalize(adhMap), statuts: finalize(statMap),
+    produitsParStatut: Object.values(prodStatMap).sort((a, b) => b.ca - a.ca),
     perOffre, results, catchalls, split, error: null,
   };
 }
