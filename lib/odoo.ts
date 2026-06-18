@@ -33,17 +33,22 @@ export interface MeaTemplate { id: number; name: string; active: boolean; }
 export interface MeaTemplateLine { productCode: string; productName: string; }
 
 /** Cherche dans les modèles de devis (actifs + archivés) par nom */
+/** Normalise pour comparaison : minuscules + suppression des accents */
+function norm(s: string): string {
+  return (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
 export async function searchMeaTemplates(session: OdooSession, query: string): Promise<MeaTemplate[]> {
   const q = query.trim();
   if (!q) return [];
   // On cherche mot par mot pour contourner les problèmes de caractères spéciaux
   const firstWord = q.split(/\s+/)[0];
-  const all = await searchRead(session, "sale.order.template", [["name","ilike",firstWord]], ["id","name","active"], 50, "", { active_test: false });
+  const all = await searchRead(session, "sale.order.template", [["name", "ilike", firstWord]], ["id", "name", "active"], 50, "name", { active_test: false });
   if (!all?.length) return [];
-  // Filtrage côté client sur tous les mots
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  // Filtrage côté client sur tous les mots, insensible aux accents et à la casse
+  const words = norm(q).split(/\s+/).filter(Boolean);
   return (all as any[])
-    .filter(r => words.every(w => r.name?.toLowerCase().includes(w)))
+    .filter(r => words.every(w => norm(r.name).includes(w)))
     .map(r => ({ id: r.id, name: r.name, active: r.active !== false }));
 }
 

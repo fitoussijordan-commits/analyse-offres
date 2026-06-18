@@ -58,7 +58,7 @@ function OffrePanel({ onClose, onToast, onChanged, session }: { onClose: () => v
     if (!q.trim()) { setMeaSuggestions([]); setMeaDropOpen(false); return; }
     setMeaLoading(true); setMeaDropOpen(true);
     try { const results = await odoo.searchMeaTemplates(session, q); setMeaSuggestions(results); }
-    catch { setMeaSuggestions([]); }
+    catch (e: any) { setMeaSuggestions([]); onToast("Recherche MEA : " + (e?.message || "erreur Odoo"), "error"); }
     finally { setMeaLoading(false); }
   };
 

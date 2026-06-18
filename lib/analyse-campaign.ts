@@ -149,16 +149,21 @@ async function analyseNote(session: odoo.OdooSession, note: string, excludeOrder
   for (const r of recs) { if (!pm[r.productId]) pm[r.productId] = { productId: r.productId, ref: r.ref || "", name: r.productName, qtyVendue: 0, ca: 0 }; pm[r.productId].qtyVendue += r.qty; pm[r.productId].ca += r.subtotal; }
   const produits = Object.values(pm).sort((a, b) => b.ca - a.ca);
 
+  // On ne retient que les commandes ayant au moins une ligne dans le périmètre campagne :
+  // une commande notée sans aucun produit de la campagne ne doit pas être comptée.
+  const matchedOrderIds = new Set(recs.map(r => r.orderId));
   const userByOrder: Record<number, { id: number; name: string }> = {};
-  const debugOrders: DebugOrder[] = orphans.map((o: any) => {
-    if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-    return { id: o.id, name: `${o.name} (note)`, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status };
-  });
+  const debugOrders: DebugOrder[] = orphans
+    .filter((o: any) => matchedOrderIds.has(o.id))
+    .map((o: any) => {
+      if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
+      return { id: o.id, name: `${o.name} (note)`, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status };
+    });
   const um: Record<number, DelegueCA> = {};
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].qtyVendue += r.qty; um[u.id].ca += r.subtotal; }
   const delegues = Object.values(um).sort((a, b) => b.ca - a.ca);
 
-  return { res: { codeInterne: note, data: { caTotal, qtyTotal: orphanIds.length, produits, delegues, debugOrders } }, recs };
+  return { res: { codeInterne: note, data: { caTotal, qtyTotal: matchedOrderIds.size, produits, delegues, debugOrders } }, recs };
 }
 
 // ── Produits autonomes (réfs campagne hors offres/notes) ──────────────────────
@@ -214,12 +219,14 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const { res: standalone, recs: standaloneRecs } = await analyseStandalone(session, campagne.produits, filter, offerLineIds);
   if (standalone) { results.push(standalone); allRecs.push(...standaloneRecs); }
 
-  // 3. Notes : tout le CA des commandes rattachées par note interne (hors commandes déjà
-  //    comptées dans une offre). On ne filtre PAS par références produits, sinon le CA des
-  //    articles non listés ailleurs serait exclu du total campagne.
+  // 3. Notes : CA des commandes rattachées par note interne (hors commandes déjà comptées
+  //    dans une offre), MAIS restreint aux seuls produits de la campagne. On passe donc la
+  //    liste des références campagne (codes d'offres + produits autonomes) pour exclure les
+  //    produits hors périmètre présents dans ces commandes.
+  const campaignRefs = [...new Set([...campagne.offres, ...campagne.produits].map(r => r.trim()).filter(Boolean))];
   const catchalls: CatchallResult[] = [];
   for (const note of campagne.notes) {
-    const { res, recs } = await analyseNote(session, note, [...offerOrderIds], campagne.offres, filter, []);
+    const { res, recs } = await analyseNote(session, note, [...offerOrderIds], campagne.offres, filter, campaignRefs);
     catchalls.push(res);
     allRecs.push(...recs);
   }
