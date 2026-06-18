@@ -34,9 +34,17 @@ export interface MeaTemplateLine { productCode: string; productName: string; }
 
 /** Cherche dans les modèles de devis (actifs + archivés) par nom */
 export async function searchMeaTemplates(session: OdooSession, query: string): Promise<MeaTemplate[]> {
-  // active_test:false force Odoo à inclure les enregistrements archivés
-  const all = await searchRead(session, "sale.order.template", [["name","ilike",query.trim()]], ["id","name","active"], 40, "", { active_test: false });
-  return (all||[]).map((r:any) => ({ id: r.id, name: r.name, active: r.active !== false }));
+  const q = query.trim();
+  if (!q) return [];
+  // On cherche mot par mot pour contourner les problèmes de caractères spéciaux
+  const firstWord = q.split(/\s+/)[0];
+  const all = await searchRead(session, "sale.order.template", [["name","ilike",firstWord]], ["id","name","active"], 50, "", { active_test: false });
+  if (!all?.length) return [];
+  // Filtrage côté client sur tous les mots
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  return (all as any[])
+    .filter(r => words.every(w => r.name?.toLowerCase().includes(w)))
+    .map(r => ({ id: r.id, name: r.name, active: r.active !== false }));
 }
 
 /** Récupère les lignes produits d'un modèle de devis */
