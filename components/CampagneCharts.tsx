@@ -34,7 +34,7 @@ export function ChartCard({ title, children, full }: { title: string; children: 
 export function HBarChart({ data, color = C.teal, valueFmt = fmtEur }: { data: { label: string; value: number }[]; color?: string; valueFmt?: (n: number) => string }) {
   if (!data.length) return <Empty />;
   const max = Math.max(...data.map(d => d.value), 1);
-  const rowH = 34, gap = 8;
+  const rowH = 22, gap = 5;
   const height = data.length * (rowH + gap);
   const labelW = 130, valueW = 78;
   return (
@@ -46,12 +46,12 @@ export function HBarChart({ data, color = C.teal, valueFmt = fmtEur }: { data: {
         const c = color || PALETTE[i % PALETTE.length];
         return (
           <g key={i}>
-            <text x={0} y={y + rowH / 2} dominantBaseline="middle" fontSize={13} fill={C.textSec} style={{ fontFamily: "inherit" }}>
+            <text x={0} y={y + rowH / 2} dominantBaseline="middle" fontSize={11} fill={C.textSec} style={{ fontFamily: "inherit" }}>
               {d.label.length > 18 ? d.label.slice(0, 17) + "…" : d.label}
             </text>
-            <rect x={labelW} y={y + 4} width={barMaxW} height={rowH - 8} rx={5} fill={C.bg} />
-            <rect x={labelW} y={y + 4} width={w} height={rowH - 8} rx={5} fill={c} />
-            <text x={labelW + barMaxW + valueW} y={y + rowH / 2} dominantBaseline="middle" textAnchor="end" fontSize={13} fontWeight={700} fill={C.text} style={{ fontFamily: "inherit" }}>
+            <rect x={labelW} y={y + 3} width={barMaxW} height={rowH - 6} rx={4} fill={C.bg} />
+            <rect x={labelW} y={y + 3} width={w} height={rowH - 6} rx={4} fill={c} />
+            <text x={labelW + barMaxW + valueW} y={y + rowH / 2} dominantBaseline="middle" textAnchor="end" fontSize={11} fontWeight={700} fill={C.text} style={{ fontFamily: "inherit" }}>
               {valueFmt(d.value)}
             </text>
           </g>
