@@ -178,27 +178,55 @@ export async function POST(req: NextRequest) {
       cursor = titleRow + BLOCK_LEN + 2; // 2 lignes de marge entre blocs (comme le gabarit : L36→L40)
     });
 
-    // Helper : extraire proprement la formule d'une cellule ExcelJS (évite les objets { formula, result } mal sérialisés)
-    function extractFormula(v: any): string | null {
+    // Helper : extraire la formule d'une cellule ExcelJS en résolvant les sharedFormula.
+    // sharedFormula = { sharedFormula: "E124" } → aller chercher la formule dans la cellule E124
+    // et la décaler relativement à la cellule courante.
+    function resolveFormula(wsSheet: any, rowNum: number, colNum: number): string | null {
+      const cell = wsSheet.getRow(rowNum).getCell(colNum);
+      const v = cell.value;
+      if (v === null || v === undefined) return null;
       if (typeof v === "string" && v.startsWith("=")) return v.slice(1);
-      if (typeof v === "object" && v !== null) {
-        const f = (v as any).formula ?? (v as any).sharedFormula;
-        if (typeof f === "string") return f;
+      if (typeof v !== "object") return null;
+
+      // Formule directe (avec ou sans result)
+      if (typeof (v as any).formula === "string") return (v as any).formula;
+
+      // Formule partagée : { sharedFormula: "E124" } → résoudre depuis la cellule maître
+      if (typeof (v as any).sharedFormula === "string") {
+        const masterRef = (v as any).sharedFormula as string; // ex: "E124"
+        const mDec = decodeRange(masterRef + ":" + masterRef);
+        if (!mDec) return null;
+        const masterCell = wsSheet.getRow(mDec.top).getCell(mDec.left);
+        const mv = masterCell.value;
+        if (!mv || typeof mv !== "object" || typeof (mv as any).formula !== "string") return null;
+        const masterFormula = (mv as any).formula as string;
+        // Décaler la formule maître relativement (rowNum - mDec.top, colNum - mDec.left)
+        const rowDelta = rowNum - mDec.top;
+        return shiftRowRefs(masterFormula, rowDelta);
       }
       return null;
     }
 
-    function writeCellFromTemplate(src: any, dst: any, delta: number) {
+    function writeCellFromTemplate(srcRow: number, srcCol: number, dst: any, delta: number) {
+      const src = ws!.getRow(srcRow).getCell(srcCol);
       // Style
       try { dst.style = JSON.parse(JSON.stringify(src.style || {})); } catch { /* ignore */ }
       if (src.numFmt) dst.numFmt = src.numFmt;
       // Valeur
-      const f = extractFormula(src.value);
+      const f = resolveFormula(ws!, srcRow, srcCol);
       if (f !== null) {
-        if (f.includes("[1]") || f.includes("#REF!")) { dst.value = null; return; }
+        if (f.includes("[1]") || f.includes("#REF!") || f.includes("XLOOKUP") || f.includes("VLOOKUP")) {
+          dst.value = null; return;
+        }
         dst.value = { formula: shiftRowRefs(f, delta) };
       } else {
-        dst.value = src.value ?? null;
+        const raw = src.value;
+        // Ne pas copier les objets formula/sharedFormula résiduels → null
+        if (raw !== null && typeof raw === "object" && ("formula" in raw || "sharedFormula" in raw)) {
+          dst.value = null;
+        } else {
+          dst.value = raw ?? null;
+        }
       }
     }
 
@@ -211,10 +239,9 @@ export async function POST(req: NextRequest) {
 
     const gcMergesRaw: string[] = (ws as any).model?.merges || [];
     for (let off = 0; off <= GC_LEN; off++) {
-      const srcR = ws.getRow(GC_MODEL_START + off);
       const dstR = ws.getRow(gcStart + off);
       for (let c = 1; c <= 35; c++) {
-        writeCellFromTemplate(srcR.getCell(c), dstR.getCell(c), gcDelta);
+        writeCellFromTemplate(GC_MODEL_START + off, c, dstR.getCell(c), gcDelta);
       }
     }
     for (const m of gcMergesRaw) {
@@ -233,10 +260,9 @@ export async function POST(req: NextRequest) {
     const blDelta = blStart - BL_MODEL_START;
 
     for (let off = 0; off <= BL_LEN; off++) {
-      const srcR = ws.getRow(BL_MODEL_START + off);
       const dstR = ws.getRow(blStart + off);
       for (let c = 1; c <= 35; c++) {
-        writeCellFromTemplate(srcR.getCell(c), dstR.getCell(c), blDelta);
+        writeCellFromTemplate(BL_MODEL_START + off, c, dstR.getCell(c), blDelta);
       }
     }
     for (const m of gcMergesRaw) {
