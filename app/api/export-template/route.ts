@@ -199,11 +199,13 @@ export async function POST(req: NextRequest) {
       const row = GC_PV_FIRST + i;
       const p = pal1 ? pal1.produits[i] : undefined;
       if (p) {
+        ws.getCell(row, 1).value = p.ref || "";                  // A : Code article (campagne)
         ws.getCell(row, 2).value = p.name || "";                 // B : Libellé
         ws.getCell(row, 6).value = round2(p.standardPrice || 0); // F : Coût achat unitaire
         ws.getCell(row, 8).value = round2(p.listPrice || 0);     // H : Tarif revendeur unitaire
         ws.getCell(row, 10).value = round2(p.ppc || 0);          // J : PPC
       } else {
+        ws.getCell(row, 1).value = null;
         ws.getCell(row, 2).value = null;
         ws.getCell(row, 6).value = null;
         ws.getCell(row, 8).value = null;
@@ -214,7 +216,8 @@ export async function POST(req: NextRequest) {
     for (let i = 0; i < LOG_PV_COUNT; i++) {
       const row = LOG_PV_FIRST + i;
       const p = pal1 ? pal1.produits[i] : undefined;
-      ws.getCell(row, 2).value = p ? (p.name || "") : null;      // B : Libellé
+      ws.getCell(row, 1).value = p ? (p.ref || "") : null;        // A : Code article (campagne)
+      ws.getCell(row, 2).value = p ? (p.name || "") : null;       // B : Libellé
     }
 
     const buf = await wb.xlsx.writeBuffer();
