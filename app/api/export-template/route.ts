@@ -1,19 +1,19 @@
 // app/api/export-template/route.ts
-// Remplit le template "Proposition template" (Fichier trade 2027.xlsx) à partir de la
-// préco N+1 enrichie des données tarifaires Odoo (EAN, coût achat, tarif revendeur, PPC).
+// Remplit le template "Proposition" SANS le restructurer.
 //
-// Principe :
-//  - On part du gabarit lib/templates/proposition-template.xlsx (mise en forme conservée).
-//  - L'onglet "Proposition template" contient 1 bloc-modèle (REGENERANTS 1, lignes 3→36).
-//    On le réplique autant de fois qu'il y a de paliers dans la préco.
-//  - Pour chaque produit on écrit : code article (A), libellé (B), EAN (C), typ. prod (D),
-//    qté/pack (E), coût achat (F), tarif revendeur (H), PPC (J) — en VALEURS (issues d'Odoo).
-//  - Les colonnes calculées (G, K, L, M…Z, et la Synthèse) restent en FORMULES, mais on
-//    répare les références cassées du gabarit ([1]…, #REF!) pour qu'elles tournent en
-//    autonomie dans le classeur.
-//
-// La grille de répartition par typologie (M..Z : %Offres / Remises) reprend les valeurs
-// par défaut du gabarit (bloc 1), conformément au choix utilisateur.
+// Principe (non destructif) :
+//  - On part du gabarit nettoyé proposition-template-clean.xlsx, identique à l'original
+//    (3 blocs REGENERANTS 1/2/3, section GRANDS COMPTES, mise en page, formats, formules),
+//    mais sans les onglets parasites ni les liens externes morts qui corrompaient le fichier.
+//  - On NE touche NI à la structure, NI à GRANDS COMPTES, NI aux PLV/Testeurs.
+//  - Pour chaque palier de la préco (max 3, mappés sur les 3 blocs existants), on écrit
+//    uniquement dans les lignes "Produit Vente" du bloc :
+//       A = code article (préco)   B = libellé (Odoo)   C = EAN (Odoo)
+//       E = qté/pack (préco)        F = coût achat (Odoo) H = tarif revendeur (Odoo)
+//       J = PPC (Odoo)
+//    Les colonnes calculées (G, K, L, CA/Marges M..Z) restent les formules du gabarit.
+//  - Les lignes "Produit Vente" en trop (produit non fourni) sont vidées de leur code/valeurs
+//    pour ne pas laisser les anciens articles du template.
 
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
@@ -22,52 +22,63 @@ import path from "path";
 export const maxDuration = 60;
 
 const SHEET = "Proposition template";
-// Gabarit NETTOYÉ : version sans les onglets parasites (REGENERANTS, Fiche paramètrage),
-// sans le lien vers un classeur externe disparu, et sans formules cassées. Le gabarit
-// d'origine était trop corrompu (60k+ références externes mortes) : ExcelJS le réécrivait
-// en perdant l'index des onglets → "fichier corrompu" à l'ouverture Excel.
 const TEMPLATE_PATH = path.join(process.cwd(), "lib", "templates", "proposition-template-clean.xlsx");
 
-// ── Géométrie du bloc-modèle (bloc 1 du gabarit) ──────────────────────────────
-// Toutes les lignes sont exprimées en offset relatif au titre du bloc (ligne "REGENERANTS X").
-const TITLE = 0;          // L3  : titre
-const NB_OFFRES = 1;      // L4  : "Nombre d'offres" | B = valeur
-const NB_PRODUITS = 2;    // L5  : "Nombre de produits" | B = valeur
-const RETAIL_HDR = 3;     // L6  : RETAIL / INSTITUT / Retail+Institut
-const TYPO_HDR = 5;       // L8  : Ambassadeur..Calendula | Total
-const PCT_OFFRES = 6;     // L9  : "% Offres" + valeurs N9.. + Z9
-const REMISE = 7;         // L10 : "Remise" + valeurs
-const NB_OFFRES_ROW = 8;  // L11 : "Nb Offres" + formules =N9*$B$<nbOffres>
-const COL_HDR1 = 9;       // L12 : Pdt dans offre, Coût achat…  (+ AB12 Nbrs Offres planifiées)
-const COL_HDR2 = 10;      // L13 : Code article, Libellé… (+ unités '# '€)
-const SYNTHESE = 12;      // L15 : Synthèse + formules de totaux
-const DATA_START = 14;    // L17 : 1re ligne produit
-const DATA_LEN = 20;      // 20 lignes produits max par bloc (L17→L36)
-const BLOCK_LEN = 38;     // hauteur totale d'un bloc (titre L3 → fin marge avant L40)
+// Géométrie FIXE des 3 blocs du gabarit (lignes 1-based). Les lignes "Produit Vente"
+// sont les 13 premières lignes data de chaque bloc ; au-delà : PLV / Testeurs (intouchés).
+// pctRow / remiseRow / nbOffRow : lignes des paramètres typologie de CE bloc (elles ne sont
+// PAS à offset constant — le bloc 1 a une ligne de moins que les blocs 2 et 3).
+// nbOffresCell : cellule "Nombre d'offres" du bloc (B<nbOffresRow>), pour recâbler les
+// formules "Nb Offres" qui, dans le gabarit d'origine, pointaient toutes (à tort) sur B4.
+// synRow : ligne "Synthèse" du bloc. dataFirst/dataLast : plage des lignes data (pour les SUM).
+const BLOCKS = [
+  { title: 3,  nbOffresRow: 4,  nbProduitsRow: 5,  pvFirst: 17, pvCount: 13, pctRow: 9,  remiseRow: 10, nbOffRow: 11, synRow: 15, dataFirst: 17, dataLast: 36 },  // REGENERANTS 1
+  { title: 40, nbOffresRow: 42, nbProduitsRow: 43, pvFirst: 55, pvCount: 13, pctRow: 47, remiseRow: 48, nbOffRow: 49, synRow: 53, dataFirst: 55, dataLast: 74 },  // REGENERANTS 2
+  { title: 76, nbOffresRow: 78, nbProduitsRow: 79, pvFirst: 91, pvCount: 13, pctRow: 83, remiseRow: 84, nbOffRow: 85, synRow: 89, dataFirst: 91, dataLast: 110 }, // REGENERANTS 3
+];
 
 interface PrecoLigneIn {
   ref: string; name: string; productId: number;
-  qtyParPack: number; conserve: boolean;
-  // pricing Odoo
+  qtyParPack: number;
   barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number;
-  typProd?: string; // "Produit Vente" | "PLV" | "Testeur" | "UG" | "Echantillon"...
 }
 interface PrecoPalierIn {
   code: string; label: string; qtyPacks: number;
   produits: PrecoLigneIn[];
 }
-interface PayloadIn {
-  nom: string;
-  paliers: PrecoPalierIn[];
-}
+interface PayloadIn { nom: string; paliers: PrecoPalierIn[]; }
 
-// Remplace dans une chaîne de formule les références cassées du gabarit.
-// - Liens externes [1]'Paramètres Articles' / [1]'New Base PA' : on ne devrait plus les
-//   rencontrer (colonnes B/C/J réécrites en valeurs), mais on neutralise par sécurité.
-// - #REF! résiduels : on neutralise pour éviter une erreur Excel à l'ouverture.
-function repairFormula(f: string): string | null {
-  if (f.includes("[1]") || f.includes("#REF!")) return null; // → sera remplacé par valeur/blank
-  return f;
+function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+// Mapping des 7 typologies clients → colonnes (lettres) du template.
+// Chaque typologie = une paire (CA, Marges). Les paramètres %Offres/Remise/NbOffres sont
+// dans la colonne de DROITE de la paire, aux lignes (titre+9) %Offres, (titre+10) Remise,
+// (titre+11) Nb Offres. Ex. bloc1 (titre L3) : Ambassadeur CA=M, Marges=N, params en N9/N10/N11.
+const TYPO_COLS: Array<{ ca: string; marge: string; param: string }> = [
+  { ca: "M", marge: "N", param: "N" }, // Ambassadeur
+  { ca: "O", marge: "P", param: "P" }, // Compagnon
+  { ca: "Q", marge: "R", param: "R" }, // Challenger
+  { ca: "S", marge: "T", param: "T" }, // Rose
+  { ca: "U", marge: "V", param: "V" }, // Prunelier
+  { ca: "W", marge: "X", param: "X" }, // Anthylide
+  { ca: "Y", marge: "Z", param: "Z" }, // Calendula
+];
+const FMT_EUR = '#,##0.0 "€";(#,##0.0) "€";" - "';
+
+// Écrit les formules CA + Marges de toutes les typologies sur une ligne produit donnée.
+// CA   = E × Tarif × (1 − remise add.) × Nb Offres typologie × (1 − Remise typologie)
+// Marge = CA − (E × Coût achat × Nb Offres typologie)
+function writeTypoFormulas(ws: ExcelJS.Worksheet, row: number, remiseRow: number, nbOffRow: number) {
+  for (const t of TYPO_COLS) {
+    const nbOff = `$${t.param}$${nbOffRow}`;
+    const rem = `$${t.param}$${remiseRow}`;
+    const caCell = ws.getCell(`${t.ca}${row}`);
+    const mgCell = ws.getCell(`${t.marge}${row}`);
+    caCell.value = { formula: `E${row}*H${row}*(1-I${row})*${nbOff}*(1-${rem})` };
+    mgCell.value = { formula: `${t.ca}${row}-E${row}*F${row}*${nbOff}` };
+    caCell.numFmt = FMT_EUR;
+    mgCell.numFmt = FMT_EUR;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -83,295 +94,85 @@ export async function POST(req: NextRequest) {
     const ws = wb.getWorksheet(SHEET);
     if (!ws) return NextResponse.json({ error: `Onglet "${SHEET}" introuvable dans le gabarit` }, { status: 500 });
 
-    // 0a) Supprimer les autres onglets du gabarit (REGENERANTS, Fiche paramètrage).
-    //     Ils contiennent des milliers de références à un classeur externe disparu ([1]…)
-    //     SANS définition de lien externe → Excel signale le fichier comme corrompu à
-    //     l'ouverture. L'onglet "Proposition template" n'en dépend pas, on les retire.
-    for (const sheet of [...wb.worksheets]) {
-      if (sheet.name !== SHEET) {
-        try { wb.removeWorksheet(sheet.id); } catch { /* ignore */ }
+    // On mappe au plus 3 paliers sur les 3 blocs existants (on ne crée/supprime aucun bloc).
+    const used = Math.min(paliers.length, BLOCKS.length);
+
+    for (let b = 0; b < BLOCKS.length; b++) {
+      const blk = BLOCKS[b];
+      const pal = b < used ? paliers[b] : null;
+
+      if (pal) {
+        // Titre du bloc : "<code> — <label>" (sans toucher au reste de la ligne).
+        ws.getCell(blk.title, 1).value = `${pal.code} — ${pal.label || "Offre"}`;
+        // Nombre d'offres (B) = nb de packs vendus du palier.
+        ws.getCell(blk.nbOffresRow, 2).value = pal.qtyPacks || 0;
+        // Nombre de produits (B) = somme des qté/pack des produits.
+        ws.getCell(blk.nbProduitsRow, 2).value = pal.produits.reduce((s, p) => s + (p.qtyParPack || 0), 0);
       }
-    }
 
-    // 0) Nettoyer le template en mémoire : résoudre toutes les sharedFormula et supprimer
-    //    les "result" qui causent des corruptions à l'écriture avec ExcelJS.
-    ws.eachRow((row) => {
-      row.eachCell({ includeEmpty: false }, (cell) => {
-        const v = cell.value as any;
-        if (!v || typeof v !== "object") return;
-        if ("sharedFormula" in v) {
-          // Résoudre : aller chercher la formule dans la cellule maître et décaler
-          const masterRef = v.sharedFormula as string;
-          const mMatch = masterRef.match(/^([A-Z]+)(\d+)$/);
-          if (mMatch) {
-            const masterRow = parseInt(mMatch[2], 10);
-            const masterColStr = mMatch[1];
-            let masterColNum = 0;
-            for (const ch of masterColStr) masterColNum = masterColNum * 26 + (ch.charCodeAt(0) - 64);
-            const masterCell = ws!.getRow(masterRow).getCell(masterColNum);
-            const mv = masterCell.value as any;
-            if (mv && typeof mv === "object" && typeof mv.formula === "string") {
-              const rowDelta = (cell.row as unknown as number) - masterRow;
-              const resolved = mv.formula.replace(/(\$?[A-Z]{1,3}\$?)(\d+)/g, (m: string, col: string, num: string, offset: number, full: string) => {
-                if (offset > 0 && full[offset - 1] === "!") return m;
-                return `${col}${parseInt(num, 10) + rowDelta}`;
-              });
-              cell.value = { formula: resolved };
-            } else {
-              cell.value = null;
-            }
-          } else {
-            cell.value = null;
-          }
-        } else if ("formula" in v && "result" in v) {
-          // Supprimer le result pour éviter la sérialisation corrompue
-          cell.value = { formula: v.formula };
-        }
-      });
-    });
-
-    // 1) Capturer le bloc-modèle (bloc 1, lignes 3..3+BLOCK_LEN) : styles + valeurs + formules.
-    //    On résout ici les sharedFormula (références à une cellule maître) pour éviter
-    //    que ExcelJS sérialise des { sharedFormula: "G18" } orphelins dans les blocs suivants.
-    const modelTitleRow = 3;
-
-    function resolveModelCellValue(wsSheet: ExcelJS.Worksheet, rowNum: number, colNum: number): any {
-      const cell = wsSheet.getRow(rowNum).getCell(colNum);
-      const v = cell.value;
-      if (v === null || v === undefined) return null;
-      // Formule partagée : { sharedFormula: "G18" } → récupérer la formule de la cellule maître
-      // et la décaler relativement à la position courante.
-      if (typeof v === "object" && "sharedFormula" in v) {
-        const masterRef = (v as any).sharedFormula as string;
-        const mDec = decodeRange(masterRef + ":" + masterRef);
-        if (!mDec) return null;
-        const masterCell = wsSheet.getRow(mDec.top).getCell(mDec.left);
-        const mv = masterCell.value;
-        if (!mv || typeof mv !== "object" || typeof (mv as any).formula !== "string") return null;
-        const masterFormula = (mv as any).formula as string;
-        const rowDelta = rowNum - mDec.top;
-        const resolved = shiftRowRefs(masterFormula, rowDelta);
-        return { formula: resolved };
-      }
-      // Formule directe avec result → garder uniquement la formule
-      if (typeof v === "object" && "formula" in v) {
-        return { formula: (v as any).formula };
-      }
-      return v;
-    }
-
-    const model: Array<Array<{ value: any; style: any; numFmt?: string }>> = [];
-    for (let off = 0; off <= BLOCK_LEN; off++) {
-      const srcRow = ws.getRow(modelTitleRow + off);
-      const rowCells: Array<{ value: any; style: any; numFmt?: string }> = [];
-      for (let c = 1; c <= 35; c++) {
-        const cell = srcRow.getCell(c);
-        rowCells.push({
-          value: resolveModelCellValue(ws, modelTitleRow + off, c),
-          style: JSON.parse(JSON.stringify(cell.style || {})),
-          numFmt: cell.numFmt,
-        });
-      }
-      model.push(rowCells);
-    }
-    // Capturer les merges du bloc-modèle (relatifs).
-    const modelMerges: Array<[number, number, number, number]> = [];
-    const mergeRanges: string[] = (ws as any).model?.merges || [];
-    for (const m of mergeRanges) {
-      const dec = decodeRange(m);
-      if (!dec) continue;
-      const { top, left, bottom, right } = dec;
-      if (top >= modelTitleRow && bottom <= modelTitleRow + BLOCK_LEN) {
-        modelMerges.push([top - modelTitleRow, left, bottom - modelTitleRow, right]);
-      }
-    }
-
-    // 2) Effacer tout le contenu existant de l'onglet (on régénère intégralement),
-    //    en conservant largeurs de colonnes.
-    const lastRow = ws.rowCount;
-    // unmerge tout
-    for (const m of [...mergeRanges]) { try { ws.unMergeCells(m); } catch { /* ignore */ } }
-    for (let r = 1; r <= lastRow; r++) {
-      const row = ws.getRow(r);
-      for (let c = 1; c <= 35; c++) { const cell = row.getCell(c); cell.value = null; }
-    }
-
-    // 3) Réécrire un bloc par palier.
-    let cursor = 1; // 1re ligne du 1er bloc (= ancien L1 → on commence à 1 comme l'original commençait à 3 ; on garde 2 lignes de marge)
-    cursor = 3;
-    paliers.forEach((pal, idx) => {
-      const titleRow = cursor;
-      const nbOffres = pal.qtyPacks || 0;
-      const bOffresCell = `$B$${titleRow + NB_OFFRES}`;       // réf "Nombre d'offres" de CE bloc
-
-      for (let off = 0; off <= BLOCK_LEN; off++) {
-        const destRow = ws.getRow(titleRow + off);
-        for (let c = 1; c <= 35; c++) {
-          const m = model[off][c - 1];
-          const cell = destRow.getCell(c);
-          // style + format toujours recopiés
-          cell.style = JSON.parse(JSON.stringify(m.style || {}));
-          if (m.numFmt) cell.numFmt = m.numFmt;
-
-          let v = m.value;
-          // Réécriture des valeurs dynamiques selon la ligne logique (off) :
-          if (off === TITLE && c === 1) v = `${pal.code} — ${pal.label || "Offre"}`;
-          else if (off === NB_OFFRES && c === 2) v = nbOffres;
-          else if (off === NB_PRODUITS && c === 2) v = pal.produits.reduce((s, p) => s + (p.qtyParPack || 0), 0);
-          else if (off === NB_OFFRES_ROW) {
-            // "Nb Offres" = %Offres * Nombre d'offres du bloc → recâbler sur bOffresCell
-            if (typeof v === "object" && v?.formula) {
-              const fixed = String(v.formula).replace(/\$B\$4/g, bOffresCell);
-              v = { formula: fixed };
-            }
-          } else if (off === SYNTHESE) {
-            v = remapSynthese(v, titleRow, c);
-          } else if (off >= DATA_START && off < DATA_START + DATA_LEN) {
-            v = buildDataCell(off - DATA_START, c, pal.produits, titleRow, m.value);
-          } else if (typeof v === "object" && v?.formula) {
-            const fixed = remapRelativeFormula(String(v.formula), titleRow, modelTitleRow);
-            v = fixed === null ? null : { formula: fixed };
-          }
-          cell.value = v === undefined ? null : v;
-
-          // Forcer le format EUROS sur toutes les colonnes CA et Marges des typologies
-          // (M..Z), aussi bien en ligne data qu'en ligne synthèse. Le gabarit met un
-          // format POURCENTAGE sur les colonnes Marges (héritage de l'ancienne marge %),
-          // ce qui afficherait des valeurs ×100 absurdes maintenant qu'on calcule en €.
-          // Colonnes typologies CA/Marges (M..Z) → euros en ligne data ET synthèse.
-          // Récap AC15 (CA total) / AD15 (Marge total) → euros UNIQUEMENT en ligne synthèse
-          // (en dessous, AD18..AD24 portent des % "poids gratuités" à préserver).
-          const isTypoCol = TYPO_COLS.some(t => t.caCol === c || t.margeCol === c);
-          const isDataRow = off >= DATA_START && off < DATA_START + DATA_LEN;
-          const eurForTypo = isTypoCol && (off === SYNTHESE || isDataRow);
-          const eurForRecap = (c === 29 || c === 30) && off === SYNTHESE; // AC15 / AD15
-          if (eurForTypo || eurForRecap) {
-            cell.numFmt = '#,##0.0 "€";(#,##0.0) "€";" - "';
-          }
-        }
-      }
-      // ré-appliquer les merges du bloc
-      for (const [t, l, b, r] of modelMerges) {
-        try { ws.mergeCells(titleRow + t, l, titleRow + b, r); } catch { /* ignore */ }
-      }
-      cursor = titleRow + BLOCK_LEN + 2; // 2 lignes de marge entre blocs (comme le gabarit : L36→L40)
-    });
-
-    // Helper : extraire la formule d'une cellule ExcelJS en résolvant les sharedFormula.
-    // sharedFormula = { sharedFormula: "E124" } → aller chercher la formule dans la cellule E124
-    // et la décaler relativement à la cellule courante.
-    function resolveFormula(wsSheet: any, rowNum: number, colNum: number): string | null {
-      const cell = wsSheet.getRow(rowNum).getCell(colNum);
-      const v = cell.value;
-      if (v === null || v === undefined) return null;
-      if (typeof v === "string" && v.startsWith("=")) return v.slice(1);
-      if (typeof v !== "object") return null;
-
-      // Formule directe (avec ou sans result)
-      if (typeof (v as any).formula === "string") return (v as any).formula;
-
-      // Formule partagée : { sharedFormula: "E124" } → résoudre depuis la cellule maître
-      if (typeof (v as any).sharedFormula === "string") {
-        const masterRef = (v as any).sharedFormula as string; // ex: "E124"
-        const mDec = decodeRange(masterRef + ":" + masterRef);
-        if (!mDec) return null;
-        const masterCell = wsSheet.getRow(mDec.top).getCell(mDec.left);
-        const mv = masterCell.value;
-        if (!mv || typeof mv !== "object" || typeof (mv as any).formula !== "string") return null;
-        const masterFormula = (mv as any).formula as string;
-        // Décaler la formule maître relativement (rowNum - mDec.top, colNum - mDec.left)
-        const rowDelta = rowNum - mDec.top;
-        return shiftRowRefs(masterFormula, rowDelta);
-      }
-      return null;
-    }
-
-    function writeCellFromTemplate(srcRow: number, srcCol: number, dst: any, delta: number) {
-      const src = ws!.getRow(srcRow).getCell(srcCol);
-      // Style
-      try { dst.style = JSON.parse(JSON.stringify(src.style || {})); } catch { /* ignore */ }
-      if (src.numFmt) dst.numFmt = src.numFmt;
-      // Valeur
-      const f = resolveFormula(ws!, srcRow, srcCol);
-      if (f !== null) {
-        if (f.includes("[1]") || f.includes("#REF!") || f.includes("XLOOKUP") || f.includes("VLOOKUP")) {
-          dst.value = null; return;
-        }
-        dst.value = { formula: shiftRowRefs(f, delta) };
-      } else {
-        const raw = src.value;
-        // Ne pas copier les objets formula/sharedFormula résiduels → null
-        if (raw !== null && typeof raw === "object" && ("formula" in raw || "sharedFormula" in raw)) {
-          dst.value = null;
-        } else {
-          dst.value = raw ?? null;
-        }
-      }
-    }
-
-    // 4) Ajouter la section GRANDS COMPTES (modèle lignes 113–144 du gabarit).
-    const GC_MODEL_START = 113;
-    const GC_MODEL_END   = 144;
-    const GC_LEN         = GC_MODEL_END - GC_MODEL_START;
-    const gcStart = cursor + 2;
-    const gcDelta = gcStart - GC_MODEL_START;
-
-    const gcMergesRaw: string[] = (ws as any).model?.merges || [];
-    for (let off = 0; off <= GC_LEN; off++) {
-      const dstR = ws.getRow(gcStart + off);
-      for (let c = 1; c <= 35; c++) {
-        writeCellFromTemplate(GC_MODEL_START + off, c, dstR.getCell(c), gcDelta);
-      }
-    }
-    for (const m of gcMergesRaw) {
-      const dec = decodeRange(m);
-      if (!dec) continue;
-      if (dec.top >= GC_MODEL_START && dec.bottom <= GC_MODEL_END) {
-        try { ws.mergeCells(dec.top + gcDelta, dec.left, dec.bottom + gcDelta, dec.right); } catch { /* ignore */ }
-      }
-    }
-
-    // 5) Ajouter la section BESOINS LOGISTIQUES (modèle lignes 146–171 du gabarit).
-    const BL_MODEL_START = 146;
-    const BL_MODEL_END   = 171;
-    const BL_LEN         = BL_MODEL_END - BL_MODEL_START;
-    const blStart = gcStart + GC_LEN + 3;
-    const blDelta = blStart - BL_MODEL_START;
-
-    for (let off = 0; off <= BL_LEN; off++) {
-      const dstR = ws.getRow(blStart + off);
-      for (let c = 1; c <= 35; c++) {
-        writeCellFromTemplate(BL_MODEL_START + off, c, dstR.getCell(c), blDelta);
-      }
-    }
-    for (const m of gcMergesRaw) {
-      const dec = decodeRange(m);
-      if (!dec) continue;
-      if (dec.top >= BL_MODEL_START && dec.bottom <= BL_MODEL_END) {
-        try { ws.mergeCells(dec.top + blDelta, dec.left, dec.bottom + blDelta, dec.right); } catch { /* ignore */ }
-      }
-    }
-
-    // 6) Scrub final : neutraliser toute formule résiduelle pointant vers un classeur
-    //    externe ([1]…) ou cassée (#REF!), où qu'elle soit dans l'onglet (y compris des
-    //    cellules hors zone régénérée). C'est la cause du "fichier corrompu" à l'ouverture
-    //    Excel : des formules externes sans définition de lien externe.
-    ws.eachRow({ includeEmpty: false }, (row) => {
-      row.eachCell({ includeEmpty: false }, (cell) => {
+      // Correction d'un bug du gabarit d'origine : les formules "Nb Offres" (ligne nbOffRow)
+      // de TOUS les blocs pointent sur $B$4 (nb offres du bloc 1). On les recâble sur le
+      // "Nombre d'offres" du bloc courant (B<nbOffresRow>), pour chaque typologie.
+      const bOffresCell = `$B$${blk.nbOffresRow}`;
+      for (const t of TYPO_COLS) {
+        const cell = ws.getCell(`${t.param}${blk.nbOffRow}`);
         const v: any = cell.value;
-        if (v && typeof v === "object") {
-          const f = typeof v.formula === "string" ? v.formula
-                  : typeof v.sharedFormula === "string" ? v.sharedFormula : "";
-          if (f.includes("[1]") || f.includes("#REF!") || "sharedFormula" in v) {
-            // sharedFormula non résolue ou formule externe → on remplace par le result en
-            // cache s'il existe (valeur lisible), sinon on vide.
-            cell.value = (v.result !== undefined && typeof v.result !== "object") ? v.result : null;
-          }
-        } else if (typeof v === "string" && (v.includes("[1]") || v.includes("#REF!"))) {
-          cell.value = null;
+        if (v && typeof v === "object" && typeof v.formula === "string") {
+          cell.value = { formula: v.formula.replace(/\$B\$4/g, bOffresCell) };
         }
-      });
-    });
+      }
+
+      // Remplir / vider les 13 lignes "Produit Vente" du bloc.
+      for (let i = 0; i < blk.pvCount; i++) {
+        const row = blk.pvFirst + i;
+        const p = pal ? pal.produits[i] : undefined;
+
+        if (p) {
+          ws.getCell(row, 1).value = p.ref || "";                 // A : Code article
+          ws.getCell(row, 2).value = p.name || "";                // B : Libellé (Odoo)
+          ws.getCell(row, 3).value = p.barcode || "";             // C : EAN (Odoo)
+          ws.getCell(row, 5).value = p.qtyParPack || 0;           // E : Pdt dans offre (qté/pack)
+          ws.getCell(row, 6).value = round2(p.standardPrice || 0);// F : Coût achat unitaire
+          ws.getCell(row, 8).value = round2(p.listPrice || 0);    // H : Tarif revendeur unitaire
+          ws.getCell(row, 10).value = round2(p.ppc || 0);         // J : PPC
+          // CA + Marges pour les 7 typologies (le gabarit ne calcule que la colonne M).
+          writeTypoFormulas(ws, row, blk.remiseRow, blk.nbOffRow);
+          // D (typ. prod), G/K/L (formules) : laissés tels quels.
+        } else {
+          // Pas de produit pour cette ligne (ou bloc non utilisé) → vider le code et les
+          // valeurs saisies du gabarit, en gardant le style. On vide aussi les CA/Marges
+          // pour ne pas laisser des montants calculés sur une ligne sans produit.
+          ws.getCell(row, 1).value = null;  // A
+          ws.getCell(row, 2).value = null;  // B
+          ws.getCell(row, 3).value = null;  // C
+          ws.getCell(row, 5).value = null;  // E
+          ws.getCell(row, 6).value = null;  // F
+          ws.getCell(row, 8).value = null;  // H
+          ws.getCell(row, 10).value = null; // J
+          for (const t of TYPO_COLS) {
+            ws.getCell(`${t.ca}${row}`).value = null;
+            ws.getCell(`${t.marge}${row}`).value = null;
+          }
+        }
+      }
+
+      // Ligne de synthèse : SUM par colonne CA et Marges de toutes les typologies, sur la
+      // plage data du bloc. Le gabarit ne fournit la SUM que pour la colonne M (Ambassadeur) ;
+      // on ajoute les colonnes manquantes pour que AC (CA total) et AD (Marge total) soient
+      // justes. (AC/AD restent les formules d'origine, qui somment ces colonnes.)
+      for (const t of TYPO_COLS) {
+        const caSyn = ws.getCell(`${t.ca}${blk.synRow}`);
+        const mgSyn = ws.getCell(`${t.marge}${blk.synRow}`);
+        caSyn.value = { formula: `SUM(${t.ca}${blk.dataFirst}:${t.ca}${blk.dataLast})` };
+        mgSyn.value = { formula: `SUM(${t.marge}${blk.dataFirst}:${t.marge}${blk.dataLast})` };
+        caSyn.numFmt = FMT_EUR;
+        mgSyn.numFmt = FMT_EUR;
+      }
+      // Forcer le format euros sur AC (CA total) et AD (Marge total) de la synthèse :
+      // dans le gabarit, AD est en % (héritage de l'ancienne marge en %).
+      ws.getCell(`AC${blk.synRow}`).numFmt = FMT_EUR;
+      ws.getCell(`AD${blk.synRow}`).numFmt = FMT_EUR;
+    }
 
     const buf = await wb.xlsx.writeBuffer();
     return new NextResponse(buf, {
@@ -386,130 +187,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: e?.message || "Erreur export template" }, { status: 500 });
   }
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-// Mapping des 7 typologies clients → colonnes du template.
-// Chaque typologie occupe une paire (CA, Marges). Les paramètres %Offres / Remise / NbOffres
-// sont dans la colonne de DROITE de la paire (ex. Ambassadeur : CA=M, Marges=N, params en N).
-//   caCol    : colonne où écrire la formule de CA
-//   margeCol : colonne où écrire la formule de Marge
-//   paramCol : colonne des paramètres ($<paramCol>$<ligne Remise>, $<paramCol>$<ligne NbOffres>)
-const TYPO_COLS: Array<{ caCol: number; margeCol: number; paramCol: string }> = [
-  { caCol: 13, margeCol: 14, paramCol: "N" }, // Ambassadeur : M / N
-  { caCol: 15, margeCol: 16, paramCol: "P" }, // Compagnon   : O / P
-  { caCol: 17, margeCol: 18, paramCol: "R" }, // Challenger  : Q / R
-  { caCol: 19, margeCol: 20, paramCol: "T" }, // Rose        : S / T
-  { caCol: 21, margeCol: 22, paramCol: "V" }, // Prunelier   : U / V
-  { caCol: 23, margeCol: 24, paramCol: "X" }, // Anthylide   : W / X
-  { caCol: 25, margeCol: 26, paramCol: "Z" }, // Calendula   : Y / Z
-];
-
-// Construit une cellule de ligne produit (off-relatif 0..DATA_LEN-1).
-function buildDataCell(
-  prodIdx: number, col: number, produits: PrecoLigneIn[],
-  titleRow: number, modelValue: any
-): any {
-  const absRow = titleRow + DATA_START + prodIdx;
-  const p = produits[prodIdx];
-
-  // Au-delà de la liste produits → ligne vide (mais on garde le style).
-  if (!p) return null;
-
-  // Lignes de paramètres de CE bloc (offsets relatifs au titre).
-  const remiseRow = titleRow + REMISE;          // ligne "Remise"
-  const nbOffresRow = titleRow + NB_OFFRES_ROW; // ligne "Nb Offres"
-
-  switch (col) {
-    case 1:  return p.ref || "";                                  // A : Code article
-    case 2:  return p.name || "";                                 // B : Libellé (valeur Odoo)
-    case 3:  return p.barcode || "";                              // C : EAN (valeur Odoo)
-    case 4:  return p.typProd || "Produit Vente";                 // D : Typ. Prod
-    case 5:  return p.qtyParPack || 0;                            // E : Pdt dans offre (qté/pack)
-    case 6:  return round2(p.standardPrice || 0);                 // F : Coût achat unitaire (valeur)
-    case 7:  return { formula: `E${absRow}*F${absRow}` };         // G : Coûts achats total
-    case 8:  return round2(p.listPrice || 0);                     // H : Tarif revendeur unitaire (valeur)
-    case 9:  return typeof modelValue === "number" ? modelValue : 0.15; // I : Remise additionnelle
-    case 10: return round2(p.ppc || 0);                           // J : PPC (valeur Odoo)
-    case 11: return { formula: `J${absRow}*(1-I${absRow})` };     // K : PPC remisé
-    case 12: return { formula: `IFERROR(J${absRow}-K${absRow},"")` }; // L : Montant BRI
-    default: {
-      // Colonnes M..Z : pour chaque typologie, CA puis Marges.
-      const typo = TYPO_COLS.find(t => t.caCol === col || t.margeCol === col);
-      if (!typo) return null;
-      const nbOff = `$${typo.paramCol}$${nbOffresRow}`;  // Nb Offres de la typologie
-      const rem = `$${typo.paramCol}$${remiseRow}`;      // Remise de la typologie
-      if (col === typo.caCol) {
-        // CA = E × Tarif revendeur × (1 − remise add.) × Nb Offres × (1 − Remise typologie)
-        //   E = quantité du produit dans le pack (colonne "Pdt dans offre").
-        return { formula: `E${absRow}*H${absRow}*(1-I${absRow})*${nbOff}*(1-${rem})` };
-      }
-      // Marges € = CA − coût d'achat écoulé = CA − (E × Coût achat unitaire × Nb Offres typologie).
-      const caRef = colNumToLetter(typo.caCol) + absRow;
-      return { formula: `${caRef}-E${absRow}*F${absRow}*${nbOff}` };
-    }
-  }
-}
-
-function colNumToLetter(n: number): string {
-  let s = ""; while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); } return s;
-}
-
-// Remappe une formule du bloc-modèle (titre L3) vers le bloc courant (titre titleRow).
-// Décale toutes les références de lignes de (titleRow - 3) et neutralise [1]/#REF!.
-function remapRelativeFormula(formula: string, titleRow: number, modelTitleRow: number): string | null {
-  if (formula.includes("[1]") || formula.includes("#REF!")) return null;
-  const delta = titleRow - modelTitleRow;
-  if (delta === 0) return formula;
-  // Décale les références $?LET$?NUM (en évitant de toucher aux noms de feuille)
-  return shiftRowRefs(formula, delta);
-}
-
-// Synthèse (ligne SYNTHESE) : agrège chaque colonne sur les lignes data du bloc.
-// - Colonnes CA et Marges de chaque typologie (M..Z) → SUM sur la plage data, même
-//   si le gabarit ne contenait la formule que pour Ambassadeur.
-// - Autres cellules (E, G, J, K, L, AB, AC, AD) : on décale les formules du gabarit
-//   et on neutralise les #REF!/[1].
-function remapSynthese(v: any, titleRow: number, col: number): any {
-  const dataFirst = titleRow + DATA_START;
-  const dataLast = titleRow + DATA_START + DATA_LEN - 1;
-  const L = (n: number) => colNumToLetter(n);
-
-  // Toute colonne CA/Marges d'une typologie → SUM de sa plage data.
-  const isTypoCol = TYPO_COLS.some(t => t.caCol === col || t.margeCol === col);
-  if (isTypoCol) {
-    const c = L(col);
-    return { formula: `SUM(${c}${dataFirst}:${c}${dataLast})` };
-  }
-
-  if (typeof v !== "object" || !v?.formula) return v;
-  const f = String(v.formula);
-  if (f.includes("[1]") || f.includes("#REF!")) return null;
-  const fixed = shiftRowRefs(f, titleRow - 3);
-  return { formula: fixed };
-}
-
-// Décale les numéros de ligne dans les références de cellules d'une formule.
-// Gère les formes A1, $A$1, A1:B2, et préserve les références à d'autres feuilles
-// (REGENERANTS!$C..) en ne décalant pas après un "!".
-function shiftRowRefs(formula: string, delta: number): string {
-  // On ne décale pas les réfs qui suivent un "!" (autre feuille).
-  // Approche : tokeniser en repérant les segments "Feuille!..." pour les laisser intacts.
-  return formula.replace(/(\$?[A-Z]{1,3}\$?)(\d+)/g, (match, colPart, numPart, offset, full) => {
-    // si juste avant le match il y a un "!", c'est une réf vers une autre feuille → ne pas toucher
-    const prevChar = offset > 0 ? full[offset - 1] : "";
-    if (prevChar === "!") return match;
-    const n = parseInt(numPart, 10) + delta;
-    return `${colPart}${n}`;
-  });
-}
-
-function decodeRange(a1: string): { top: number; left: number; bottom: number; right: number } | null {
-  const m = a1.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
-  if (!m) return null;
-  return { left: colToNum(m[1]), top: parseInt(m[2], 10), right: colToNum(m[3]), bottom: parseInt(m[4], 10) };
-}
-function colToNum(s: string): number {
-  let n = 0; for (const ch of s) n = n * 26 + (ch.charCodeAt(0) - 64); return n;
-}
-function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
