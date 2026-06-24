@@ -105,6 +105,7 @@ function rowToCampagneCreee(row: any): CampagneCreee {
     dateFin: row.date_fin || "",
     periodeDebut: row.periode_debut || "",
     periodeFin: row.periode_fin || "",
+    articles: d.articles || [],
     paliers: d.paliers || [],
     createdAt: row.created_at,
   };
@@ -118,7 +119,7 @@ function campagneCreeeToRow(c: CampagneCreee) {
     date_fin: c.dateFin || null,
     periode_debut: c.periodeDebut || null,
     periode_fin: c.periodeFin || null,
-    data: { paliers: c.paliers },
+    data: { articles: c.articles, paliers: c.paliers },
   };
 }
 

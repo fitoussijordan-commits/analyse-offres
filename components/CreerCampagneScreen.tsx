@@ -2,8 +2,8 @@
 import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import {
-  CampagneCreee, PalierSaisi, ArticleSaisi, genId,
-  analyseCampagneCreee, toExportPayload,
+  CampagneCreee, PalierSaisi, ArticleCampagne, genId,
+  analyseCampagneCreee, toExportPayload, qtyParPack,
 } from "@/lib/create-campaign";
 import { loadCampagnesCreees, upsertCampagneCreee, deleteCampagneCreee } from "@/lib/campaigns";
 
@@ -13,25 +13,23 @@ const C = {
   border: "#e2e8f0",
   blue: "#3b82f6", blueDark: "#1d4ed8", blueSoft: "#eff6ff",
   green: "#10b981", greenSoft: "#ecfdf5",
-  amber: "#f59e0b", amberSoft: "#fffbeb",
   red: "#ef4444", redSoft: "#fef2f2",
   teal: "#0d9488", tealSoft: "#f0fdfa",
   shadow: "0 1px 3px rgba(0,0,0,0.06)", shadowMd: "0 4px 16px rgba(0,0,0,0.10)",
 };
 const fmtNum = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n || 0));
-const fmtEur = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
 
 interface Props {
   session: odoo.OdooSession;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }
 
-function emptyArticle(): ArticleSaisi { return { ref: "" }; }
+function emptyArticle(): ArticleCampagne { return { ref: "" }; }
 function emptyPalier(n: number): PalierSaisi {
-  return { code: `REGE${n}`, label: n === 1 ? "Premium" : n === 2 ? "Standard" : n === 3 ? "Essentiel" : `Palier ${n}`, nbPacks: 0, articles: [emptyArticle()] };
+  return { code: `REGE${n}`, label: n === 1 ? "Premium" : n === 2 ? "Standard" : n === 3 ? "Essentiel" : `Palier ${n}`, nbPacks: 0, qtyParPack: {} };
 }
 function emptyCampagne(): CampagneCreee {
-  return { id: genId(), nom: "", dateDebut: "", dateFin: "", periodeDebut: "", periodeFin: "", paliers: [emptyPalier(1)] };
+  return { id: genId(), nom: "", dateDebut: "", dateFin: "", periodeDebut: "", periodeFin: "", articles: [emptyArticle()], paliers: [emptyPalier(1)] };
 }
 
 const inputStyle: React.CSSProperties = {
@@ -53,33 +51,37 @@ export default function CreerCampagneScreen({ session, onToast }: Props) {
     try { setSaved(await loadCampagnesCreees()); } catch (e: any) { onToast("Erreur chargement : " + e.message, "error"); }
   }
 
-  // ── Mutations du formulaire ───────────────────────────────────────────────
   const setField = (k: keyof CampagneCreee, v: any) => setCamp(c => ({ ...c, [k]: v }));
+  const setArticle = (ai: number, patch: Partial<ArticleCampagne>) =>
+    setCamp(c => ({ ...c, articles: c.articles.map((a, i) => i === ai ? { ...a, ...patch } : a) }));
+  const addArticle = () => setCamp(c => ({ ...c, articles: [...c.articles, emptyArticle()] }));
+  const removeArticle = (ai: number) => setCamp(c => ({ ...c, articles: c.articles.filter((_, i) => i !== ai) }));
+
   const setPalier = (pi: number, patch: Partial<PalierSaisi>) =>
     setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => i === pi ? { ...p, ...patch } : p) }));
-  const setArticle = (pi: number, ai: number, patch: Partial<ArticleSaisi>) =>
-    setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => i !== pi ? p : { ...p, articles: p.articles.map((a, j) => j === ai ? { ...a, ...patch } : a) }) }));
+  const setPalierQty = (pi: number, ref: string, val: number | null) =>
+    setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => {
+      if (i !== pi) return p;
+      const q = { ...p.qtyParPack };
+      if (val == null) delete q[ref]; else q[ref] = val;
+      return { ...p, qtyParPack: q };
+    }) }));
   const addPalier = () => setCamp(c => ({ ...c, paliers: [...c.paliers, emptyPalier(c.paliers.length + 1)] }));
   const removePalier = (pi: number) => setCamp(c => ({ ...c, paliers: c.paliers.filter((_, i) => i !== pi) }));
-  const addArticle = (pi: number) => setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => i === pi ? { ...p, articles: [...p.articles, emptyArticle()] } : p) }));
-  const removeArticle = (pi: number, ai: number) => setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => i !== pi ? p : { ...p, articles: p.articles.filter((_, j) => j !== ai) }) }));
 
-  // ── Analyse conso N-1 + pricing Odoo ──────────────────────────────────────
   const analyser = async () => {
     if (!camp.periodeDebut || !camp.periodeFin) { onToast("Renseigne la période N-1 (début et fin)", "error"); return; }
     setAnalysing(true);
     try {
       const enriched = await analyseCampagneCreee(session, camp);
-      setCamp(enriched);
-      setAnalysed(true);
-      const nbFound = enriched.paliers.flatMap(p => p.articles).filter(a => a.found).length;
-      const nbTotal = enriched.paliers.flatMap(p => p.articles).filter(a => a.ref.trim()).length;
-      onToast(`Conso N-1 récupérée (${nbFound}/${nbTotal} articles trouvés dans Odoo)`, nbFound === nbTotal ? "success" : "info");
+      setCamp(enriched); setAnalysed(true);
+      const nbFound = enriched.articles.filter(a => a.found).length;
+      const nbTotal = enriched.articles.filter(a => a.ref.trim()).length;
+      onToast(`Conso N-1 récupérée (${nbFound}/${nbTotal} articles trouvés)`, nbFound === nbTotal ? "success" : "info");
     } catch (e: any) { onToast("Erreur analyse : " + e.message, "error"); }
     finally { setAnalysing(false); }
   };
 
-  // ── Sauvegarde Supabase ───────────────────────────────────────────────────
   const sauvegarder = async () => {
     if (!camp.nom.trim()) { onToast("Donne un nom à la campagne", "error"); return; }
     setSaving(true);
@@ -92,7 +94,6 @@ export default function CreerCampagneScreen({ session, onToast }: Props) {
   const supprimer = async (id: string) => { try { await deleteCampagneCreee(id); await reload(); onToast("Supprimée", "success"); } catch (e: any) { onToast(e.message, "error"); } };
   const nouvelle = () => { setCamp(emptyCampagne()); setAnalysed(false); };
 
-  // ── Export Proposition ─────────────────────────────────────────────────────
   const exporter = async () => {
     const payload = toExportPayload(camp);
     if (!payload.paliers.length) { onToast("Aucun article à exporter", "error"); return; }
@@ -107,17 +108,18 @@ export default function CreerCampagneScreen({ session, onToast }: Props) {
     finally { setExporting(false); }
   };
 
+  const articlesValides = camp.articles.filter(a => a.ref.trim());
+
   return (
     <div style={{ flex: 1, height: "100%", overflowY: "auto", padding: 24 }}>
     <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Créer une campagne</h1>
-        <span style={{ fontSize: 13, color: C.textMuted }}>Construis une campagne de zéro et recommande les quantités selon la conso N-1.</span>
+        <span style={{ fontSize: 13, color: C.textMuted }}>Mêmes articles dans tous les paliers ; seules les quantités changent.</span>
         <div style={{ flex: 1 }} />
         <button onClick={nouvelle} style={{ padding: "7px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>+ Nouvelle</button>
       </div>
 
-      {/* Campagnes sauvegardées */}
       {saved.length > 0 && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {saved.map(s => (
@@ -139,11 +141,42 @@ export default function CreerCampagneScreen({ session, onToast }: Props) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.5fr", gap: 14, alignItems: "end" }}>
           <div><label style={labelStyle}>Période N-1 — début</label><input type="date" style={{ ...inputStyle, width: "100%" }} value={camp.periodeDebut} onChange={e => setField("periodeDebut", e.target.value)} /></div>
           <div><label style={labelStyle}>Période N-1 — fin</label><input type="date" style={{ ...inputStyle, width: "100%" }} value={camp.periodeFin} onChange={e => setField("periodeFin", e.target.value)} /></div>
-          <div style={{ fontSize: 12, color: C.textMuted, paddingBottom: 8 }}>L'app sommera les ventes de chaque article sur cette fenêtre pour recommander la qté/pack.</div>
+          <div style={{ fontSize: 12, color: C.textMuted, paddingBottom: 8 }}>L'app sommera les ventes de chaque article sur cette fenêtre.</div>
         </div>
       </div>
 
-      {/* Paliers */}
+      {/* Articles de la campagne (communs à tous les paliers) */}
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18, boxShadow: C.shadow }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Articles de la campagne</div>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {["Code article", "Libellé (Odoo)", "Conso N-1", ""].map((h, i) => (
+                <th key={i} style={{ padding: "6px 8px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i === 2 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {camp.articles.map((a, ai) => (
+              <tr key={ai}>
+                <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
+                  <input style={{ ...inputStyle, width: 130, fontFamily: "monospace" }} value={a.ref} onChange={e => setArticle(ai, { ref: e.target.value, name: undefined, found: undefined })} placeholder="Code" />
+                </td>
+                <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 13, color: a.found === false && a.ref ? C.red : C.textSec }}>
+                  {a.name || (a.found === false && a.ref ? "Introuvable dans Odoo" : "—")}
+                </td>
+                <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, color: C.textSec }}>{analysed ? fmtNum(a.consoN1 || 0) : "—"}</td>
+                <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "center" }}>
+                  {camp.articles.length > 1 && <button onClick={() => removeArticle(ai)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 15 }}>×</button>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button onClick={addArticle} style={{ marginTop: 8, padding: "5px 12px", background: C.blueSoft, border: `1px solid ${C.blue}`, borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>+ Ajouter un article</button>
+      </div>
+
+      {/* Paliers : nb packs + qté/pack par article */}
       {camp.paliers.map((pal, pi) => (
         <div key={pi} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
           <div style={{ padding: "12px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -155,35 +188,33 @@ export default function CreerCampagneScreen({ session, onToast }: Props) {
             {camp.paliers.length > 1 && <button onClick={() => removePalier(pi)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.red, fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>Supprimer le palier</button>}
           </div>
           <div style={{ padding: "8px 16px 14px" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  {["Code article", "Libellé (Odoo)", "Conso N-1", "Qté / pack (reco)", ""].map((h, i) => (
-                    <th key={i} style={{ padding: "6px 8px", fontSize: 11, fontWeight: 700, color: i === 3 ? C.blue : C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i >= 2 && i < 4 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pal.articles.map((a, ai) => (
-                  <tr key={ai}>
-                    <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
-                      <input style={{ ...inputStyle, width: 120, fontFamily: "monospace" }} value={a.ref} onChange={e => setArticle(pi, ai, { ref: e.target.value, name: undefined, found: undefined })} placeholder="Code" />
-                    </td>
-                    <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 13, color: a.found === false && a.ref ? C.red : C.textSec }}>
-                      {a.name || (a.found === false && a.ref ? "Introuvable dans Odoo" : "—")}
-                    </td>
-                    <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, color: C.textSec }}>{analysed ? fmtNum(a.consoN1 || 0) : "—"}</td>
-                    <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>
-                      <input type="number" style={{ ...inputStyle, width: 80, textAlign: "right", fontWeight: 700, color: C.blue }} value={a.qtyParPack ?? ""} onChange={e => setArticle(pi, ai, { qtyParPack: e.target.value === "" ? undefined : (parseInt(e.target.value) || 0) })} placeholder="—" />
-                    </td>
-                    <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "center" }}>
-                      {pal.articles.length > 1 && <button onClick={() => removeArticle(pi, ai)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 15 }}>×</button>}
-                    </td>
+            {articlesValides.length === 0 ? (
+              <div style={{ fontSize: 13, color: C.textMuted, padding: "8px 0" }}>Ajoute des articles à la campagne ci-dessus.</div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {["Code", "Libellé", "Qté / pack (reco)"].map((h, i) => (
+                      <th key={i} style={{ padding: "6px 8px", fontSize: 11, fontWeight: 700, color: i === 2 ? C.blue : C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i === 2 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            <button onClick={() => addArticle(pi)} style={{ marginTop: 8, padding: "5px 12px", background: C.blueSoft, border: `1px solid ${C.blue}`, borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>+ Ajouter un article</button>
+                </thead>
+                <tbody>
+                  {articlesValides.map((a) => (
+                    <tr key={a.ref}>
+                      <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontFamily: "monospace", fontSize: 13, color: C.text }}>{a.ref}</td>
+                      <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 13, color: C.textSec }}>{a.name || "—"}</td>
+                      <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>
+                        <input type="number" style={{ ...inputStyle, width: 80, textAlign: "right", fontWeight: 700, color: C.blue }}
+                          value={pal.qtyParPack[a.ref] ?? (analysed ? qtyParPack(a, pal) : "")}
+                          onChange={e => setPalierQty(pi, a.ref, e.target.value === "" ? null : (parseInt(e.target.value) || 0))}
+                          placeholder="—" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       ))}

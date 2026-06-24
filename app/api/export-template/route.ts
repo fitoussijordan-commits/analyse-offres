@@ -102,8 +102,10 @@ export async function POST(req: NextRequest) {
       const pal = b < used ? paliers[b] : null;
 
       if (pal) {
-        // Titre du bloc : "<code> — <label>" (sans toucher au reste de la ligne).
-        ws.getCell(blk.title, 1).value = `${pal.code} — ${pal.label || "Offre"}`;
+        // Titre du bloc : "<nom campagne> — <code> — <label>" (le nom de campagne est
+        // reporté sur chaque palier ; sans toucher au reste de la ligne).
+        const titreParts = [payload.nom, pal.code, pal.label].map(s => (s || "").trim()).filter(Boolean);
+        ws.getCell(blk.title, 1).value = titreParts.join(" — ") || "Offre";
         // Nombre d'offres (B) = nb de packs vendus du palier.
         ws.getCell(blk.nbOffresRow, 2).value = pal.qtyPacks || 0;
         // Nombre de produits (B) = somme des qté/pack des produits.
