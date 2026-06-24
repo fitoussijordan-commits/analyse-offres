@@ -154,6 +154,21 @@ export async function POST(req: NextRequest) {
             v = fixed === null ? null : { formula: fixed };
           }
           cell.value = v === undefined ? null : v;
+
+          // Forcer le format EUROS sur toutes les colonnes CA et Marges des typologies
+          // (M..Z), aussi bien en ligne data qu'en ligne synthèse. Le gabarit met un
+          // format POURCENTAGE sur les colonnes Marges (héritage de l'ancienne marge %),
+          // ce qui afficherait des valeurs ×100 absurdes maintenant qu'on calcule en €.
+          // Colonnes typologies CA/Marges (M..Z) → euros en ligne data ET synthèse.
+          // Récap AC15 (CA total) / AD15 (Marge total) → euros UNIQUEMENT en ligne synthèse
+          // (en dessous, AD18..AD24 portent des % "poids gratuités" à préserver).
+          const isTypoCol = TYPO_COLS.some(t => t.caCol === c || t.margeCol === c);
+          const isDataRow = off >= DATA_START && off < DATA_START + DATA_LEN;
+          const eurForTypo = isTypoCol && (off === SYNTHESE || isDataRow);
+          const eurForRecap = (c === 29 || c === 30) && off === SYNTHESE; // AC15 / AD15
+          if (eurForTypo || eurForRecap) {
+            cell.numFmt = '#,##0.0 "€";(#,##0.0) "€";" - "';
+          }
         }
       }
       // ré-appliquer les merges du bloc
