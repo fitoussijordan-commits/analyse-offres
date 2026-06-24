@@ -168,10 +168,51 @@ export async function POST(req: NextRequest) {
         caSyn.numFmt = FMT_EUR;
         mgSyn.numFmt = FMT_EUR;
       }
-      // Forcer le format euros sur AC (CA total) et AD (Marge total) de la synthèse :
-      // dans le gabarit, AD est en % (héritage de l'ancienne marge en %).
-      ws.getCell(`AC${blk.synRow}`).numFmt = FMT_EUR;
-      ws.getCell(`AD${blk.synRow}`).numFmt = FMT_EUR;
+      // Synthèse, colonnes de droite (col 28=AB, 29=AC, 30=AD) :
+      //   AB = "Nbrs Offres planifiées" → NOMBRE, surtout pas des euros.
+      //   AC = CA total  → euros.
+      //   AD = Marge totale → euros (le gabarit l'avait en %, hérité de l'ancienne marge %).
+      // ATTENTION : dans le gabarit, AB et AC partagent le MÊME objet style (ExcelJS), donc
+      // changer le format de l'un change l'autre. On casse le partage en clonant le style
+      // d'AB avant de lui appliquer son propre format nombre.
+      const abCell = ws.getCell(blk.synRow, 28);
+      abCell.style = JSON.parse(JSON.stringify(abCell.style || {}));
+      ws.getCell(blk.synRow, 29).numFmt = FMT_EUR;   // AC : CA total (euros)
+      ws.getCell(blk.synRow, 30).numFmt = FMT_EUR;   // AD : Marge totale (euros)
+      abCell.numFmt = '#,##0;(#,##0);" - "';          // AB : nombre (après clonage)
+    }
+
+    // ── GRANDS COMPTES & Besoins logistiques ────────────────────────────────────
+    // Ces deux sections reprennent la même liste de produits que le bloc 1 (mêmes codes,
+    // mêmes positions ; elles référencent d'ailleurs le bloc 1). On les aligne donc sur
+    // le PALIER 1. On remplit uniquement les colonnes demandées, sans toucher au reste :
+    //   - GRANDS COMPTES : libellé (B), coût achat (F), tarif revendeur (H), PPC (J).
+    //     (K = PPC remisé et L = BRI sont déjà des formules du gabarit → laissées telles quelles.)
+    //   - Besoins logistiques : libellé (B) seulement.
+    const pal1 = paliers[0]; // bloc 1 = palier 1
+    const GC_PV_FIRST = 123, GC_PV_COUNT = 13;   // lignes "Produit Vente" de GRANDS COMPTES
+    const LOG_PV_FIRST = 149, LOG_PV_COUNT = 13; // lignes "Produit Vente" de Besoins logistiques
+
+    for (let i = 0; i < GC_PV_COUNT; i++) {
+      const row = GC_PV_FIRST + i;
+      const p = pal1 ? pal1.produits[i] : undefined;
+      if (p) {
+        ws.getCell(row, 2).value = p.name || "";                 // B : Libellé
+        ws.getCell(row, 6).value = round2(p.standardPrice || 0); // F : Coût achat unitaire
+        ws.getCell(row, 8).value = round2(p.listPrice || 0);     // H : Tarif revendeur unitaire
+        ws.getCell(row, 10).value = round2(p.ppc || 0);          // J : PPC
+      } else {
+        ws.getCell(row, 2).value = null;
+        ws.getCell(row, 6).value = null;
+        ws.getCell(row, 8).value = null;
+        ws.getCell(row, 10).value = null;
+      }
+    }
+
+    for (let i = 0; i < LOG_PV_COUNT; i++) {
+      const row = LOG_PV_FIRST + i;
+      const p = pal1 ? pal1.produits[i] : undefined;
+      ws.getCell(row, 2).value = p ? (p.name || "") : null;      // B : Libellé
     }
 
     const buf = await wb.xlsx.writeBuffer();
