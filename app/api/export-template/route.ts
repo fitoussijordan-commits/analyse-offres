@@ -22,7 +22,11 @@ import path from "path";
 export const maxDuration = 60;
 
 const SHEET = "Proposition template";
-const TEMPLATE_PATH = path.join(process.cwd(), "lib", "templates", "proposition-template.xlsx");
+// Gabarit NETTOYÉ : version sans les onglets parasites (REGENERANTS, Fiche paramètrage),
+// sans le lien vers un classeur externe disparu, et sans formules cassées. Le gabarit
+// d'origine était trop corrompu (60k+ références externes mortes) : ExcelJS le réécrivait
+// en perdant l'index des onglets → "fichier corrompu" à l'ouverture Excel.
+const TEMPLATE_PATH = path.join(process.cwd(), "lib", "templates", "proposition-template-clean.xlsx");
 
 // ── Géométrie du bloc-modèle (bloc 1 du gabarit) ──────────────────────────────
 // Toutes les lignes sont exprimées en offset relatif au titre du bloc (ligne "REGENERANTS X").
@@ -78,6 +82,16 @@ export async function POST(req: NextRequest) {
     await wb.xlsx.readFile(TEMPLATE_PATH);
     const ws = wb.getWorksheet(SHEET);
     if (!ws) return NextResponse.json({ error: `Onglet "${SHEET}" introuvable dans le gabarit` }, { status: 500 });
+
+    // 0a) Supprimer les autres onglets du gabarit (REGENERANTS, Fiche paramètrage).
+    //     Ils contiennent des milliers de références à un classeur externe disparu ([1]…)
+    //     SANS définition de lien externe → Excel signale le fichier comme corrompu à
+    //     l'ouverture. L'onglet "Proposition template" n'en dépend pas, on les retire.
+    for (const sheet of [...wb.worksheets]) {
+      if (sheet.name !== SHEET) {
+        try { wb.removeWorksheet(sheet.id); } catch { /* ignore */ }
+      }
+    }
 
     // 0) Nettoyer le template en mémoire : résoudre toutes les sharedFormula et supprimer
     //    les "result" qui causent des corruptions à l'écriture avec ExcelJS.
@@ -337,6 +351,27 @@ export async function POST(req: NextRequest) {
         try { ws.mergeCells(dec.top + blDelta, dec.left, dec.bottom + blDelta, dec.right); } catch { /* ignore */ }
       }
     }
+
+    // 6) Scrub final : neutraliser toute formule résiduelle pointant vers un classeur
+    //    externe ([1]…) ou cassée (#REF!), où qu'elle soit dans l'onglet (y compris des
+    //    cellules hors zone régénérée). C'est la cause du "fichier corrompu" à l'ouverture
+    //    Excel : des formules externes sans définition de lien externe.
+    ws.eachRow({ includeEmpty: false }, (row) => {
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        const v: any = cell.value;
+        if (v && typeof v === "object") {
+          const f = typeof v.formula === "string" ? v.formula
+                  : typeof v.sharedFormula === "string" ? v.sharedFormula : "";
+          if (f.includes("[1]") || f.includes("#REF!") || "sharedFormula" in v) {
+            // sharedFormula non résolue ou formule externe → on remplace par le result en
+            // cache s'il existe (valeur lisible), sinon on vide.
+            cell.value = (v.result !== undefined && typeof v.result !== "object") ? v.result : null;
+          }
+        } else if (typeof v === "string" && (v.includes("[1]") || v.includes("#REF!"))) {
+          cell.value = null;
+        }
+      });
+    });
 
     const buf = await wb.xlsx.writeBuffer();
     return new NextResponse(buf, {
