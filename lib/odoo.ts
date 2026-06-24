@@ -69,3 +69,48 @@ export async function getMeaTemplateLines(session: OdooSession, templateId: numb
   }
   return result;
 }
+
+// ── Données tarifaires produit (pour remplir le template Proposition) ──────────
+// Champs Odoo (product.product hérite de product.template) :
+//   barcode        → EAN / code à barres (char)
+//   standard_price → coût d'achat unitaire (float)
+//   list_price     → tarif revendeur / prix de vente (float)
+//   x_ppc          → PPC, prix public conseillé (champ custom monetary)
+export interface ProductPricing {
+  productId: number;
+  ref: string;            // default_code
+  name: string;
+  barcode: string;        // EAN
+  standardPrice: number;  // coût achat unitaire
+  listPrice: number;      // tarif revendeur unitaire
+  ppc: number;            // PPC
+}
+
+/**
+ * Récupère, pour une liste d'IDs produits Odoo, les champs tarifaires nécessaires
+ * au remplissage du template Proposition (EAN, coût achat, tarif revendeur, PPC).
+ * Indexé par productId pour un mapping direct depuis la préco.
+ */
+export async function getProductsPricing(session: OdooSession, productIds: number[]): Promise<Record<number, ProductPricing>> {
+  const ids = [...new Set(productIds.filter(Boolean))];
+  const out: Record<number, ProductPricing> = {};
+  if (!ids.length) return out;
+  const prods = await searchRead(
+    session, "product.product",
+    [["id", "in", ids]],
+    ["id", "default_code", "name", "barcode", "standard_price", "list_price", "x_ppc"],
+    0
+  );
+  for (const p of (prods || []) as any[]) {
+    out[p.id] = {
+      productId: p.id,
+      ref: p.default_code || "",
+      name: p.name || "",
+      barcode: p.barcode || "",
+      standardPrice: typeof p.standard_price === "number" ? p.standard_price : 0,
+      listPrice: typeof p.list_price === "number" ? p.list_price : 0,
+      ppc: typeof p.x_ppc === "number" ? p.x_ppc : 0,
+    };
+  }
+  return out;
+}

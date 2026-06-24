@@ -476,7 +476,7 @@ export default function CampagneScreen({ session, onToast }: Props) {
             ) : tab === "commandes" ? (
               <CommandesTab result={result} baseUrl={session.config.url} />
             ) : tab === "preco" ? (
-              <PrecoTab result={result} onToast={onToast} />
+              <PrecoTab result={result} onToast={onToast} session={session} />
             ) : (
               <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
                 {tab === "produits" && <Tbl
@@ -519,7 +519,7 @@ export default function CampagneScreen({ session, onToast }: Props) {
 // ════════════════════════════════════════════════════════════════════════════
 // Onglet "Préco N+1" : produits conservés PAR PALIER (offre) → besoin fournisseur
 // ════════════════════════════════════════════════════════════════════════════
-function PrecoTab({ result, onToast }: { result: CampaignResult; onToast: Props["onToast"] }) {
+function PrecoTab({ result, onToast, session }: { result: CampaignResult; onToast: Props["onToast"]; session: odoo.OdooSession }) {
   // État : produits conservés par code offre (palier). Par défaut, tout est conservé.
   const initial = () => {
     const m: Record<string, Set<number>> = {};
@@ -528,6 +528,7 @@ function PrecoTab({ result, onToast }: { result: CampaignResult; onToast: Props[
   };
   const [conserved, setConserved] = useState<Record<string, Set<number>>>(initial);
   const [exporting, setExporting] = useState(false);
+  const [exportingTpl, setExportingTpl] = useState(false);
 
   const toggle = (code: string, id: number) => setConserved(prev => {
     const n = { ...prev }; const set = new Set(n[code] ?? []);
@@ -550,6 +551,54 @@ function PrecoTab({ result, onToast }: { result: CampaignResult; onToast: Props[
     finally { setExporting(false); }
   };
 
+  // Export au format du template "Proposition template" (Fichier trade) :
+  // on enrichit la préco avec les données tarifaires Odoo (EAN, coût achat,
+  // tarif revendeur, PPC) puis on délègue le remplissage du gabarit à l'API.
+  const exportTemplate = async () => {
+    setExportingTpl(true);
+    try {
+      // 1) Ne garder que les produits conservés de chaque palier.
+      const palierProds = preco.paliers.map(pal => ({
+        ...pal,
+        produits: pal.produits.filter(p => p.conserve),
+      })).filter(pal => pal.produits.length);
+      if (!palierProds.length) { onToast("Aucun produit conservé à exporter", "error"); return; }
+
+      // 2) Récupérer le pricing Odoo pour tous les produits concernés (1 seul appel).
+      const allIds = [...new Set(palierProds.flatMap(p => p.produits.map(x => x.productId)))];
+      const pricing = await odoo.getProductsPricing(session, allIds);
+
+      // 3) Construire le payload enrichi.
+      const payload = {
+        nom: preco.nom,
+        paliers: palierProds.map(pal => ({
+          code: pal.code,
+          label: pal.label,
+          qtyPacks: pal.qtyPacks,
+          produits: pal.produits.map(p => {
+            const pr = pricing[p.productId];
+            return {
+              ref: p.ref, name: p.name, productId: p.productId,
+              qtyParPack: p.qtyParPack, conserve: true,
+              typProd: "Produit Vente",
+              barcode: pr?.barcode || "",
+              standardPrice: pr?.standardPrice || 0,
+              listPrice: pr?.listPrice || 0,
+              ppc: pr?.ppc || 0,
+            };
+          }),
+        })),
+      };
+
+      const res = await fetch("/api/export-template", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
+      const blob = await res.blob(); const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = `proposition_${result.nom.replace(/[^a-zA-Z0-9_-]+/g, "_")}.xlsx`; a.click(); URL.revokeObjectURL(url);
+      onToast("Template Proposition exporté", "success");
+    } catch (e: any) { onToast("Erreur export template : " + e.message, "error"); }
+    finally { setExportingTpl(false); }
+  };
+
   if (!preco.paliers.length) return <div style={{ padding: 30, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucun palier (offre) à analyser pour la préconisation.</div>;
 
   return (
@@ -560,6 +609,7 @@ function PrecoTab({ result, onToast }: { result: CampaignResult; onToast: Props[
         <span style={{ fontSize: 12, color: C.textMuted }}>Décoche les produits que tu ne reconduis pas dans chaque offre.</span>
         <div style={{ flex: 1 }} />
         <button onClick={exportPreco} disabled={exporting} style={{ padding: "7px 16px", background: C.teal, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter (préco + besoin fournisseur)"}</button>
+        <button onClick={exportTemplate} disabled={exportingTpl} style={{ padding: "7px 16px", background: C.blue, border: "none", borderRadius: 8, cursor: exportingTpl ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingTpl ? 0.6 : 1 }}>{exportingTpl ? "Export…" : "⬇ Exporter template Proposition"}</button>
       </div>
 
       {/* Un bloc par palier (offre) */}
