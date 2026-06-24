@@ -6,6 +6,7 @@ import {
   analyseCampagneCreee, toExportPayload, qtyParPack,
 } from "@/lib/create-campaign";
 import { loadCampagnesCreees, upsertCampagneCreee, deleteCampagneCreee } from "@/lib/campaigns";
+import { buildSyntheseLogistique } from "@/lib/logistique";
 
 const C = {
   bg: "#f1f5f9", white: "#ffffff",
@@ -43,8 +44,10 @@ export default function CreerCampagneScreen({ session, onToast }: Props) {
   const [saved, setSaved] = useState<CampagneCreee[]>([]);
   const [analysing, setAnalysing] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportingMulti, setExportingMulti] = useState(false);
   const [saving, setSaving] = useState(false);
   const [analysed, setAnalysed] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => { void reload(); }, []);
   async function reload() {
@@ -108,6 +111,31 @@ export default function CreerCampagneScreen({ session, onToast }: Props) {
     finally { setExporting(false); }
   };
 
+  // ── Export multi-campagnes (sélection cochée) + synthèse logistique ────────
+  const toggleSelect = (id: string) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const exporterMulti = async () => {
+    const choisies = saved.filter(s => selected.has(s.id));
+    if (!choisies.length) { onToast("Coche au moins une campagne", "error"); return; }
+    setExportingMulti(true);
+    try {
+      // Enrichir chaque campagne (conso N-1 + pricing) si pas déjà fait, puis payload.
+      const enriched: CampagneCreee[] = [];
+      for (const c of choisies) {
+        const hasPricing = c.articles.some(a => a.listPrice != null || a.ppc != null);
+        enriched.push(hasPricing ? c : await analyseCampagneCreee(session, c));
+      }
+      const campagnes = enriched.map(c => toExportPayload(c)).map((p, i) => ({ nom: enriched[i].nom, paliers: p.paliers }));
+      const logistique = buildSyntheseLogistique(enriched);
+      const res = await fetch("/api/export-multi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campagnes, logistique }) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
+      const blob = await res.blob(); const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = `campagnes_annee.xlsx`; a.click(); URL.revokeObjectURL(url);
+      onToast(`Export de ${choisies.length} campagne(s) + synthèse logistique`, "success");
+    } catch (e: any) { onToast("Erreur export multi : " + e.message, "error"); }
+    finally { setExportingMulti(false); }
+  };
+
   const articlesValides = camp.articles.filter(a => a.ref.trim());
 
   return (
@@ -121,13 +149,22 @@ export default function CreerCampagneScreen({ session, onToast }: Props) {
       </div>
 
       {saved.length > 0 && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {saved.map(s => (
-            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 6px 5px 12px", fontSize: 12, boxShadow: C.shadow }}>
-              <button onClick={() => charger(s)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>{s.nom || "(sans nom)"}</button>
-              <button onClick={() => supprimer(s.id)} title="Supprimer" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 14 }}>×</button>
-            </div>
-          ))}
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 16px", boxShadow: C.shadow }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Mes campagnes sauvegardées</span>
+            <span style={{ fontSize: 12, color: C.textMuted }}>Coche celles à inclure dans l'export annuel.</span>
+            <div style={{ flex: 1 }} />
+            <button onClick={exporterMulti} disabled={exportingMulti || selected.size === 0} style={{ padding: "7px 14px", background: selected.size ? C.teal : C.border, border: "none", borderRadius: 8, cursor: exportingMulti || !selected.size ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingMulti ? 0.6 : 1 }}>{exportingMulti ? "Export…" : `⬇ Exporter sélection (${selected.size}) + synthèse logistique`}</button>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {saved.map(s => (
+              <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, background: selected.has(s.id) ? C.tealSoft : C.white, border: `1px solid ${selected.has(s.id) ? C.teal : C.border}`, borderRadius: 8, padding: "5px 8px 5px 8px", fontSize: 12 }}>
+                <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)} style={{ cursor: "pointer" }} />
+                <button onClick={() => charger(s)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>{s.nom || "(sans nom)"}</button>
+                <button onClick={() => supprimer(s.id)} title="Supprimer" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 14 }}>×</button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
