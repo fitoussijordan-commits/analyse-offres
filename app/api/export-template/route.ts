@@ -178,6 +178,75 @@ export async function POST(req: NextRequest) {
       cursor = titleRow + BLOCK_LEN + 2; // 2 lignes de marge entre blocs (comme le gabarit : L36→L40)
     });
 
+    // Helper : extraire proprement la formule d'une cellule ExcelJS (évite les objets { formula, result } mal sérialisés)
+    function extractFormula(v: any): string | null {
+      if (typeof v === "string" && v.startsWith("=")) return v.slice(1);
+      if (typeof v === "object" && v !== null) {
+        const f = (v as any).formula ?? (v as any).sharedFormula;
+        if (typeof f === "string") return f;
+      }
+      return null;
+    }
+
+    function writeCellFromTemplate(src: any, dst: any, delta: number) {
+      // Style
+      try { dst.style = JSON.parse(JSON.stringify(src.style || {})); } catch { /* ignore */ }
+      if (src.numFmt) dst.numFmt = src.numFmt;
+      // Valeur
+      const f = extractFormula(src.value);
+      if (f !== null) {
+        if (f.includes("[1]") || f.includes("#REF!")) { dst.value = null; return; }
+        dst.value = { formula: shiftRowRefs(f, delta) };
+      } else {
+        dst.value = src.value ?? null;
+      }
+    }
+
+    // 4) Ajouter la section GRANDS COMPTES (modèle lignes 113–144 du gabarit).
+    const GC_MODEL_START = 113;
+    const GC_MODEL_END   = 144;
+    const GC_LEN         = GC_MODEL_END - GC_MODEL_START;
+    const gcStart = cursor + 2;
+    const gcDelta = gcStart - GC_MODEL_START;
+
+    const gcMergesRaw: string[] = (ws as any).model?.merges || [];
+    for (let off = 0; off <= GC_LEN; off++) {
+      const srcR = ws.getRow(GC_MODEL_START + off);
+      const dstR = ws.getRow(gcStart + off);
+      for (let c = 1; c <= 35; c++) {
+        writeCellFromTemplate(srcR.getCell(c), dstR.getCell(c), gcDelta);
+      }
+    }
+    for (const m of gcMergesRaw) {
+      const dec = decodeRange(m);
+      if (!dec) continue;
+      if (dec.top >= GC_MODEL_START && dec.bottom <= GC_MODEL_END) {
+        try { ws.mergeCells(dec.top + gcDelta, dec.left, dec.bottom + gcDelta, dec.right); } catch { /* ignore */ }
+      }
+    }
+
+    // 5) Ajouter la section BESOINS LOGISTIQUES (modèle lignes 146–171 du gabarit).
+    const BL_MODEL_START = 146;
+    const BL_MODEL_END   = 171;
+    const BL_LEN         = BL_MODEL_END - BL_MODEL_START;
+    const blStart = gcStart + GC_LEN + 3;
+    const blDelta = blStart - BL_MODEL_START;
+
+    for (let off = 0; off <= BL_LEN; off++) {
+      const srcR = ws.getRow(BL_MODEL_START + off);
+      const dstR = ws.getRow(blStart + off);
+      for (let c = 1; c <= 35; c++) {
+        writeCellFromTemplate(srcR.getCell(c), dstR.getCell(c), blDelta);
+      }
+    }
+    for (const m of gcMergesRaw) {
+      const dec = decodeRange(m);
+      if (!dec) continue;
+      if (dec.top >= BL_MODEL_START && dec.bottom <= BL_MODEL_END) {
+        try { ws.mergeCells(dec.top + blDelta, dec.left, dec.bottom + blDelta, dec.right); } catch { /* ignore */ }
+      }
+    }
+
     const buf = await wb.xlsx.writeBuffer();
     return new NextResponse(buf, {
       status: 200,
