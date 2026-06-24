@@ -220,6 +220,20 @@ export async function POST(req: NextRequest) {
       ws.getCell(row, 2).value = p ? (p.name || "") : null;       // B : Libellé
     }
 
+    // Vider les lignes PLV / Testeurs du gabarit dans GC (L136-142) et Logistique (L162-168) :
+    // ces éléments fixes (présentoir, testeurs, SR…) ne font pas partie d'une campagne créée.
+    // On efface code (A), libellé (B), type (D) et, pour GC, les prix (F/H/J). Les formules
+    // K/L/N/O et E/K/M/N/O (logistique) restent mais ne calculeront rien sans valeurs.
+    const GC_EXTRA = [136, 137, 138, 139, 140, 141, 142];
+    const LOG_EXTRA = [162, 163, 164, 165, 166, 167, 168];
+    for (const row of GC_EXTRA) {
+      ws.getCell(row, 1).value = null; ws.getCell(row, 2).value = null; ws.getCell(row, 4).value = null;
+      ws.getCell(row, 6).value = null; ws.getCell(row, 8).value = null; ws.getCell(row, 10).value = null;
+    }
+    for (const row of LOG_EXTRA) {
+      ws.getCell(row, 1).value = null; ws.getCell(row, 2).value = null; ws.getCell(row, 4).value = null;
+    }
+
     const buf = await wb.xlsx.writeBuffer();
     return new NextResponse(buf, {
       status: 200,
