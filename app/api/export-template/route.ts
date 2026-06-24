@@ -124,10 +124,6 @@ export async function POST(req: NextRequest) {
       const titleRow = cursor;
       const nbOffres = pal.qtyPacks || 0;
       const bOffresCell = `$B$${titleRow + NB_OFFRES}`;       // réf "Nombre d'offres" de CE bloc
-      // Formule CA d'origine : H*(1-I) * $N$11 * (1-$N$10)
-      //   = Tarif revendeur × (1 − remise add.) × Nb Offres Ambassadeur × (1 − Remise Ambassadeur)
-      const nNbOffres = `$N$${titleRow + NB_OFFRES_ROW}`;     // "Nb Offres" Ambassadeur de CE bloc (L11)
-      const nRemise = `$N$${titleRow + REMISE}`;              // "Remise" Ambassadeur de CE bloc (L10)
 
       for (let off = 0; off <= BLOCK_LEN; off++) {
         const destRow = ws.getRow(titleRow + off);
@@ -150,9 +146,9 @@ export async function POST(req: NextRequest) {
               v = { formula: fixed };
             }
           } else if (off === SYNTHESE) {
-            v = remapSynthese(v, titleRow);
+            v = remapSynthese(v, titleRow, c);
           } else if (off >= DATA_START && off < DATA_START + DATA_LEN) {
-            v = buildDataCell(off - DATA_START, c, pal.produits, titleRow, off, bOffresCell, nNbOffres, nRemise, m.value);
+            v = buildDataCell(off - DATA_START, c, pal.produits, titleRow, m.value);
           } else if (typeof v === "object" && v?.formula) {
             const fixed = remapRelativeFormula(String(v.formula), titleRow, modelTitleRow);
             v = fixed === null ? null : { formula: fixed };
@@ -183,20 +179,36 @@ export async function POST(req: NextRequest) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Mapping des 7 typologies clients → colonnes du template.
+// Chaque typologie occupe une paire (CA, Marges). Les paramètres %Offres / Remise / NbOffres
+// sont dans la colonne de DROITE de la paire (ex. Ambassadeur : CA=M, Marges=N, params en N).
+//   caCol    : colonne où écrire la formule de CA
+//   margeCol : colonne où écrire la formule de Marge
+//   paramCol : colonne des paramètres ($<paramCol>$<ligne Remise>, $<paramCol>$<ligne NbOffres>)
+const TYPO_COLS: Array<{ caCol: number; margeCol: number; paramCol: string }> = [
+  { caCol: 13, margeCol: 14, paramCol: "N" }, // Ambassadeur : M / N
+  { caCol: 15, margeCol: 16, paramCol: "P" }, // Compagnon   : O / P
+  { caCol: 17, margeCol: 18, paramCol: "R" }, // Challenger  : Q / R
+  { caCol: 19, margeCol: 20, paramCol: "T" }, // Rose        : S / T
+  { caCol: 21, margeCol: 22, paramCol: "V" }, // Prunelier   : U / V
+  { caCol: 23, margeCol: 24, paramCol: "X" }, // Anthylide   : W / X
+  { caCol: 25, margeCol: 26, paramCol: "Z" }, // Calendula   : Y / Z
+];
+
 // Construit une cellule de ligne produit (off-relatif 0..DATA_LEN-1).
 function buildDataCell(
   prodIdx: number, col: number, produits: PrecoLigneIn[],
-  titleRow: number, _off: number, bOffresCell: string, nNbOffres: string, nRemise: string,
-  modelValue: any
+  titleRow: number, modelValue: any
 ): any {
   const absRow = titleRow + DATA_START + prodIdx;
   const p = produits[prodIdx];
 
   // Au-delà de la liste produits → ligne vide (mais on garde le style).
-  if (!p) {
-    // Colonnes formules qui doivent rester (G, K, L, M..) : on les laisse vides si pas de produit.
-    return null;
-  }
+  if (!p) return null;
+
+  // Lignes de paramètres de CE bloc (offsets relatifs au titre).
+  const remiseRow = titleRow + REMISE;          // ligne "Remise"
+  const nbOffresRow = titleRow + NB_OFFRES_ROW; // ligne "Nb Offres"
 
   switch (col) {
     case 1:  return p.ref || "";                                  // A : Code article
@@ -207,24 +219,30 @@ function buildDataCell(
     case 6:  return round2(p.standardPrice || 0);                 // F : Coût achat unitaire (valeur)
     case 7:  return { formula: `E${absRow}*F${absRow}` };         // G : Coûts achats total
     case 8:  return round2(p.listPrice || 0);                     // H : Tarif revendeur unitaire (valeur)
-    case 9:  return modelValueNumberOr(modelValue, 0.15);         // I : Remise additionnelle (défaut gabarit)
+    case 9:  return typeof modelValue === "number" ? modelValue : 0.15; // I : Remise additionnelle
     case 10: return round2(p.ppc || 0);                           // J : PPC (valeur Odoo)
     case 11: return { formula: `J${absRow}*(1-I${absRow})` };     // K : PPC remisé
     case 12: return { formula: `IFERROR(J${absRow}-K${absRow},"")` }; // L : Montant BRI
-    case 13: return { formula: `H${absRow}*(1-I${absRow})*${nNbOffres}*(1-${nRemise})` }; // M : CA Ambassadeur
-    default:
-      // Colonnes N..Z (marges / CA autres typologies) : on garde la formule du gabarit,
-      // remappée sur les bonnes lignes/paramètres du bloc courant.
-      if (typeof modelValue === "object" && modelValue?.formula) {
-        const fixed = remapRelativeFormula(String(modelValue.formula), titleRow, 3);
-        return fixed === null ? null : { formula: fixed };
+    default: {
+      // Colonnes M..Z : pour chaque typologie, CA puis Marges.
+      const typo = TYPO_COLS.find(t => t.caCol === col || t.margeCol === col);
+      if (!typo) return null;
+      const nbOff = `$${typo.paramCol}$${nbOffresRow}`;  // Nb Offres de la typologie
+      const rem = `$${typo.paramCol}$${remiseRow}`;      // Remise de la typologie
+      if (col === typo.caCol) {
+        // CA = E × Tarif revendeur × (1 − remise add.) × Nb Offres × (1 − Remise typologie)
+        //   E = quantité du produit dans le pack (colonne "Pdt dans offre").
+        return { formula: `E${absRow}*H${absRow}*(1-I${absRow})*${nbOff}*(1-${rem})` };
       }
-      return null;
+      // Marges € = CA − coût d'achat écoulé = CA − (E × Coût achat unitaire × Nb Offres typologie).
+      const caRef = colNumToLetter(typo.caCol) + absRow;
+      return { formula: `${caRef}-E${absRow}*F${absRow}*${nbOff}` };
+    }
   }
 }
 
-function modelValueNumberOr(v: any, dflt: number): number {
-  return typeof v === "number" ? v : dflt;
+function colNumToLetter(n: number): string {
+  let s = ""; while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); } return s;
 }
 
 // Remappe une formule du bloc-modèle (titre L3) vers le bloc courant (titre titleRow).
@@ -237,15 +255,27 @@ function remapRelativeFormula(formula: string, titleRow: number, modelTitleRow: 
   return shiftRowRefs(formula, delta);
 }
 
-// Synthèse (L15) : décale ses formules d'agrégation et neutralise les #REF!.
-function remapSynthese(v: any, titleRow: number): any {
+// Synthèse (ligne SYNTHESE) : agrège chaque colonne sur les lignes data du bloc.
+// - Colonnes CA et Marges de chaque typologie (M..Z) → SUM sur la plage data, même
+//   si le gabarit ne contenait la formule que pour Ambassadeur.
+// - Autres cellules (E, G, J, K, L, AB, AC, AD) : on décale les formules du gabarit
+//   et on neutralise les #REF!/[1].
+function remapSynthese(v: any, titleRow: number, col: number): any {
+  const dataFirst = titleRow + DATA_START;
+  const dataLast = titleRow + DATA_START + DATA_LEN - 1;
+  const L = (n: number) => colNumToLetter(n);
+
+  // Toute colonne CA/Marges d'une typologie → SUM de sa plage data.
+  const isTypoCol = TYPO_COLS.some(t => t.caCol === col || t.margeCol === col);
+  if (isTypoCol) {
+    const c = L(col);
+    return { formula: `SUM(${c}${dataFirst}:${c}${dataLast})` };
+  }
+
   if (typeof v !== "object" || !v?.formula) return v;
   const f = String(v.formula);
-  if (f.includes("[1]")) return null;
-  // Beaucoup de cellules Synthèse du gabarit contiennent des #REF! (H15, I15) → on les vide.
-  if (f.includes("#REF!")) return null;
+  if (f.includes("[1]") || f.includes("#REF!")) return null;
   const fixed = shiftRowRefs(f, titleRow - 3);
-  // AB15 = B4 → doit pointer le "Nombre d'offres" du bloc courant
   return { formula: fixed };
 }
 
