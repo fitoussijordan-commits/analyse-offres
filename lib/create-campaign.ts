@@ -43,6 +43,49 @@ export function genId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+// Forme minimale d'une préco (lib/preco.ts) pour la conversion, sans dépendance circulaire.
+interface PrecoLigneLike { ref: string; name: string; productId: number; qtyParPack: number; conserve: boolean; }
+interface PrecoPalierLike { code: string; label: string; qtyPacks: number; produits: PrecoLigneLike[]; }
+interface PrecoLike { nom: string; paliers: PrecoPalierLike[]; }
+
+/**
+ * Convertit une préco N+1 (analyse de campagne) en campagne créée (à blanc), pour transférer
+ * vers l'écran "Créer une campagne". Articles = union des produits conservés (tous paliers).
+ * Chaque palier reprend sa qté/pack par article (0 si l'article n'y figure pas).
+ */
+export function precoToCampagne(preco: PrecoLike): CampagneCreee {
+  // Union des articles conservés, dans l'ordre d'apparition.
+  const seen = new Set<string>();
+  const articles: ArticleCampagne[] = [];
+  for (const pal of preco.paliers) {
+    for (const p of pal.produits) {
+      if (!p.conserve) continue;
+      const ref = (p.ref || "").trim();
+      if (!ref || seen.has(ref)) continue;
+      seen.add(ref);
+      articles.push({ ref, name: p.name || "", productId: p.productId });
+    }
+  }
+
+  const paliers: PalierSaisi[] = preco.paliers.map(pal => {
+    const qtyParPack: Record<string, number> = {};
+    for (const p of pal.produits) {
+      if (!p.conserve) continue;
+      const ref = (p.ref || "").trim();
+      if (ref) qtyParPack[ref] = p.qtyParPack || 0;
+    }
+    return { code: pal.code, label: pal.label, nbPacks: pal.qtyPacks || 0, qtyParPack };
+  });
+
+  return {
+    id: genId(),
+    nom: preco.nom || "",
+    dateDebut: "", dateFin: "", periodeDebut: "", periodeFin: "",
+    articles: articles.length ? articles : [{ ref: "" }],
+    paliers: paliers.length ? paliers : [],
+  };
+}
+
 /** Récupère conso N-1 + pricing Odoo pour tous les articles de la campagne. */
 export async function analyseCampagneCreee(session: odoo.OdooSession, camp: CampagneCreee): Promise<CampagneCreee> {
   const refs = [...new Set(camp.articles.map(a => a.ref.trim()).filter(Boolean))];

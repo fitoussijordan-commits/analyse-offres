@@ -153,6 +153,8 @@ export default function Home() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [ready, setReady] = useState(false);
   const [view, setView] = useState<AppView>("hub");
+  // Brouillon de campagne transféré depuis l'analyse (préco N+1) vers "Créer une campagne".
+  const [transferDraft, setTransferDraft] = useState<import("@/lib/create-campaign").CampagneCreee | null>(null);
 
   useEffect(() => {
     const cfg = loadCfg();
@@ -282,8 +284,8 @@ export default function Home() {
       {/* Main */}
       <main style={{ flex: 1, display: "flex", flexDirection: "column" as const, overflow: "hidden", minWidth: 0 }}>
         {view === "hub" && <HubView onNavigate={setView} />}
-        {view === "analyse" && <CampagneScreen session={session} onToast={showToast} />}
-        {view === "creer" && <CreerCampagneScreen session={session} onToast={showToast} />}
+        {view === "analyse" && <CampagneScreen session={session} onToast={showToast} onTransferToCreer={(draft) => { setTransferDraft(draft); setView("creer"); }} />}
+        {view === "creer" && <CreerCampagneScreen session={session} onToast={showToast} initialDraft={transferDraft} onDraftConsumed={() => setTransferDraft(null)} />}
         {view === "projets" && <ProjetScreen session={session} onToast={showToast} />}
         {view === "planning" && <PlanningTab onToast={showToast} />}
       </main>

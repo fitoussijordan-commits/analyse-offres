@@ -4,6 +4,7 @@ import * as odoo from "@/lib/odoo";
 import * as cp from "@/lib/campaigns";
 import { fetchCampaign, type CampaignResult, type StateFilter } from "@/lib/analyse-campaign";
 import { buildPreco } from "@/lib/preco";
+import { precoToCampagne } from "@/lib/create-campaign";
 import { ChartCard, HBarChart, PieChart, SplitBar, fmtEurShort } from "./CampagneCharts";
 
 const C = {
@@ -27,7 +28,7 @@ function extractRefs(text: string): string[] {
   return text.split(/[\n\r,;]+/).map(r => r.trim()).filter(Boolean);
 }
 
-interface Props { session: odoo.OdooSession; onToast: (msg: string, type?: "success" | "error" | "info") => void; }
+interface Props { session: odoo.OdooSession; onToast: (msg: string, type?: "success" | "error" | "info") => void; onTransferToCreer?: (draft: import("@/lib/create-campaign").CampagneCreee) => void; }
 
 const inputStyle: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: C.white, color: C.text, outline: "none" };
 const labelStyle: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 5 };
@@ -298,7 +299,7 @@ function buildCommandes(result: CampaignResult): CmdRow[] {
   return rows.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export default function CampagneScreen({ session, onToast }: Props) {
+export default function CampagneScreen({ session, onToast, onTransferToCreer }: Props) {
   const [offres, setOffres] = useState<cp.Offre[]>([]);
   const [campagnes, setCampagnes] = useState<cp.Campagne[]>([]);
   const [selId, setSelId] = useState<string>("");
@@ -476,7 +477,7 @@ export default function CampagneScreen({ session, onToast }: Props) {
             ) : tab === "commandes" ? (
               <CommandesTab result={result} baseUrl={session.config.url} />
             ) : tab === "preco" ? (
-              <PrecoTab result={result} onToast={onToast} session={session} />
+              <PrecoTab result={result} onToast={onToast} session={session} onTransferToCreer={onTransferToCreer} />
             ) : (
               <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
                 {tab === "produits" && <Tbl
@@ -519,7 +520,7 @@ export default function CampagneScreen({ session, onToast }: Props) {
 // ════════════════════════════════════════════════════════════════════════════
 // Onglet "Préco N+1" : produits conservés PAR PALIER (offre) → besoin fournisseur
 // ════════════════════════════════════════════════════════════════════════════
-function PrecoTab({ result, onToast, session }: { result: CampaignResult; onToast: Props["onToast"]; session: odoo.OdooSession }) {
+function PrecoTab({ result, onToast, session, onTransferToCreer }: { result: CampaignResult; onToast: Props["onToast"]; session: odoo.OdooSession; onTransferToCreer?: Props["onTransferToCreer"] }) {
   // État : produits conservés par code offre (palier). Par défaut, tout est conservé.
   const initial = () => {
     const m: Record<string, Set<number>> = {};
@@ -610,6 +611,9 @@ function PrecoTab({ result, onToast, session }: { result: CampaignResult; onToas
         <div style={{ flex: 1 }} />
         <button onClick={exportPreco} disabled={exporting} style={{ padding: "7px 16px", background: C.teal, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter (préco + besoin fournisseur)"}</button>
         <button onClick={exportTemplate} disabled={exportingTpl} style={{ padding: "7px 16px", background: C.blue, border: "none", borderRadius: 8, cursor: exportingTpl ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingTpl ? 0.6 : 1 }}>{exportingTpl ? "Export…" : "⬇ Exporter template Proposition"}</button>
+        {onTransferToCreer && (
+          <button onClick={() => onTransferToCreer(precoToCampagne(preco))} style={{ padding: "7px 16px", background: C.white, border: `1px solid ${C.blue}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, color: C.blueDark, fontFamily: "inherit" }}>→ Transférer vers « Créer une campagne »</button>
+        )}
       </div>
 
       {/* Un bloc par palier (offre) */}

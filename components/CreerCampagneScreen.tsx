@@ -23,6 +23,8 @@ const fmtNum = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n
 interface Props {
   session: odoo.OdooSession;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
+  initialDraft?: CampagneCreee | null;     // brouillon transféré depuis l'analyse (préco)
+  onDraftConsumed?: () => void;
 }
 
 function emptyArticle(): ArticleCampagne { return { ref: "" }; }
@@ -39,7 +41,7 @@ const inputStyle: React.CSSProperties = {
 };
 const labelStyle: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4, display: "block" };
 
-export default function CreerCampagneScreen({ session, onToast }: Props) {
+export default function CreerCampagneScreen({ session, onToast, initialDraft, onDraftConsumed }: Props) {
   const [camp, setCamp] = useState<CampagneCreee>(emptyCampagne);
   const [saved, setSaved] = useState<CampagneCreee[]>([]);
   const [analysing, setAnalysing] = useState(false);
@@ -50,6 +52,16 @@ export default function CreerCampagneScreen({ session, onToast }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => { void reload(); }, []);
+  // Charger le brouillon transféré depuis l'analyse (préco N+1), une seule fois.
+  useEffect(() => {
+    if (initialDraft) {
+      setCamp(initialDraft);
+      setAnalysed(false);
+      onToast("Préco transférée — renseigne les dates puis « Analyser »", "info");
+      onDraftConsumed?.();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialDraft]);
   async function reload() {
     try { setSaved(await loadCampagnesCreees()); } catch (e: any) { onToast("Erreur chargement : " + e.message, "error"); }
   }
