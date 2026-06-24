@@ -80,7 +80,35 @@ export async function POST(req: NextRequest) {
     if (!ws) return NextResponse.json({ error: `Onglet "${SHEET}" introuvable dans le gabarit` }, { status: 500 });
 
     // 1) Capturer le bloc-modèle (bloc 1, lignes 3..3+BLOCK_LEN) : styles + valeurs + formules.
+    //    On résout ici les sharedFormula (références à une cellule maître) pour éviter
+    //    que ExcelJS sérialise des { sharedFormula: "G18" } orphelins dans les blocs suivants.
     const modelTitleRow = 3;
+
+    function resolveModelCellValue(wsSheet: ExcelJS.Worksheet, rowNum: number, colNum: number): any {
+      const cell = wsSheet.getRow(rowNum).getCell(colNum);
+      const v = cell.value;
+      if (v === null || v === undefined) return null;
+      // Formule partagée : { sharedFormula: "G18" } → récupérer la formule de la cellule maître
+      // et la décaler relativement à la position courante.
+      if (typeof v === "object" && "sharedFormula" in v) {
+        const masterRef = (v as any).sharedFormula as string;
+        const mDec = decodeRange(masterRef + ":" + masterRef);
+        if (!mDec) return null;
+        const masterCell = wsSheet.getRow(mDec.top).getCell(mDec.left);
+        const mv = masterCell.value;
+        if (!mv || typeof mv !== "object" || typeof (mv as any).formula !== "string") return null;
+        const masterFormula = (mv as any).formula as string;
+        const rowDelta = rowNum - mDec.top;
+        const resolved = shiftRowRefs(masterFormula, rowDelta);
+        return { formula: resolved };
+      }
+      // Formule directe avec result → garder uniquement la formule
+      if (typeof v === "object" && "formula" in v) {
+        return { formula: (v as any).formula };
+      }
+      return v;
+    }
+
     const model: Array<Array<{ value: any; style: any; numFmt?: string }>> = [];
     for (let off = 0; off <= BLOCK_LEN; off++) {
       const srcRow = ws.getRow(modelTitleRow + off);
@@ -88,7 +116,7 @@ export async function POST(req: NextRequest) {
       for (let c = 1; c <= 35; c++) {
         const cell = srcRow.getCell(c);
         rowCells.push({
-          value: cell.value,
+          value: resolveModelCellValue(ws, modelTitleRow + off, c),
           style: JSON.parse(JSON.stringify(cell.style || {})),
           numFmt: cell.numFmt,
         });
