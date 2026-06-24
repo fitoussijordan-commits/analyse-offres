@@ -131,11 +131,13 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
     if (!choisies.length) { onToast("Coche au moins une campagne", "error"); return; }
     setExportingMulti(true);
     try {
-      // Enrichir chaque campagne (conso N-1 + pricing) si pas déjà fait, puis payload.
+      // Enrichir chaque campagne (conso N-1 + pricing + libellés) si incomplet, puis payload.
+      // On ré-analyse dès qu'un article n'a pas de libellé OU pas de prix, pour garantir
+      // que la synthèse logistique affiche bien les libellés.
       const enriched: CampagneCreee[] = [];
       for (const c of choisies) {
-        const hasPricing = c.articles.some(a => a.listPrice != null || a.ppc != null);
-        enriched.push(hasPricing ? c : await analyseCampagneCreee(session, c));
+        const complet = c.articles.length > 0 && c.articles.every(a => !a.ref.trim() || (a.name && a.listPrice != null));
+        enriched.push(complet ? c : await analyseCampagneCreee(session, c));
       }
       const campagnes = enriched.map(c => toExportPayload(c)).map((p, i) => ({ nom: enriched[i].nom, paliers: p.paliers }));
       const logistique = buildSyntheseLogistique(enriched);

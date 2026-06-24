@@ -80,9 +80,18 @@ export async function POST(req: NextRequest) {
       c.alignment = { horizontal: "center", vertical: "middle" };
     });
 
+    // Fallback libellé : si une ligne logistique n'a pas de nom, on le récupère depuis les
+    // produits des campagnes (par réf), qui portent le libellé Odoo.
+    const nameByRef: Record<string, string> = {};
+    for (const camp of campagnes) for (const pal of camp.paliers) for (const p of pal.produits) {
+      const ref = (p.ref || "").trim();
+      if (ref && p.name && !nameByRef[ref]) nameByRef[ref] = p.name;
+    }
+
     const numFmt = "#,##0";
     for (const l of log.lignes) {
-      const row = sw.addRow([l.ref, l.name, ...l.parMois, l.total]);
+      const libelle = l.name || nameByRef[l.ref] || "";
+      const row = sw.addRow([l.ref, libelle, ...l.parMois, l.total]);
       row.eachCell((c, col) => {
         c.font = { size: 10, name: "Calibri", color: { argb: "FF" + DARK }, bold: col === 15 };
         c.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
