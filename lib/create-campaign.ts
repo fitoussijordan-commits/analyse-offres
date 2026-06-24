@@ -127,12 +127,16 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
   return { ...camp, articles };
 }
 
-/** Qté/pack effective d'un article dans un palier : valeur saisie sinon reco (conso ÷ nbPacks). */
+/** Qté/pack effective d'un article dans un palier : valeur saisie (>0) sinon reco (conso ÷ nbPacks).
+ *  Un 0 stocké n'écrase PAS la reco : si l'utilisateur veut exclure un article, il le retire.
+ *  Cela évite qu'un 0 résiduel (transfert/chargement) masque la recommandation. */
 export function qtyParPack(art: ArticleCampagne, pal: PalierSaisi): number {
   const manual = pal.qtyParPack[art.ref];
-  if (manual != null) return manual;
+  if (manual != null && manual > 0) return manual;
   const nb = pal.nbPacks || 0;
-  return nb > 0 ? Math.round((art.consoN1 || 0) / nb) : 0;
+  const reco = nb > 0 ? Math.round((art.consoN1 || 0) / nb) : 0;
+  // Si pas de reco possible (pas de conso), on respecte une éventuelle saisie 0.
+  return reco > 0 ? reco : (manual ?? 0);
 }
 
 export interface ExportPayload {

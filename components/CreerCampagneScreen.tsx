@@ -253,7 +253,9 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 <tbody>
                   {articlesValides.map((a) => {
                     const reco = pal.nbPacks > 0 ? Math.round((a.consoN1 || 0) / pal.nbPacks) : 0;
-                    const manual = pal.qtyParPack[a.ref];
+                    const m = pal.qtyParPack[a.ref];
+                    // Valeur affichée : saisie >0 sinon reco. Un 0 résiduel n'écrase pas la reco.
+                    const manual = (m != null && m > 0) ? m : undefined;
                     return (
                     <tr key={a.ref}>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontFamily: "monospace", fontSize: 13, color: C.text }}>{a.ref}</td>
@@ -262,9 +264,9 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, fontWeight: 700, color: pal.nbPacks > 0 ? C.teal : C.textMuted }}>{pal.nbPacks > 0 ? fmtNum(reco) : "—"}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>
                         <input type="number" style={{ ...inputStyle, width: 80, textAlign: "right", fontWeight: 700, color: C.blue }}
-                          value={manual ?? (pal.nbPacks > 0 ? reco : "")}
+                          value={manual != null ? manual : (pal.nbPacks > 0 ? reco : "")}
                           onChange={e => setPalierQty(pi, a.ref, e.target.value === "" ? null : (parseInt(e.target.value) || 0))}
-                          placeholder="—" />
+                          placeholder={pal.nbPacks > 0 ? String(reco) : "—"} />
                       </td>
                     </tr>
                     );
