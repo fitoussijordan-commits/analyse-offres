@@ -79,6 +79,43 @@ export async function POST(req: NextRequest) {
     const ws = wb.getWorksheet(SHEET);
     if (!ws) return NextResponse.json({ error: `Onglet "${SHEET}" introuvable dans le gabarit` }, { status: 500 });
 
+    // 0) Nettoyer le template en mémoire : résoudre toutes les sharedFormula et supprimer
+    //    les "result" qui causent des corruptions à l'écriture avec ExcelJS.
+    ws.eachRow((row) => {
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        const v = cell.value as any;
+        if (!v || typeof v !== "object") return;
+        if ("sharedFormula" in v) {
+          // Résoudre : aller chercher la formule dans la cellule maître et décaler
+          const masterRef = v.sharedFormula as string;
+          const mMatch = masterRef.match(/^([A-Z]+)(\d+)$/);
+          if (mMatch) {
+            const masterRow = parseInt(mMatch[2], 10);
+            const masterColStr = mMatch[1];
+            let masterColNum = 0;
+            for (const ch of masterColStr) masterColNum = masterColNum * 26 + (ch.charCodeAt(0) - 64);
+            const masterCell = ws!.getRow(masterRow).getCell(masterColNum);
+            const mv = masterCell.value as any;
+            if (mv && typeof mv === "object" && typeof mv.formula === "string") {
+              const rowDelta = (cell.row as unknown as number) - masterRow;
+              const resolved = mv.formula.replace(/(\$?[A-Z]{1,3}\$?)(\d+)/g, (m: string, col: string, num: string, offset: number, full: string) => {
+                if (offset > 0 && full[offset - 1] === "!") return m;
+                return `${col}${parseInt(num, 10) + rowDelta}`;
+              });
+              cell.value = { formula: resolved };
+            } else {
+              cell.value = null;
+            }
+          } else {
+            cell.value = null;
+          }
+        } else if ("formula" in v && "result" in v) {
+          // Supprimer le result pour éviter la sérialisation corrompue
+          cell.value = { formula: v.formula };
+        }
+      });
+    });
+
     // 1) Capturer le bloc-modèle (bloc 1, lignes 3..3+BLOCK_LEN) : styles + valeurs + formules.
     //    On résout ici les sharedFormula (références à une cellule maître) pour éviter
     //    que ExcelJS sérialise des { sharedFormula: "G18" } orphelins dans les blocs suivants.
