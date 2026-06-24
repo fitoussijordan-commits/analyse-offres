@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import CampagneScreen from "@/components/CampagneScreen";
+import CreerCampagneScreen from "@/components/CreerCampagneScreen";
 import ProjetScreen from "@/components/ProjetScreen";
 import PlanningTab from "@/components/PlanningTab";
 
@@ -28,7 +29,7 @@ function saveSession(s: odoo.OdooSession) { try { localStorage.setItem(LS_SESSIO
 function clearSession() { try { localStorage.removeItem(LS_SESSION); } catch {} }
 
 interface Toast { msg: string; type: "success" | "error" | "info"; id: number; }
-type AppView = "hub" | "analyse" | "projets" | "planning";
+type AppView = "hub" | "analyse" | "creer" | "projets" | "planning";
 
 // ── Nav item ──────────────────────────────────────────────────────────────────
 function NavItem({ icon, label, active, locked, onClick }: { icon: React.ReactNode; label: string; active?: boolean; locked?: boolean; onClick?: () => void; }) {
@@ -61,6 +62,15 @@ function HubView({ onNavigate }: { onNavigate: (v: AppView) => void }) {
         </svg>
       ),
       label: "Analyse des Campagnes", desc: "CA, délégués, produits et clients par campagne (offres + produits + notes), sans doublons",
+      active: true,
+    },
+    {
+      id: "creer" as AppView, icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.8">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+      ),
+      label: "Créer une Campagne", desc: "Construis une campagne de zéro : paliers, articles, dates, et reco des quantités selon la conso N-1",
       active: true,
     },
     {
@@ -253,8 +263,8 @@ export default function Home() {
             label="Planning" active={view === "planning"} onClick={() => setView("planning")}
           />
           <NavItem
-            icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>}
-            label="Outil 4" locked
+            icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>}
+            label="Créer une Campagne" active={view === "creer"} onClick={() => setView("creer")}
           />
         </nav>
 
@@ -273,6 +283,7 @@ export default function Home() {
       <main style={{ flex: 1, display: "flex", flexDirection: "column" as const, overflow: "hidden", minWidth: 0 }}>
         {view === "hub" && <HubView onNavigate={setView} />}
         {view === "analyse" && <CampagneScreen session={session} onToast={showToast} />}
+        {view === "creer" && <CreerCampagneScreen session={session} onToast={showToast} />}
         {view === "projets" && <ProjetScreen session={session} onToast={showToast} />}
         {view === "planning" && <PlanningTab onToast={showToast} />}
       </main>

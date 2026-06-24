@@ -89,3 +89,51 @@ export async function deleteCampagne(id: string): Promise<void> {
   const { error } = await supabase.from("campagnes").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
+
+// ─── Campagnes créées "à blanc" (table campagnes_creees) ──────────────────────
+// La structure (paliers + articles) est riche → on la sérialise en JSON dans une colonne
+// `data` pour éviter un schéma rigide. Colonnes : id, nom, date_debut, date_fin,
+// periode_debut, periode_fin, data (jsonb), created_at.
+import type { CampagneCreee } from "@/lib/create-campaign";
+
+function rowToCampagneCreee(row: any): CampagneCreee {
+  const d = (typeof row.data === "string" ? JSON.parse(row.data) : row.data) || {};
+  return {
+    id: row.id,
+    nom: row.nom,
+    dateDebut: row.date_debut || "",
+    dateFin: row.date_fin || "",
+    periodeDebut: row.periode_debut || "",
+    periodeFin: row.periode_fin || "",
+    paliers: d.paliers || [],
+    createdAt: row.created_at,
+  };
+}
+
+function campagneCreeeToRow(c: CampagneCreee) {
+  return {
+    id: c.id,
+    nom: c.nom,
+    date_debut: c.dateDebut || null,
+    date_fin: c.dateFin || null,
+    periode_debut: c.periodeDebut || null,
+    periode_fin: c.periodeFin || null,
+    data: { paliers: c.paliers },
+  };
+}
+
+export async function loadCampagnesCreees(): Promise<CampagneCreee[]> {
+  const { data, error } = await supabase.from("campagnes_creees").select("*").order("created_at");
+  if (error) throw new Error(error.message);
+  return (data || []).map(rowToCampagneCreee);
+}
+
+export async function upsertCampagneCreee(c: CampagneCreee): Promise<void> {
+  const { error } = await supabase.from("campagnes_creees").upsert(campagneCreeeToRow(c));
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteCampagneCreee(id: string): Promise<void> {
+  const { error } = await supabase.from("campagnes_creees").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}

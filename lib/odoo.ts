@@ -114,3 +114,71 @@ export async function getProductsPricing(session: OdooSession, productIds: numbe
   }
   return out;
 }
+
+// ── Consommation par article sur une période (pour la création de campagne à blanc) ──
+export interface ConsoArticle {
+  ref: string;            // code article (default_code)
+  productId: number;
+  name: string;
+  qty: number;            // quantité totale vendue sur la période
+  ca: number;             // CA HT associé (info)
+  found: boolean;         // l'article a-t-il été trouvé dans Odoo ?
+}
+
+/**
+ * Somme les quantités vendues (et le CA) de chaque article entre deux dates, sur les
+ * commandes confirmées (state sale/done). Sert à recommander les quantités d'une campagne
+ * N+1 à partir de la consommation N-1 observée sur une fenêtre bornée par l'utilisateur.
+ * @param refs     codes article (default_code)
+ * @param dateFrom "YYYY-MM-DD" inclus
+ * @param dateTo   "YYYY-MM-DD" inclus
+ */
+export async function getConsumption(session: OdooSession, refs: string[], dateFrom: string, dateTo: string): Promise<Record<string, ConsoArticle>> {
+  const out: Record<string, ConsoArticle> = {};
+  const clean = [...new Set(refs.map(r => (r || "").trim()).filter(Boolean))];
+  if (!clean.length || !dateFrom || !dateTo) return out;
+
+  // 1) Résoudre les refs → product.product (id, code, nom).
+  const prods = await searchRead(session, "product.product", [["default_code", "in", clean]], ["id", "default_code", "name"], 0);
+  const byId: Record<number, { ref: string; name: string }> = {};
+  const ids: number[] = [];
+  for (const p of (prods || []) as any[]) {
+    if (!p.default_code) continue;
+    byId[p.id] = { ref: p.default_code, name: p.name || "" };
+    ids.push(p.id);
+  }
+  // Initialiser toutes les refs demandées (found=false par défaut → article inconnu d'Odoo).
+  for (const ref of clean) out[ref] = { ref, productId: 0, name: "", qty: 0, ca: 0, found: false };
+  for (const p of (prods || []) as any[]) {
+    if (p.default_code && out[p.default_code]) {
+      out[p.default_code].productId = p.id;
+      out[p.default_code].name = p.name || "";
+      out[p.default_code].found = true;
+    }
+  }
+  if (!ids.length) return out;
+
+  // 2) Lignes de vente confirmées sur la période. On borne via order_id.date_order.
+  const lines = await searchRead(
+    session, "sale.order.line",
+    [
+      ["product_id", "in", ids],
+      ["order_id.state", "in", ["sale", "done"]],
+      ["order_id.date_order", ">=", `${dateFrom} 00:00:00`],
+      ["order_id.date_order", "<=", `${dateTo} 23:59:59`],
+      ["display_type", "=", false],
+      ["is_downpayment", "=", false],
+    ],
+    ["product_id", "product_uom_qty", "price_subtotal", "state"],
+    0
+  );
+  for (const l of (lines || []) as any[]) {
+    if (l.state === "cancel" || !l.product_id) continue;
+    const entry = byId[l.product_id[0]];
+    if (!entry) continue;
+    const o = out[entry.ref];
+    o.qty += l.product_uom_qty || 0;
+    o.ca += l.price_subtotal || 0;
+  }
+  return out;
+}
