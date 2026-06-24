@@ -194,24 +194,30 @@ export default function CreerCampagneScreen({ session, onToast }: Props) {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["Code", "Libellé", "Qté / pack (reco)"].map((h, i) => (
-                      <th key={i} style={{ padding: "6px 8px", fontSize: 11, fontWeight: 700, color: i === 2 ? C.blue : C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i === 2 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                    {["Code", "Libellé", "Conso N-1", "Reco", "Qté / pack"].map((h, i) => (
+                      <th key={i} style={{ padding: "6px 8px", fontSize: 11, fontWeight: 700, color: i === 4 ? C.blue : C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i >= 2 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {articlesValides.map((a) => (
+                  {articlesValides.map((a) => {
+                    const reco = pal.nbPacks > 0 ? Math.round((a.consoN1 || 0) / pal.nbPacks) : 0;
+                    const manual = pal.qtyParPack[a.ref];
+                    return (
                     <tr key={a.ref}>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontFamily: "monospace", fontSize: 13, color: C.text }}>{a.ref}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 13, color: C.textSec }}>{a.name || "—"}</td>
+                      <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, color: C.textMuted }}>{analysed ? fmtNum(a.consoN1 || 0) : "—"}</td>
+                      <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, fontWeight: 700, color: pal.nbPacks > 0 ? C.teal : C.textMuted }}>{pal.nbPacks > 0 ? fmtNum(reco) : "—"}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>
                         <input type="number" style={{ ...inputStyle, width: 80, textAlign: "right", fontWeight: 700, color: C.blue }}
-                          value={pal.qtyParPack[a.ref] ?? (analysed ? qtyParPack(a, pal) : "")}
+                          value={manual ?? (pal.nbPacks > 0 ? reco : "")}
                           onChange={e => setPalierQty(pi, a.ref, e.target.value === "" ? null : (parseInt(e.target.value) || 0))}
                           placeholder="—" />
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             )}
