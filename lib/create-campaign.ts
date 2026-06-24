@@ -91,26 +91,36 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
   const refs = [...new Set(camp.articles.map(a => a.ref.trim()).filter(Boolean))];
   if (!refs.length) return camp;
 
-  const conso = await odoo.getConsumption(session, refs, camp.periodeDebut, camp.periodeFin);
-  const productIds = Object.values(conso).map(c => c.productId).filter(Boolean);
-  const pricing = await odoo.getProductsPricing(session, productIds);
+  // 1) Résoudre les produits (id, libellé) — TOUJOURS, indépendamment des dates de conso.
+  //    Ainsi le libellé et les prix sont chargés même sans période N-1 renseignée.
+  const prods = await odoo.searchProductsByRefs(session, refs);   // { ref -> {id, name} }
+  const ids = Object.values(prods).map(p => p.id).filter(Boolean);
+  const pricing = await odoo.getProductsPricing(session, ids);
+  const pricingByRef: Record<string, odoo.ProductPricing> = {};
+  for (const pr of Object.values(pricing)) if (pr.ref) pricingByRef[pr.ref] = pr;
+
+  // 2) Conso N-1 seulement si la période est renseignée.
+  const conso = (camp.periodeDebut && camp.periodeFin)
+    ? await odoo.getConsumption(session, refs, camp.periodeDebut, camp.periodeFin)
+    : {};
 
   const articles = camp.articles.map(a => {
     const ref = a.ref.trim();
+    const resolved = prods[ref];
+    const pid = resolved?.id || 0;
+    const pr = pricingByRef[ref];
     const c = conso[ref];
-    const pid = c?.productId || 0;
-    const pr = pid ? pricing[pid] : undefined;
     return {
       ...a,
       ref,
       productId: pid,
-      name: pr?.name || c?.name || "",
+      name: pr?.name || resolved?.name || c?.name || "",
       barcode: pr?.barcode || "",
       standardPrice: pr?.standardPrice || 0,
       listPrice: pr?.listPrice || 0,
       ppc: pr?.ppc || 0,
       consoN1: c?.qty || 0,
-      found: c?.found ?? false,
+      found: !!pid,
     } as ArticleCampagne;
   });
 

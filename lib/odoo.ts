@@ -115,6 +115,18 @@ export async function getProductsPricing(session: OdooSession, productIds: numbe
   return out;
 }
 
+/** Résout des codes article (default_code) → { ref: { id, name } } via Odoo. */
+export async function searchProductsByRefs(session: OdooSession, refs: string[]): Promise<Record<string, { id: number; name: string }>> {
+  const out: Record<string, { id: number; name: string }> = {};
+  const clean = [...new Set(refs.map(r => (r || "").trim()).filter(Boolean))];
+  if (!clean.length) return out;
+  const prods = await searchRead(session, "product.product", [["default_code", "in", clean]], ["id", "default_code", "name"], 0);
+  for (const p of (prods || []) as any[]) {
+    if (p.default_code) out[p.default_code] = { id: p.id, name: p.name || "" };
+  }
+  return out;
+}
+
 // ── Consommation par article sur une période (pour la création de campagne à blanc) ──
 export interface ConsoArticle {
   ref: string;            // code article (default_code)
