@@ -115,6 +115,30 @@ export async function getProductsPricing(session: OdooSession, productIds: numbe
   return out;
 }
 
+/** Catalogue complet : tous les product.product ayant un default_code (pour l'onglet Mapping). */
+export async function getAllProducts(session: OdooSession): Promise<ProductPricing[]> {
+  const prods = await searchRead(
+    session, "product.product",
+    [["default_code", "!=", false]],
+    ["id", "default_code", "name", "barcode", "standard_price", "list_price", "x_ppc"],
+    0, "default_code"
+  );
+  const out: ProductPricing[] = [];
+  for (const p of (prods || []) as any[]) {
+    if (!p.default_code) continue;
+    out.push({
+      productId: p.id,
+      ref: p.default_code,
+      name: p.name || "",
+      barcode: p.barcode || "",
+      standardPrice: typeof p.standard_price === "number" ? p.standard_price : 0,
+      listPrice: typeof p.list_price === "number" ? p.list_price : 0,
+      ppc: typeof p.x_ppc === "number" ? p.x_ppc : 0,
+    });
+  }
+  return out;
+}
+
 /** Résout des codes article (default_code) → { ref: { id, name } } via Odoo. */
 export async function searchProductsByRefs(session: OdooSession, refs: string[]): Promise<Record<string, { id: number; name: string }>> {
   const out: Record<string, { id: number; name: string }> = {};

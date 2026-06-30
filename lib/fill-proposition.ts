@@ -16,7 +16,9 @@ export interface PropPalier {
   remiseStandard?: boolean;   // true = standard (même % pour tous)
   remiseStandardTaux?: number; // ex. 0.17 pour 17%
 }
-export interface PropPayload { nom: string; paliers: PropPalier[]; }
+// Ligne du Mapping (catalogue complet ou articles campagne).
+export interface MapRow { ref: string; name?: string; barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number; }
+export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; }
 
 export const PROP_SHEET = "Proposition template";
 export const MAPPING_SHEET = "Mapping";
@@ -35,6 +37,9 @@ const TYPO_COLS = [
   { ca: "Y", marge: "Z", param: "Z" },
 ];
 const FMT_EUR = '#,##0.0 "€";(#,##0.0) "€";" - "';
+// Valeurs par défaut du gabarit (% offres et remises par typologie : Ambassadeur..Calendula).
+const DEFAULT_PCTS = [0.5, 0.1, 0.1, 0.1, 0.1, 0.05, 0.05];
+const DEFAULT_REMISES = [0.17, 0.13, 0.08, 0.325, 0.3, 0.28, 0.25];
 
 function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
 
@@ -61,13 +66,23 @@ function fillMapping(wb: ExcelJS.Workbook, payload: PropPayload): Set<string> {
     c.value = h; c.font = { bold: true };
   });
 
-  // Articles uniques par réf (1re occurrence non vide gagne).
-  const byRef = new Map<string, PropProduit>();
+  // Source : catalogue complet fourni (payload.mapping) si présent, sinon articles de la campagne.
+  const byRef = new Map<string, MapRow>();
+  if (payload.mapping && payload.mapping.length) {
+    for (const m of payload.mapping) {
+      const ref = (m.ref || "").trim();
+      if (ref && !byRef.has(ref)) byRef.set(ref, m);
+    }
+  }
+  // Toujours s'assurer que les articles de la campagne (dont réfs libres avec prix manuels)
+  // sont présents — ils complètent/écrasent le catalogue pour les réfs manuelles.
   for (const pal of payload.paliers) for (const p of pal.produits) {
     const ref = (p.ref || "").trim();
     if (!ref) continue;
-    if (!byRef.has(ref) || (!byRef.get(ref)!.name && p.name)) byRef.set(ref, p);
+    const isManual = p.productId === 0; // réf libre / hors Odoo
+    if (isManual || !byRef.has(ref)) byRef.set(ref, p);
   }
+
   let row = 2;
   for (const [ref, p] of byRef) {
     map.getCell(row, 1).value = ref;
@@ -98,6 +113,87 @@ export function fillPropositionWorkbook(wb: ExcelJS.Workbook, payload: PropPaylo
   if (!ws) return;
   const mapRefs = fillMapping(wb, payload);
   fillProposition(ws, payload, mapRefs);
+  fillSynthese(wb, payload);
+}
+
+const SYNTHESE_SHEET = "Synthese";
+// Mots-clés pour mapper un palier à une ligne d'offre de l'onglet Synthese.
+const OFFRE_ROWS: Array<{ row: number; keys: string[] }> = [
+  { row: 2, keys: ["tg vip", "vip"] },
+  { row: 3, keys: ["premium"] },
+  { row: 4, keys: ["standard"] },
+  { row: 5, keys: ["essentiel"] },
+  { row: 6, keys: ["gc", "grand compte"] },
+];
+
+function norm(s: string): string {
+  return (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+/**
+ * Remplit l'onglet Synthese :
+ *  - HAUT : par offre (ligne mappée via mot-clé du label du palier) → Nb offres (B),
+ *    CA (C), Marge € (D), Marge % (E).
+ *  - BAS : pour chaque réf des tableaux (Produits ventes / Testeur / PLV…), colonne
+ *    "Offres retail+Institut" (E) = besoin total = somme(qté/pack × nb packs) sur les paliers ;
+ *    TOTAL (K) = somme E:J. Les colonnes GC/MDRH/ESHOP/DC/Marketing restent vides (saisie main).
+ */
+function fillSynthese(wb: ExcelJS.Workbook, payload: PropPayload) {
+  const sw = wb.getWorksheet(SYNTHESE_SHEET);
+  if (!sw) return;
+  const paliers = (payload.paliers || []).filter(p => p.produits && p.produits.length);
+
+  // ── HAUT : CA/Marge par offre ──────────────────────────────────────────────
+  const usedRows = new Set<number>();
+  for (const pal of paliers) {
+    const label = norm(`${pal.label} ${pal.code}`);
+    const match = OFFRE_ROWS.find(o => !usedRows.has(o.row) && o.keys.some(k => label.includes(k)));
+    if (!match) continue;
+    usedRows.add(match.row);
+    const nbOffres = pal.qtyPacks || 0;
+    // CA et marge = somme sur les produits : CA = E×H×(1-I)×NbOffres×(1-remise) cumulé toutes typologies.
+    // On recalcule simplement ici en € (mêmes formules que le bloc), sommé sur produits × typologies.
+    let ca = 0, marge = 0;
+    const remises = pal.remiseStandard && pal.remiseStandardTaux != null
+      ? new Array(7).fill(pal.remiseStandardTaux)
+      : DEFAULT_REMISES;
+    const pcts = DEFAULT_PCTS;
+    for (const p of pal.produits) {
+      const E = p.qtyParPack || 0, H = p.listPrice || 0, F = p.standardPrice || 0, I = 0.15;
+      for (let t = 0; t < 7; t++) {
+        const nbOff = pcts[t] * nbOffres;
+        const caT = E * H * (1 - I) * nbOff * (1 - remises[t]);
+        ca += caT;
+        marge += caT - E * F * nbOff;
+      }
+    }
+    sw.getCell(match.row, 2).value = nbOffres;
+    sw.getCell(match.row, 3).value = round2(ca);
+    sw.getCell(match.row, 4).value = round2(marge);
+    sw.getCell(match.row, 5).value = ca > 0 ? round2(marge / ca) : 0;
+    sw.getCell(match.row, 3).numFmt = FMT_EUR; sw.getCell(match.row, 4).numFmt = FMT_EUR;
+    sw.getCell(match.row, 5).numFmt = "0.0%";
+  }
+
+  // ── BAS : besoin total par réf (col E) + TOTAL (col K) ─────────────────────
+  // Besoin total d'une réf = somme sur paliers de (qté/pack × nb packs).
+  const besoin: Record<string, number> = {};
+  for (const pal of paliers) for (const p of pal.produits) {
+    const ref = (p.ref || "").trim();
+    if (!ref) continue;
+    besoin[ref] = (besoin[ref] || 0) + (p.qtyParPack || 0) * (pal.qtyPacks || 0);
+  }
+  // Parcourir toutes les lignes de l'onglet : si col A = une réf connue, remplir E et K.
+  const maxRow = sw.rowCount;
+  for (let r = 1; r <= maxRow; r++) {
+    const a = sw.getCell(r, 1).value;
+    const ref = a == null ? "" : String(a).trim();
+    if (ref && besoin[ref] != null) {
+      sw.getCell(r, 5).value = besoin[ref];                       // E : Offres retail+Institut
+      sw.getCell(r, 11).value = { formula: `SUM(E${r}:J${r})` };  // K : TOTAL
+      sw.getCell(r, 5).numFmt = "#,##0"; sw.getCell(r, 11).numFmt = "#,##0";
+    }
+  }
 }
 
 function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: Set<string>) {

@@ -111,10 +111,15 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   const nouvelle = () => { setCamp(emptyCampagne()); setAnalysed(false); };
 
   const exporter = async () => {
-    const payload = toExportPayload(camp);
+    const payload: any = toExportPayload(camp);
     if (!payload.paliers.length) { onToast("Aucun article à exporter", "error"); return; }
     setExporting(true);
     try {
+      // Charger tout le catalogue Odoo pour remplir l'onglet Mapping (VLOOKUP sur n'importe quelle réf).
+      try {
+        const catalogue = await odoo.getAllProducts(session);
+        payload.mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc }));
+      } catch { /* si le catalogue échoue, le Mapping se limite aux articles de la campagne */ }
       const res = await fetch("/api/export-template", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
