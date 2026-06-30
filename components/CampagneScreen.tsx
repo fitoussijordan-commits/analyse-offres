@@ -591,6 +591,12 @@ function PrecoTab({ result, onToast, session, onTransferToCreer }: { result: Cam
         })),
       };
 
+      // 4) Charger tout le catalogue Odoo → onglet Mapping (VLOOKUP sur toute réf).
+      try {
+        const catalogue = await odoo.getAllProducts(session);
+        (payload as any).mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc }));
+      } catch { /* fallback : Mapping limité aux articles de la campagne */ }
+
       const res = await fetch("/api/export-template", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
