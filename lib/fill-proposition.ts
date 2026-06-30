@@ -213,7 +213,10 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       const titre = [payload.nom, pal.code, pal.label].map(s => (s || "").trim()).filter(Boolean).join(" — ") || "Offre";
       ws.getCell(blk.title, 1).value = titre;
       ws.getCell(blk.nbOffresRow, 2).value = pal.qtyPacks || 0;
-      ws.getCell(blk.nbProduitsRow, 2).value = pal.produits.reduce((s, p) => s + (p.qtyParPack || 0), 0);
+      // Nombre de produits = SUM des "Pdt dans offre" (colonne E) des lignes Produit Vente.
+      // Formule (pas une valeur) pour rester cohérent si on édite une qté à la main.
+      const pvLast = blk.pvFirst + blk.pvCount - 1;
+      ws.getCell(blk.nbProduitsRow, 2).value = { formula: `SUM(E${blk.pvFirst}:E${pvLast})` };
 
       // % Offres par typologie : ce sont des valeurs EN DUR du gabarit (définies par Sissi,
       // potentiellement différentes par palier). On ne les touche PAS — on laisse le gabarit.
