@@ -196,24 +196,39 @@ function fillSynthese(wb: ExcelJS.Workbook, payload: PropPayload) {
     sw.getCell(match.row, 5).numFmt = "0.0%";
   }
 
-  // ── BAS : besoin total par réf (col E) + TOTAL (col K) ─────────────────────
-  // Besoin total d'une réf = somme sur paliers de (qté/pack × nb packs).
-  const besoin: Record<string, number> = {};
-  for (const pal of paliers) for (const p of pal.produits) {
-    const ref = (p.ref || "").trim();
-    if (!ref) continue;
-    besoin[ref] = (besoin[ref] || 0) + (p.qtyParPack || 0) * (pal.qtyPacks || 0);
-  }
-  // Parcourir toutes les lignes de l'onglet : si col A = une réf connue, remplir E et K.
+  // ── BAS : par réf des tableaux (les réfs sont déjà écrites en colonne A du gabarit) ──
+  // Pour que la Synthese SUIVE les changements de réf faits dans le template :
+  //   - B (libellé) et C (EAN) → VLOOKUP sur le Mapping (basé sur la réf en colonne A).
+  //   - E (Offres retail+Institut) → besoin total de la réf, agrégé par formule depuis les
+  //     blocs Proposition : pour chaque bloc, SUMIF(A produits = réf ; E produits) × Nb offres
+  //     du bloc. Ainsi, changer une réf en colonne A met tout à jour automatiquement.
+  //   - K (TOTAL) → somme E:J.
+  // Plages "Produit Vente" + Testeurs/PLV de chaque bloc dans Proposition.
+  const propRanges = BLOCKS.map(b => ({ first: b.pvFirst, last: b.dataLast, nbOffresCell: `'${PROP_SHEET}'!$B$${b.nbOffresRow}` }));
+
   const maxRow = sw.rowCount;
   for (let r = 1; r <= maxRow; r++) {
     const a = sw.getCell(r, 1).value;
     const ref = a == null ? "" : String(a).trim();
-    if (ref && besoin[ref] != null) {
-      sw.getCell(r, 5).value = besoin[ref];                       // E : Offres retail+Institut
-      sw.getCell(r, 11).value = { formula: `SUM(E${r}:J${r})` };  // K : TOTAL
-      sw.getCell(r, 5).numFmt = "#,##0"; sw.getCell(r, 11).numFmt = "#,##0";
-    }
+    if (!ref) continue;
+    // Ne traiter que les lignes DATA (réf article), pas les en-têtes de tableau.
+    const typ = sw.getCell(r, 4).value; // colonne D = Typ. Prod sur les lignes data
+    const isDataRow = typ != null && String(typ).trim() !== "";
+    if (!isDataRow) continue;
+
+    // Réf en TEXTE + libellé/EAN en VLOOKUP (suivent si on change la réf).
+    sw.getCell(r, 1).numFmt = "@";
+    sw.getCell(r, 1).value = String(ref);
+    sw.getCell(r, 2).value = { formula: `IFERROR(VLOOKUP(A${r},${MAPPING_SHEET}!$A:$F,2,FALSE),"")` };
+    sw.getCell(r, 3).value = { formula: `IFERROR(VLOOKUP(A${r},${MAPPING_SHEET}!$A:$F,3,FALSE),"")` };
+
+    // E : besoin = Σ_bloc SUMIF(A bloc = A<r> ; E bloc) × Nb offres bloc.
+    const terms = propRanges.map(rg =>
+      `SUMIF('${PROP_SHEET}'!$A$${rg.first}:$A$${rg.last},$A${r},'${PROP_SHEET}'!$E$${rg.first}:$E$${rg.last})*${rg.nbOffresCell}`
+    );
+    sw.getCell(r, 5).value = { formula: terms.join("+") };
+    sw.getCell(r, 11).value = { formula: `SUM(E${r}:J${r})` };
+    sw.getCell(r, 5).numFmt = "#,##0"; sw.getCell(r, 11).numFmt = "#,##0";
   }
 }
 
