@@ -18,10 +18,12 @@ export interface PropPalier {
   remiseStandardTaux?: number; // ex. 0.17 pour 17%
   // Remise additionnelle (colonne I) appliquée à tous les produits du palier (ex. 0.15).
   remiseAddTaux?: number;
+  // % offres reco par typologie (7 valeurs, ordre Ambassadeur..Calendula) propre à ce palier.
+  pctOffres?: number[];
 }
 // Ligne du Mapping (catalogue complet ou articles campagne).
 export interface MapRow { ref: string; name?: string; barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number; }
-export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; pctOffres?: number[]; }
+export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; }
 
 export const PROP_SHEET = "Proposition template";
 export const MAPPING_SHEET = "Mapping";
@@ -232,11 +234,12 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       const pvLast = blk.pvFirst + blk.pvCount - 1;
       ws.getCell(blk.nbProduitsRow, 2).value = { formula: `SUM(E${blk.pvFirst}:E${pvLast})` };
 
-      // % Offres par typologie : si une reco (commandes N-1 par statut) est fournie, on l'écrit
-      // sur la ligne %Offres (= remiseRow-1). Sinon on laisse les valeurs en dur du gabarit.
-      if (payload.pctOffres && payload.pctOffres.length === TYPO_COLS.length) {
+      // % Offres par typologie : si une reco PROPRE AU PALIER (commandes N-1 du code offre par
+      // statut) est fournie, on l'écrit sur la ligne %Offres (= remiseRow-1). Sinon on laisse
+      // les valeurs en dur du gabarit. Chaque palier a donc sa propre répartition.
+      if (pal.pctOffres && pal.pctOffres.length === TYPO_COLS.length) {
         const pctRow = blk.remiseRow - 1;
-        TYPO_COLS.forEach((t, idx) => { ws.getCell(`${t.param}${pctRow}`).value = payload.pctOffres![idx]; });
+        TYPO_COLS.forEach((t, idx) => { ws.getCell(`${t.param}${pctRow}`).value = pal.pctOffres![idx]; });
       }
 
       // Remise statut STANDARD : même taux pour toutes les typologies du palier.

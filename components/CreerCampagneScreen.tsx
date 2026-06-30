@@ -93,11 +93,11 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
       setCamp(enriched); setAnalysed(true);
       const nbFound = enriched.articles.filter(a => a.found).length;
       const nbTotal = enriched.articles.filter(a => a.ref.trim()).length;
-      // Diagnostic % offres : montre la reco par statut, ou prévient si aucun statut trouvé.
-      const reco = enriched.pctOffresReco;
-      const recoMsg = reco && Object.values(reco).some(v => v > 0)
-        ? " | % offres reco : " + Object.entries(reco).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(", ")
-        : " | ⚠ aucune répartition par statut client trouvée (les % du gabarit sont conservés)";
+      // Diagnostic % offres : nb de paliers ayant reçu une reco par statut (calculée par code offre).
+      const nbReco = enriched.paliers.filter(p => p.pctOffresReco && p.pctOffresReco.some(v => v > 0)).length;
+      const recoMsg = nbReco > 0
+        ? ` | % offres recalculés par statut sur ${nbReco}/${enriched.paliers.length} palier(s)`
+        : " | ⚠ aucune répartition par statut trouvée (code offre absent des ventes N-1 ?) — % du gabarit conservés";
       onToast(`Conso N-1 récupérée (${nbFound}/${nbTotal} articles trouvés)${recoMsg}`, nbFound === nbTotal ? "success" : "info");
     } catch (e: any) { onToast("Erreur analyse : " + e.message, "error"); }
     finally { setAnalysing(false); }

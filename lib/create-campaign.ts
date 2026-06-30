@@ -38,6 +38,9 @@ export interface PalierSaisi {
   remiseStandardTaux?: number; // ex. 0.17
   // Remise additionnelle (colonne I) appliquée à tous les produits du palier (ex. 0.15).
   remiseAddTaux?: number;
+  // Reco % offres par typologie (7 valeurs, ordre TYPOLOGIES) propre à CE palier, calculée
+  // sur les ventes N-1 du code offre du palier (qui l'a acheté l'an dernier).
+  pctOffresReco?: number[];
 }
 
 export interface CampagneCreee {
@@ -48,10 +51,7 @@ export interface CampagneCreee {
   periodeDebut: string;
   periodeFin: string;
   articles: ArticleCampagne[]; // communs à tous les paliers
-  paliers: PalierSaisi[];
-  // Reco % offres par typologie (Ambassadeur..Calendula), déduite de la répartition des
-  // commandes N-1 par statut client. Indexée par nom de statut. Commune à tous les paliers.
-  pctOffresReco?: Record<string, number>;
+  paliers: PalierSaisi[];      // chaque palier porte sa propre reco % offres (par code offre)
   createdAt?: string;
 }
 
@@ -149,30 +149,31 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
     } as ArticleCampagne;
   });
 
-  // Reco % offres par typologie = répartition des commandes N-1 par statut client (si période).
-  // Matching TOLÉRANT entre le nom du statut Odoo et la typologie (insensible casse/accents,
-  // match partiel) : "ambassadeur" ou "Ambassadeur B2B" matchent "Ambassadeur".
-  let pctOffresReco: Record<string, number> | undefined;
+  // Reco % offres PAR PALIER : répartition des commandes N-1 par statut client, calculée sur
+  // le CODE OFFRE de chaque palier (qui a acheté cette offre l'an dernier). Matching tolérant.
+  const norm = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  let paliers = camp.paliers;
   if (camp.periodeDebut && camp.periodeFin) {
-    const dist = await odoo.getStatutDistribution(session, refs, camp.periodeDebut, camp.periodeFin);
-    const total = Object.values(dist).reduce((s, n) => s + n, 0);
-    if (total > 0) {
-      const norm = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
-      pctOffresReco = {};
-      for (const typo of TYPOLOGIES) {
+    paliers = await Promise.all(camp.paliers.map(async (pal) => {
+      const code = (pal.code || "").trim();
+      if (!code) return pal;
+      const dist = await odoo.getStatutDistributionByOffer(session, code, camp.periodeDebut, camp.periodeFin);
+      const total = Object.values(dist).reduce((s, n) => s + n, 0);
+      if (total <= 0) return { ...pal, pctOffresReco: undefined };
+      const reco = TYPOLOGIES.map(typo => {
         const nt = norm(typo);
-        // Somme des commandes des statuts Odoo qui contiennent (ou sont contenus dans) la typologie.
         let cnt = 0;
         for (const [statut, n] of Object.entries(dist)) {
           const ns = norm(statut);
           if (ns === nt || ns.includes(nt) || nt.includes(ns)) cnt += n;
         }
-        pctOffresReco[typo] = cnt / total;
-      }
-    }
+        return cnt / total;
+      });
+      return { ...pal, pctOffresReco: reco };
+    }));
   }
 
-  return { ...camp, articles, pctOffresReco: pctOffresReco ?? camp.pctOffresReco };
+  return { ...camp, articles, paliers };
 }
 
 /** Qté/pack effective d'un article dans un palier : valeur saisie (>0) sinon reco (conso ÷ nbPacks).
@@ -189,11 +190,10 @@ export function qtyParPack(art: ArticleCampagne, pal: PalierSaisi): number {
 
 export interface ExportPayload {
   nom: string;
-  // % offres reco par typologie (déduite des commandes N-1), appliquée à tous les paliers.
-  pctOffres?: number[]; // ordre TYPOLOGIES (7 valeurs)
   paliers: Array<{
     code: string; label: string; qtyPacks: number;
     remiseStandard?: boolean; remiseStandardTaux?: number; remiseAddTaux?: number;
+    pctOffres?: number[]; // % offres reco par typologie (7 valeurs), propre à ce palier
     produits: Array<{
       ref: string; name: string; productId: number;
       qtyParPack: number;
@@ -206,10 +206,8 @@ export interface ExportPayload {
 /** Convertit la campagne (enrichie) vers le payload d'export Proposition. */
 export function toExportPayload(camp: CampagneCreee): ExportPayload {
   const arts = camp.articles.filter(a => a.ref.trim());
-  const pctOffres = camp.pctOffresReco ? TYPOLOGIES.map(t => camp.pctOffresReco![t] ?? 0) : undefined;
   return {
     nom: camp.nom,
-    pctOffres,
     paliers: camp.paliers.map(pal => ({
       code: pal.code,
       label: pal.label,
@@ -217,6 +215,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
       remiseStandard: pal.remiseStandard,
       remiseStandardTaux: pal.remiseStandardTaux,
       remiseAddTaux: pal.remiseAddTaux,
+      pctOffres: pal.pctOffresReco,
       produits: arts.map(a => ({
         ref: a.ref.trim(),
         name: a.name || "",
