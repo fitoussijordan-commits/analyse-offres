@@ -149,17 +149,15 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
     } as ArticleCampagne;
   });
 
-  // Reco % offres PAR PALIER : répartition des commandes N-1 par statut client, calculée sur
-  // le CODE OFFRE de chaque palier (qui a acheté cette offre l'an dernier). Matching tolérant.
+  // Reco % offres par typologie = répartition des commandes N-1 par statut client, calculée sur
+  // les ARTICLES de la campagne (qui les a achetés l'an dernier). Robuste même si l'offre est
+  // nouvelle. Matching tolérant (casse/accents/partiel). Appliquée à chaque palier.
   const norm = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
   let paliers = camp.paliers;
-  if (camp.periodeDebut && camp.periodeFin) {
-    paliers = await Promise.all(camp.paliers.map(async (pal) => {
-      const code = (pal.code || "").trim();
-      if (!code) return pal;
-      const dist = await odoo.getStatutDistributionByOffer(session, code, camp.periodeDebut, camp.periodeFin);
-      const total = Object.values(dist).reduce((s, n) => s + n, 0);
-      if (total <= 0) return { ...pal, pctOffresReco: undefined };
+  if (camp.periodeDebut && camp.periodeFin && refs.length) {
+    const dist = await odoo.getStatutDistribution(session, refs, camp.periodeDebut, camp.periodeFin);
+    const total = Object.values(dist).reduce((s, n) => s + n, 0);
+    if (total > 0) {
       const reco = TYPOLOGIES.map(typo => {
         const nt = norm(typo);
         let cnt = 0;
@@ -169,8 +167,8 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
         }
         return cnt / total;
       });
-      return { ...pal, pctOffresReco: reco };
-    }));
+      paliers = camp.paliers.map(pal => ({ ...pal, pctOffresReco: reco }));
+    }
   }
 
   return { ...camp, articles, paliers };

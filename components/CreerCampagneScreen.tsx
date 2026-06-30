@@ -93,12 +93,13 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
       setCamp(enriched); setAnalysed(true);
       const nbFound = enriched.articles.filter(a => a.found).length;
       const nbTotal = enriched.articles.filter(a => a.ref.trim()).length;
-      // Diagnostic % offres : nb de paliers ayant reçu une reco par statut (calculée par code offre).
-      const nbReco = enriched.paliers.filter(p => p.pctOffresReco && p.pctOffresReco.some(v => v > 0)).length;
-      const recoMsg = nbReco > 0
-        ? ` | % offres recalculés par statut sur ${nbReco}/${enriched.paliers.length} palier(s)`
-        : " | ⚠ aucune répartition par statut trouvée (code offre absent des ventes N-1 ?) — % du gabarit conservés";
-      onToast(`Conso N-1 récupérée (${nbFound}/${nbTotal} articles trouvés)${recoMsg}`, nbFound === nbTotal ? "success" : "info");
+      // Diagnostic % offres : montre la répartition par typologie trouvée (ou prévient si rien).
+      const TYPOS = ["Ambassadeur", "Compagnon", "Challenger", "Rose", "Prunelier", "Anthylide", "Calendula"];
+      const reco = enriched.paliers.find(p => p.pctOffresReco && p.pctOffresReco.some(v => v > 0))?.pctOffresReco;
+      const recoMsg = reco
+        ? " | % offres reco : " + reco.map((v, i) => v > 0 ? `${TYPOS[i]} ${Math.round(v * 100)}%` : null).filter(Boolean).join(", ")
+        : " | ⚠ aucun statut client trouvé sur les ventes N-1 (champ statut vide dans Odoo ?) — % du gabarit conservés";
+      onToast(`Conso N-1 (${nbFound}/${nbTotal} articles)${recoMsg}`, nbFound === nbTotal ? "success" : "info");
     } catch (e: any) { onToast("Erreur analyse : " + e.message, "error"); }
     finally { setAnalysing(false); }
   };
