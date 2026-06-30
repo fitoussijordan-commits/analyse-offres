@@ -207,7 +207,10 @@ function fillSynthese(wb: ExcelJS.Workbook, payload: PropPayload) {
   const propRanges = BLOCKS.map(b => ({ first: b.pvFirst, last: b.dataLast, nbOffresCell: `'${PROP_SHEET}'!$B$${b.nbOffresRow}` }));
 
   const maxRow = sw.rowCount;
-  for (let r = 1; r <= maxRow; r++) {
+  // IMPORTANT : ne traiter QUE les tableaux du bas (à partir de la ligne 10). La zone du HAUT
+  // (lignes 1-6 : SYNTHESE + offres) ne doit PAS être touchée, sinon ses CA/Marges sont écrasés.
+  const BAS_FIRST = 10;
+  for (let r = BAS_FIRST; r <= maxRow; r++) {
     const a = sw.getCell(r, 1).value;
     const ref = a == null ? "" : String(a).trim();
     if (!ref) continue;
@@ -264,11 +267,13 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     }
 
     // Recâbler les "Nb Offres" (bug gabarit : pointent tous sur $B$4).
+    // ATTENTION : remplacer "$B$4" uniquement quand il n'est PAS suivi d'un chiffre, sinon
+    // "$B$42" (bloc 2) deviendrait "$B$422". On utilise (?!\d).
     const bOffres = `$B$${blk.nbOffresRow}`;
     for (const t of TYPO_COLS) {
       const cell = ws.getCell(`${t.param}${blk.nbOffRow}`);
       const v: any = cell.value;
-      if (v && typeof v === "object" && typeof v.formula === "string") cell.value = { formula: v.formula.replace(/\$B\$4/g, bOffres) };
+      if (v && typeof v === "object" && typeof v.formula === "string") cell.value = { formula: v.formula.replace(/\$B\$4(?!\d)/g, bOffres) };
     }
 
     // VLOOKUP sur TOUTES les lignes produits (même vides) : ainsi, si l'utilisateur tape une
