@@ -115,6 +115,63 @@ export async function getProductsPricing(session: OdooSession, productIds: numbe
   return out;
 }
 
+// ── Répartition des commandes N-1 par statut client (pour la reco % offres par typologie) ──
+/**
+ * Pour une liste de réfs sur une période, compte le nombre de COMMANDES distinctes par statut
+ * client (res.partner.x_statut_client_id). Renvoie { statutName -> nbCommandes }.
+ * Sert à recommander les % offres par typologie = part de chaque statut dans les commandes N-1.
+ */
+export async function getStatutDistribution(session: OdooSession, refs: string[], dateFrom: string, dateTo: string): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  const clean = [...new Set(refs.map(r => (r || "").trim()).filter(Boolean))];
+  if (!clean.length || !dateFrom || !dateTo) return out;
+
+  // 1) Résoudre les réfs → ids produits.
+  const prods = await searchRead(session, "product.product", [["default_code", "in", clean]], ["id"], 0);
+  const ids = (prods || []).map((p: any) => p.id as number);
+  if (!ids.length) return out;
+
+  // 2) Lignes de vente confirmées sur la période → commandes distinctes.
+  const lines = await searchRead(
+    session, "sale.order.line",
+    [
+      ["product_id", "in", ids],
+      ["order_id.state", "in", ["sale", "done"]],
+      ["order_id.date_order", ">=", `${dateFrom} 00:00:00`],
+      ["order_id.date_order", "<=", `${dateTo} 23:59:59`],
+      ["display_type", "=", false],
+    ],
+    ["order_id"], 0
+  );
+  const orderIds = [...new Set((lines || []).map((l: any) => (Array.isArray(l.order_id) ? l.order_id[0] : l.order_id) as number))];
+  if (!orderIds.length) return out;
+
+  // 3) Commandes → client (partner).
+  const orders = await searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "partner_id"], 0);
+  const partnerByOrder: Record<number, number> = {};
+  const partnerIds = new Set<number>();
+  for (const o of (orders || []) as any[]) {
+    if (o.partner_id) { partnerByOrder[o.id] = o.partner_id[0]; partnerIds.add(o.partner_id[0]); }
+  }
+  if (!partnerIds.size) return out;
+
+  // 4) Clients → statut.
+  const partners = await searchRead(session, "res.partner", [["id", "in", [...partnerIds]]], ["id", "x_statut_client_id"], 0);
+  const statutByPartner: Record<number, string> = {};
+  for (const p of (partners || []) as any[]) {
+    if (p.x_statut_client_id) statutByPartner[p.id] = p.x_statut_client_id[1];
+  }
+
+  // 5) Compter les commandes par statut (chaque commande comptée une fois).
+  for (const oid of orderIds as number[]) {
+    const pid = partnerByOrder[oid];
+    const statut = (pid && statutByPartner[pid]) || "";
+    if (!statut) continue;
+    out[statut] = (out[statut] || 0) + 1;
+  }
+  return out;
+}
+
 /** Catalogue complet : tous les product.product ayant un default_code (pour l'onglet Mapping). */
 export async function getAllProducts(session: OdooSession): Promise<ProductPricing[]> {
   const prods = await searchRead(

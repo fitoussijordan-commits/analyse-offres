@@ -20,7 +20,7 @@ export interface PropPalier {
 }
 // Ligne du Mapping (catalogue complet ou articles campagne).
 export interface MapRow { ref: string; name?: string; barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number; }
-export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; }
+export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; pctOffres?: number[]; }
 
 export const PROP_SHEET = "Proposition template";
 export const MAPPING_SHEET = "Mapping";
@@ -231,8 +231,12 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       const pvLast = blk.pvFirst + blk.pvCount - 1;
       ws.getCell(blk.nbProduitsRow, 2).value = { formula: `SUM(E${blk.pvFirst}:E${pvLast})` };
 
-      // % Offres par typologie : ce sont des valeurs EN DUR du gabarit (définies par Sissi,
-      // potentiellement différentes par palier). On ne les touche PAS — on laisse le gabarit.
+      // % Offres par typologie : si une reco (commandes N-1 par statut) est fournie, on l'écrit
+      // sur la ligne %Offres (= remiseRow-1). Sinon on laisse les valeurs en dur du gabarit.
+      if (payload.pctOffres && payload.pctOffres.length === TYPO_COLS.length) {
+        const pctRow = blk.remiseRow - 1;
+        TYPO_COLS.forEach((t, idx) => { ws.getCell(`${t.param}${pctRow}`).value = payload.pctOffres![idx]; });
+      }
 
       // Remise statut STANDARD : même taux pour toutes les typologies du palier.
       if (pal.remiseStandard && typeof pal.remiseStandardTaux === "number") {
@@ -281,8 +285,9 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     }
 
     // Lignes PLV / Testeurs / SR (au-delà des Produit Vente, jusqu'à dataLast) : on garde leurs
-    // réfs du gabarit MAIS on les convertit en TEXTE et on applique le VLOOKUP coût/tarif/PPC,
-    // pour que leurs prix se remplissent aussi depuis le Mapping.
+    // réfs du gabarit MAIS on les convertit en TEXTE, on applique le VLOOKUP coût/tarif/PPC, et
+    // on tire AUSSI les formules calculées (K=PPC remisé, L=BRI, M..Z=CA/Marges) que le gabarit
+    // ne fournissait pas sur ces lignes.
     for (let row = blk.pvFirst + blk.pvCount; row <= blk.dataLast; row++) {
       const cur = ws.getCell(row, 1).value;
       const ref = cur == null ? "" : String(cur).trim();
@@ -293,6 +298,11 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
       ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) };
       ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) };
+      // Remise additionnelle du palier (col I) aussi sur ces lignes.
+      if (pal && typeof pal.remiseAddTaux === "number") ws.getCell(row, 9).value = pal.remiseAddTaux;
+      ws.getCell(row, 11).value = { formula: `J${row}*(1-I${row})` };           // K : PPC remisé
+      ws.getCell(row, 12).value = { formula: `IFERROR(J${row}-K${row},"")` };   // L : Montant BRI
+      writeTypoFormulas(ws, row, blk.remiseRow, blk.nbOffRow);                  // M..Z : CA/Marges
     }
 
     // Synthèse : SUM par colonne CA/Marges.

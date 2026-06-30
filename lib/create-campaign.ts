@@ -44,8 +44,14 @@ export interface CampagneCreee {
   periodeFin: string;
   articles: ArticleCampagne[]; // communs à tous les paliers
   paliers: PalierSaisi[];
+  // Reco % offres par typologie (Ambassadeur..Calendula), déduite de la répartition des
+  // commandes N-1 par statut client. Indexée par nom de statut. Commune à tous les paliers.
+  pctOffresReco?: Record<string, number>;
   createdAt?: string;
 }
+
+// Ordre des 7 typologies du template (= statuts clients Odoo, mêmes noms).
+export const TYPOLOGIES = ["Ambassadeur", "Compagnon", "Challenger", "Rose", "Prunelier", "Anthylide", "Calendula"];
 
 export function genId(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -138,7 +144,18 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
     } as ArticleCampagne;
   });
 
-  return { ...camp, articles };
+  // Reco % offres par typologie = répartition des commandes N-1 par statut client (si période).
+  let pctOffresReco: Record<string, number> | undefined;
+  if (camp.periodeDebut && camp.periodeFin) {
+    const dist = await odoo.getStatutDistribution(session, refs, camp.periodeDebut, camp.periodeFin);
+    const total = Object.values(dist).reduce((s, n) => s + n, 0);
+    if (total > 0) {
+      pctOffresReco = {};
+      for (const typo of TYPOLOGIES) pctOffresReco[typo] = (dist[typo] || 0) / total;
+    }
+  }
+
+  return { ...camp, articles, pctOffresReco: pctOffresReco ?? camp.pctOffresReco };
 }
 
 /** Qté/pack effective d'un article dans un palier : valeur saisie (>0) sinon reco (conso ÷ nbPacks).
@@ -155,6 +172,8 @@ export function qtyParPack(art: ArticleCampagne, pal: PalierSaisi): number {
 
 export interface ExportPayload {
   nom: string;
+  // % offres reco par typologie (déduite des commandes N-1), appliquée à tous les paliers.
+  pctOffres?: number[]; // ordre TYPOLOGIES (7 valeurs)
   paliers: Array<{
     code: string; label: string; qtyPacks: number;
     remiseStandard?: boolean; remiseStandardTaux?: number; remiseAddTaux?: number;
@@ -169,8 +188,10 @@ export interface ExportPayload {
 /** Convertit la campagne (enrichie) vers le payload d'export Proposition. */
 export function toExportPayload(camp: CampagneCreee): ExportPayload {
   const arts = camp.articles.filter(a => a.ref.trim());
+  const pctOffres = camp.pctOffresReco ? TYPOLOGIES.map(t => camp.pctOffresReco![t] ?? 0) : undefined;
   return {
     nom: camp.nom,
+    pctOffres,
     paliers: camp.paliers.map(pal => ({
       code: pal.code,
       label: pal.label,
