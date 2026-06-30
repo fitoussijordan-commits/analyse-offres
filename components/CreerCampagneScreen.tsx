@@ -267,6 +267,9 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
               <input type="number" step="0.1" style={{ ...inputStyle, width: 70 }} value={pal.remiseStandardTaux != null ? Math.round(pal.remiseStandardTaux * 1000) / 10 : ""} onChange={e => setPalier(pi, { remiseStandardTaux: e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0) / 100 })} placeholder="17" title="% remise pour toutes les typologies" />
             )}
             {pal.remiseStandard && <span style={{ fontSize: 12, color: C.textMuted }}>%</span>}
+            <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 6 }}>Remise add.</span>
+            <input type="number" step="0.1" style={{ ...inputStyle, width: 70 }} value={pal.remiseAddTaux != null ? Math.round(pal.remiseAddTaux * 1000) / 10 : ""} onChange={e => setPalier(pi, { remiseAddTaux: e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0) / 100 })} placeholder="—" title="% remise additionnelle (colonne I) appliquée à tous les produits du palier" />
+            <span style={{ fontSize: 12, color: C.textMuted }}>%</span>
             <div style={{ flex: 1 }} />
             {camp.paliers.length > 1 && <button onClick={() => removePalier(pi)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.red, fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>Supprimer le palier</button>}
           </div>

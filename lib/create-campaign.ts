@@ -31,6 +31,8 @@ export interface PalierSaisi {
   // Remise statut : standard (même % pour toutes les typologies) ou spécifique (gabarit).
   remiseStandard?: boolean;
   remiseStandardTaux?: number; // ex. 0.17
+  // Remise additionnelle (colonne I) appliquée à tous les produits du palier (ex. 0.15).
+  remiseAddTaux?: number;
 }
 
 export interface CampagneCreee {
@@ -155,7 +157,7 @@ export interface ExportPayload {
   nom: string;
   paliers: Array<{
     code: string; label: string; qtyPacks: number;
-    remiseStandard?: boolean; remiseStandardTaux?: number;
+    remiseStandard?: boolean; remiseStandardTaux?: number; remiseAddTaux?: number;
     produits: Array<{
       ref: string; name: string; productId: number;
       qtyParPack: number;
@@ -175,6 +177,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
       qtyPacks: pal.nbPacks || 0,
       remiseStandard: pal.remiseStandard,
       remiseStandardTaux: pal.remiseStandardTaux,
+      remiseAddTaux: pal.remiseAddTaux,
       produits: arts.map(a => ({
         ref: a.ref.trim(),
         name: a.name || "",

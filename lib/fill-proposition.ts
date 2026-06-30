@@ -15,6 +15,8 @@ export interface PropPalier {
   // Remise statut : si standard, on applique le même taux à toutes les typologies.
   remiseStandard?: boolean;   // true = standard (même % pour tous)
   remiseStandardTaux?: number; // ex. 0.17 pour 17%
+  // Remise additionnelle (colonne I) appliquée à tous les produits du palier (ex. 0.15).
+  remiseAddTaux?: number;
 }
 // Ligne du Mapping (catalogue complet ou articles campagne).
 export interface MapRow { ref: string; name?: string; barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number; }
@@ -272,6 +274,8 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
         ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) };
       }
       ws.getCell(row, 5).value = p ? (p.qtyParPack || 0) : null;          // E : qté/pack
+      // I : Remise additionnelle du palier (si renseignée) appliquée à tous les produits.
+      if (pal && typeof pal.remiseAddTaux === "number") ws.getCell(row, 9).value = pal.remiseAddTaux;
       // CA/Marges : toujours en formules (donnent 0 si E vide), pour rester remplissables.
       writeTypoFormulas(ws, row, blk.remiseRow, blk.nbOffRow);
     }
