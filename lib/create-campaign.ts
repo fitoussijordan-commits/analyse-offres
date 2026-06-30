@@ -150,13 +150,25 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
   });
 
   // Reco % offres par typologie = répartition des commandes N-1 par statut client (si période).
+  // Matching TOLÉRANT entre le nom du statut Odoo et la typologie (insensible casse/accents,
+  // match partiel) : "ambassadeur" ou "Ambassadeur B2B" matchent "Ambassadeur".
   let pctOffresReco: Record<string, number> | undefined;
   if (camp.periodeDebut && camp.periodeFin) {
     const dist = await odoo.getStatutDistribution(session, refs, camp.periodeDebut, camp.periodeFin);
     const total = Object.values(dist).reduce((s, n) => s + n, 0);
     if (total > 0) {
+      const norm = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
       pctOffresReco = {};
-      for (const typo of TYPOLOGIES) pctOffresReco[typo] = (dist[typo] || 0) / total;
+      for (const typo of TYPOLOGIES) {
+        const nt = norm(typo);
+        // Somme des commandes des statuts Odoo qui contiennent (ou sont contenus dans) la typologie.
+        let cnt = 0;
+        for (const [statut, n] of Object.entries(dist)) {
+          const ns = norm(statut);
+          if (ns === nt || ns.includes(nt) || nt.includes(ns)) cnt += n;
+        }
+        pctOffresReco[typo] = cnt / total;
+      }
     }
   }
 
