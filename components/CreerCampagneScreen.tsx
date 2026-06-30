@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import {
   CampagneCreee, PalierSaisi, ArticleCampagne, genId,
-  analyseCampagneCreee, toExportPayload, qtyParPack,
+  analyseCampagneCreee, toExportPayload, qtyParPack, TYPES_PRODUIT,
 } from "@/lib/create-campaign";
 import { loadCampagnesCreees, upsertCampagneCreee, deleteCampagneCreee } from "@/lib/campaigns";
 import { buildSyntheseLogistique } from "@/lib/logistique";
@@ -208,8 +208,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {["Code", "Libellé", "EAN", "Coût", "Tarif rev.", "PPC", "Conso N-1", ""].map((h, i) => (
-                <th key={i} style={{ padding: "6px 6px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i >= 3 && i <= 6 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
+              {["Code", "Libellé", "Type", "EAN", "Coût", "Tarif rev.", "PPC", "Conso N-1", ""].map((h, i) => (
+                <th key={i} style={{ padding: "6px 6px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i >= 4 && i <= 7 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -229,6 +229,11 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 </td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
                   <input style={{ ...inputStyle, width: 200, padding: "5px 6px" }} value={a.name ?? ""} onChange={e => setArticle(ai, { manuel: true, name: e.target.value })} placeholder="Désignation" />
+                </td>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
+                  <select style={{ ...inputStyle, width: 130, padding: "5px 6px" }} value={a.typProd ?? "Produit Vente"} onChange={e => setArticle(ai, { typProd: e.target.value })}>
+                    {TYPES_PRODUIT.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
                 </td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
                   <input style={{ ...inputStyle, width: 120, padding: "5px 6px", fontFamily: "monospace" }} value={a.barcode ?? ""} onChange={e => setArticle(ai, { manuel: true, barcode: e.target.value })} placeholder="EAN" />

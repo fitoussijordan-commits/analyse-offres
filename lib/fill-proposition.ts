@@ -9,6 +9,7 @@ export interface PropProduit {
   ref: string; name: string; productId: number;
   qtyParPack: number;
   barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number;
+  typProd?: string;
 }
 export interface PropPalier {
   code: string; label: string; qtyPacks: number; produits: PropProduit[];
@@ -277,6 +278,7 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
         ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) };
         ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) };
       }
+      if (p && p.typProd) ws.getCell(row, 4).value = p.typProd;            // D : Typ. Prod
       ws.getCell(row, 5).value = p ? (p.qtyParPack || 0) : null;          // E : qté/pack
       // I : Remise additionnelle du palier (si renseignée) appliquée à tous les produits.
       if (pal && typeof pal.remiseAddTaux === "number") ws.getCell(row, 9).value = pal.remiseAddTaux;

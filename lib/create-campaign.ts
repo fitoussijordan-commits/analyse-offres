@@ -20,7 +20,12 @@ export interface ArticleCampagne {
   // Réf libre (PLV/testeur non créé sur Odoo) : l'utilisateur saisit nom + prix à la main.
   // Quand manuel = true, l'analyse Odoo ne doit pas écraser ces valeurs.
   manuel?: boolean;
+  // Type de produit (colonne D du template) : Produit Vente / Testeur / Échantillon / UG / PLV.
+  typProd?: string;
 }
+
+// Valeurs possibles du type de produit (liste déroulante).
+export const TYPES_PRODUIT = ["Produit Vente", "Testeur", "Échantillon", "UG", "PLV"];
 
 export interface PalierSaisi {
   code: string;           // ex. "REGE1"
@@ -181,6 +186,7 @@ export interface ExportPayload {
       ref: string; name: string; productId: number;
       qtyParPack: number;
       barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number;
+      typProd?: string;
     }>;
   }>;
 }
@@ -208,6 +214,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
         standardPrice: a.standardPrice || 0,
         listPrice: a.listPrice || 0,
         ppc: a.ppc || 0,
+        typProd: a.typProd || "Produit Vente",
       })),
     })).filter(p => p.produits.length),
   };
