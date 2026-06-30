@@ -215,10 +215,8 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(blk.nbOffresRow, 2).value = pal.qtyPacks || 0;
       ws.getCell(blk.nbProduitsRow, 2).value = pal.produits.reduce((s, p) => s + (p.qtyParPack || 0), 0);
 
-      // % Offres par typologie : on écrit la reco (valeurs par défaut DEFAULT_PCTS) sur chaque
-      // palier, pour que la répartition soit toujours renseignée. Ligne %Offres = remiseRow-1.
-      const pctRow = blk.remiseRow - 1;
-      TYPO_COLS.forEach((t, idx) => { ws.getCell(`${t.param}${pctRow}`).value = DEFAULT_PCTS[idx]; });
+      // % Offres par typologie : ce sont des valeurs EN DUR du gabarit (définies par Sissi,
+      // potentiellement différentes par palier). On ne les touche PAS — on laisse le gabarit.
 
       // Remise statut STANDARD : même taux pour toutes les typologies du palier.
       if (pal.remiseStandard && typeof pal.remiseStandardTaux === "number") {
