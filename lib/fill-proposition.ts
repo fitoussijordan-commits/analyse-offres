@@ -188,12 +188,18 @@ function fillSynthese(wb: ExcelJS.Workbook, payload: PropPayload) {
         marge += caT - E * F * nbOff;
       }
     }
-    sw.getCell(match.row, 2).value = nbOffres;
-    sw.getCell(match.row, 3).value = round2(ca);
-    sw.getCell(match.row, 4).value = round2(marge);
-    sw.getCell(match.row, 5).value = ca > 0 ? round2(marge / ca) : 0;
-    sw.getCell(match.row, 3).numFmt = FMT_EUR; sw.getCell(match.row, 4).numFmt = FMT_EUR;
-    sw.getCell(match.row, 5).numFmt = "0.0%";
+    // Formats : B = Nombre d'offres (NOMBRE), C = CA (€), D = Marge (€), E = Marge % (%).
+    // On clone le style de chaque cellule avant de fixer son format pour casser tout partage
+    // d'objet style hérité du gabarit (qui mettait du % partout).
+    const setFmt = (col: number, val: any, fmt: string) => {
+      const c = sw.getCell(match.row, col);
+      c.style = JSON.parse(JSON.stringify(c.style || {}));
+      c.value = val; c.numFmt = fmt;
+    };
+    setFmt(2, nbOffres, '#,##0;(#,##0);" - "');                 // B : nombre
+    setFmt(3, round2(ca), FMT_EUR);                              // C : CA €
+    setFmt(4, round2(marge), FMT_EUR);                           // D : Marge €
+    setFmt(5, ca > 0 ? round2(marge / ca) : 0, "0.0%");          // E : Marge %
   }
 
   // ── BAS : par réf des tableaux (les réfs sont déjà écrites en colonne A du gabarit) ──
