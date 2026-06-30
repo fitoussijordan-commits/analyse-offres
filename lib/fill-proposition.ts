@@ -98,8 +98,13 @@ function fillMapping(wb: ExcelJS.Workbook, payload: PropPayload): Set<string> {
 }
 
 // VLOOKUP vers l'onglet Mapping : colonne `mapCol` (2=libellé,3=EAN,4=coût,5=tarif,6=PPC).
+// Le repli (réf vide ou introuvable) dépend du type de colonne :
+//   - texte (libellé, EAN) → "" ;
+//   - numérique (coût, tarif, PPC) → 0, sinon les formules CA/Marges plantent en #VALEUR!.
 function vlookup(refCell: string, mapCol: number): string {
-  return `IFERROR(VLOOKUP(${refCell},${MAPPING_SHEET}!$A:$F,${mapCol},FALSE),"")`;
+  const numericCols = [4, 5, 6]; // coût, tarif, PPC
+  const fallback = numericCols.includes(mapCol) ? "0" : '""';
+  return `IFERROR(VLOOKUP(${refCell},${MAPPING_SHEET}!$A:$F,${mapCol},FALSE),${fallback})`;
 }
 
 /**
