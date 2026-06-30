@@ -210,6 +210,11 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(blk.nbOffresRow, 2).value = pal.qtyPacks || 0;
       ws.getCell(blk.nbProduitsRow, 2).value = pal.produits.reduce((s, p) => s + (p.qtyParPack || 0), 0);
 
+      // % Offres par typologie : on écrit la reco (valeurs par défaut DEFAULT_PCTS) sur chaque
+      // palier, pour que la répartition soit toujours renseignée. Ligne %Offres = remiseRow-1.
+      const pctRow = blk.remiseRow - 1;
+      TYPO_COLS.forEach((t, idx) => { ws.getCell(`${t.param}${pctRow}`).value = DEFAULT_PCTS[idx]; });
+
       // Remise statut STANDARD : même taux pour toutes les typologies du palier.
       if (pal.remiseStandard && typeof pal.remiseStandardTaux === "number") {
         for (const t of TYPO_COLS) ws.getCell(`${t.param}${blk.remiseRow}`).value = pal.remiseStandardTaux;
@@ -224,32 +229,34 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       if (v && typeof v === "object" && typeof v.formula === "string") cell.value = { formula: v.formula.replace(/\$B\$4/g, bOffres) };
     }
 
+    // VLOOKUP sur TOUTES les lignes produits (même vides) : ainsi, si l'utilisateur tape une
+    // réf dans une ligne vide, libellé/EAN/prix/PPC se remplissent automatiquement depuis le
+    // Mapping. B/C/F/H/J sont donc toujours des formules VLOOKUP basées sur la colonne A.
     for (let i = 0; i < blk.pvCount; i++) {
       const row = blk.pvFirst + i;
       const p = pal ? pal.produits[i] : undefined;
-      if (p) {
-        const ref = (p.ref || "").trim();
-        ws.getCell(row, 1).value = ref;                                  // A : code (valeur)
-        // B/C/F/H/J = VLOOKUP vers Mapping si la réf y est, sinon valeur en dur (sécurité).
-        if (mapRefs.has(ref)) {
-          ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) }; // libellé
-          ws.getCell(row, 3).value = { formula: vlookup(`A${row}`, 3) }; // EAN
-          ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) }; // coût
-          ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) }; // tarif
-          ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) }; // PPC
-        } else {
-          ws.getCell(row, 2).value = p.name || "";
-          ws.getCell(row, 3).value = p.barcode || "";
-          ws.getCell(row, 6).value = round2(p.standardPrice || 0);
-          ws.getCell(row, 8).value = round2(p.listPrice || 0);
-          ws.getCell(row, 10).value = round2(p.ppc || 0);
-        }
-        ws.getCell(row, 5).value = p.qtyParPack || 0;                    // E : qté/pack
-        writeTypoFormulas(ws, row, blk.remiseRow, blk.nbOffRow);
+      const ref = p ? (p.ref || "").trim() : "";
+      // Réf manuelle hors catalogue (productId 0 et absente du Mapping) → valeurs en dur.
+      const horsMapping = !!p && p.productId === 0 && !mapRefs.has(ref);
+
+      ws.getCell(row, 1).value = ref || null;                            // A : code (valeur)
+      if (horsMapping) {
+        ws.getCell(row, 2).value = p!.name || "";
+        ws.getCell(row, 3).value = p!.barcode || "";
+        ws.getCell(row, 6).value = round2(p!.standardPrice || 0);
+        ws.getCell(row, 8).value = round2(p!.listPrice || 0);
+        ws.getCell(row, 10).value = round2(p!.ppc || 0);
       } else {
-        for (const c of [1, 2, 3, 5, 6, 8, 10]) ws.getCell(row, c).value = null;
-        for (const t of TYPO_COLS) { ws.getCell(`${t.ca}${row}`).value = null; ws.getCell(`${t.marge}${row}`).value = null; }
+        // VLOOKUP (renvoie "" si A vide → ligne vide propre, mais remplissable).
+        ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) };
+        ws.getCell(row, 3).value = { formula: vlookup(`A${row}`, 3) };
+        ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
+        ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) };
+        ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) };
       }
+      ws.getCell(row, 5).value = p ? (p.qtyParPack || 0) : null;          // E : qté/pack
+      // CA/Marges : toujours en formules (donnent 0 si E vide), pour rester remplissables.
+      writeTypoFormulas(ws, row, blk.remiseRow, blk.nbOffRow);
     }
 
     // Synthèse : SUM par colonne CA/Marges.
@@ -271,27 +278,27 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   const GC_PV_FIRST = 123, GC_PV_COUNT = 13, LOG_PV_FIRST = 149, LOG_PV_COUNT = 13;
   for (let i = 0; i < GC_PV_COUNT; i++) {
     const row = GC_PV_FIRST + i, p = pal1 ? pal1.produits[i] : undefined;
-    if (p) {
-      const ref = (p.ref || "").trim();
-      ws.getCell(row, 1).value = ref;
-      if (mapRefs.has(ref)) {
-        ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) };
-        ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
-        ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) };
-        ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) };
-      } else {
-        ws.getCell(row, 2).value = p.name || "";
-        ws.getCell(row, 6).value = round2(p.standardPrice || 0); ws.getCell(row, 8).value = round2(p.listPrice || 0);
-        ws.getCell(row, 10).value = round2(p.ppc || 0);
-      }
-    } else for (const c of [1, 2, 6, 8, 10]) ws.getCell(row, c).value = null;
+    const ref = p ? (p.ref || "").trim() : "";
+    const horsMapping = !!p && p.productId === 0 && !mapRefs.has(ref);
+    ws.getCell(row, 1).value = ref || null;
+    if (horsMapping) {
+      ws.getCell(row, 2).value = p!.name || "";
+      ws.getCell(row, 6).value = round2(p!.standardPrice || 0); ws.getCell(row, 8).value = round2(p!.listPrice || 0);
+      ws.getCell(row, 10).value = round2(p!.ppc || 0);
+    } else {
+      ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) };
+      ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
+      ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) };
+      ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) };
+    }
   }
-  // Besoins logistiques (palier 1) : code + libellé en VLOOKUP.
+  // Besoins logistiques (palier 1) : code + libellé en VLOOKUP sur toutes les lignes.
   for (let i = 0; i < LOG_PV_COUNT; i++) {
     const row = LOG_PV_FIRST + i, p = pal1 ? pal1.produits[i] : undefined;
     const ref = p ? (p.ref || "").trim() : "";
+    const horsMapping = !!p && p.productId === 0 && !mapRefs.has(ref);
     ws.getCell(row, 1).value = ref || null;
-    ws.getCell(row, 2).value = ref && mapRefs.has(ref) ? { formula: vlookup(`A${row}`, 2) } : (p ? (p.name || "") : null);
+    ws.getCell(row, 2).value = horsMapping ? (p!.name || "") : { formula: vlookup(`A${row}`, 2) };
   }
   // Vider PLV/Testeurs fixes du gabarit.
   for (const row of [136, 137, 138, 139, 140, 141, 142]) for (const c of [1, 2, 4, 6, 8, 10]) ws.getCell(row, c).value = null;
