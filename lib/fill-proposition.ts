@@ -91,10 +91,21 @@ function fillMapping(wb: ExcelJS.Workbook, payload: PropPayload): Set<string> {
     map.getCell(row, 4).value = round2(p.standardPrice || 0);
     map.getCell(row, 5).value = round2(p.listPrice || 0);
     map.getCell(row, 6).value = round2(p.ppc || 0);
+    // Réf du Mapping aussi en TEXTE pour matcher la colonne A du template (VLOOKUP homogène).
+    map.getCell(row, 1).numFmt = "@";
+    map.getCell(row, 1).value = String(ref);
     refs.add(ref);
     row++;
   }
   return refs;
+}
+
+// Écrit une référence en TEXTE (format "@") pour que le VLOOKUP compare des types homogènes.
+// Sans ça, une réf nombre (3020202) ne matche pas une réf texte dans le Mapping.
+function setRefText(ws: ExcelJS.Worksheet, row: number, ref: string) {
+  const c = ws.getCell(row, 1);
+  c.numFmt = "@";
+  c.value = ref ? String(ref) : null;
 }
 
 // VLOOKUP vers l'onglet Mapping : colonne `mapCol` (2=libellé,3=EAN,4=coût,5=tarif,6=PPC).
@@ -245,7 +256,7 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       // Réf manuelle hors catalogue (productId 0 et absente du Mapping) → valeurs en dur.
       const horsMapping = !!p && p.productId === 0 && !mapRefs.has(ref);
 
-      ws.getCell(row, 1).value = ref || null;                            // A : code (valeur)
+      setRefText(ws, row, ref);                                          // A : code en TEXTE
       if (horsMapping) {
         ws.getCell(row, 2).value = p!.name || "";
         ws.getCell(row, 3).value = p!.barcode || "";
@@ -263,6 +274,21 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 5).value = p ? (p.qtyParPack || 0) : null;          // E : qté/pack
       // CA/Marges : toujours en formules (donnent 0 si E vide), pour rester remplissables.
       writeTypoFormulas(ws, row, blk.remiseRow, blk.nbOffRow);
+    }
+
+    // Lignes PLV / Testeurs / SR (au-delà des Produit Vente, jusqu'à dataLast) : on garde leurs
+    // réfs du gabarit MAIS on les convertit en TEXTE et on applique le VLOOKUP coût/tarif/PPC,
+    // pour que leurs prix se remplissent aussi depuis le Mapping.
+    for (let row = blk.pvFirst + blk.pvCount; row <= blk.dataLast; row++) {
+      const cur = ws.getCell(row, 1).value;
+      const ref = cur == null ? "" : String(cur).trim();
+      if (!ref) continue;
+      setRefText(ws, row, ref);
+      ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) };
+      ws.getCell(row, 3).value = { formula: vlookup(`A${row}`, 3) };
+      ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
+      ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) };
+      ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) };
     }
 
     // Synthèse : SUM par colonne CA/Marges.
@@ -286,7 +312,7 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     const row = GC_PV_FIRST + i, p = pal1 ? pal1.produits[i] : undefined;
     const ref = p ? (p.ref || "").trim() : "";
     const horsMapping = !!p && p.productId === 0 && !mapRefs.has(ref);
-    ws.getCell(row, 1).value = ref || null;
+    setRefText(ws, row, ref);
     if (horsMapping) {
       ws.getCell(row, 2).value = p!.name || "";
       ws.getCell(row, 6).value = round2(p!.standardPrice || 0); ws.getCell(row, 8).value = round2(p!.listPrice || 0);
@@ -303,7 +329,7 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     const row = LOG_PV_FIRST + i, p = pal1 ? pal1.produits[i] : undefined;
     const ref = p ? (p.ref || "").trim() : "";
     const horsMapping = !!p && p.productId === 0 && !mapRefs.has(ref);
-    ws.getCell(row, 1).value = ref || null;
+    setRefText(ws, row, ref);
     ws.getCell(row, 2).value = horsMapping ? (p!.name || "") : { formula: vlookup(`A${row}`, 2) };
   }
   // Vider PLV/Testeurs fixes du gabarit.
