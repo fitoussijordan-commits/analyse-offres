@@ -125,6 +125,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         const catalogue = await odoo.getAllProducts(session);
         payload.mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc }));
       } catch { /* si le catalogue échoue, le Mapping se limite aux articles de la campagne */ }
+      // Synthèse logistique (réf × mois) de cette campagne → onglet dans le même fichier.
+      payload.logistique = buildSyntheseLogistique([camp]);
       const res = await fetch("/api/export-template", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
       const blob = await res.blob(); const url = URL.createObjectURL(blob);

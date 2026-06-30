@@ -8,10 +8,58 @@
 // Les besoins de toutes les campagnes sont agrégés par référence et par mois calendaire
 // (janvier → décembre).
 
+import type ExcelJS from "exceljs";
 import type { CampagneCreee } from "@/lib/create-campaign";
 import { qtyParPack } from "@/lib/create-campaign";
 
 export const MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+
+/** Écrit un onglet "Synthèse logistique" (réf × mois) dans le classeur. Partagé entre les
+ *  exports simple et multi. nameByRef : libellés de secours par réf. */
+export function writeSyntheseLogistiqueSheet(wb: ExcelJS.Workbook, log: SyntheseLogistique, nameByRef: Record<string, string> = {}) {
+  const TEAL = "0D9488", DARK = "1A1A2E", WHITE = "FFFFFF";
+  const sw = wb.addWorksheet("Synthèse logistique", { views: [{ showGridLines: false }] });
+  sw.columns = [{ width: 16 }, { width: 42 }, ...MOIS_FR.map(() => ({ width: 10 })), { width: 12 }];
+
+  const titleRow = sw.addRow(["Synthèse besoins logistiques — par référence et par mois"]);
+  sw.mergeCells(titleRow.number, 1, titleRow.number, 15);
+  const tc = sw.getCell(titleRow.number, 1);
+  tc.font = { bold: true, size: 13, color: { argb: "FF" + WHITE }, name: "Calibri" };
+  tc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
+  tc.alignment = { horizontal: "left", vertical: "middle", indent: 1 };
+  titleRow.height = 24;
+  sw.addRow([]);
+
+  const head = sw.addRow(["Réf", "Produit", ...MOIS_FR, "Total"]);
+  head.height = 20;
+  head.eachCell(c => {
+    c.font = { bold: true, color: { argb: "FF" + WHITE }, size: 10, name: "Calibri" };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
+    c.alignment = { horizontal: "center", vertical: "middle" };
+  });
+
+  const numFmt = "#,##0";
+  for (const l of log.lignes) {
+    const libelle = l.name || nameByRef[l.ref] || "";
+    const row = sw.addRow([l.ref, libelle, ...l.parMois, l.total]);
+    row.eachCell((c, col) => {
+      c.font = { size: 10, name: "Calibri", color: { argb: "FF" + DARK }, bold: col === 15 };
+      c.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+      if (col >= 3) { c.numFmt = numFmt; c.alignment = { horizontal: "right" }; }
+      if (col === 1) c.font = { ...c.font, name: "Consolas" };
+    });
+  }
+  const totRow = sw.addRow(["", "TOTAL", ...log.totalParMois, log.totalGeneral]);
+  totRow.eachCell((c, col) => {
+    c.font = { bold: true, size: 10, name: "Calibri", color: { argb: "FF" + WHITE } };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
+    if (col >= 3) { c.numFmt = numFmt; c.alignment = { horizontal: "right" }; }
+  });
+  sw.addRow([]);
+  const note = sw.addRow(["Profil de livraison : 40 % le mois précédant le début de l'offre, puis 60 % lissé à parts égales jusqu'à 1 mois avant la fin."]);
+  sw.mergeCells(note.number, 1, note.number, 15);
+  sw.getCell(note.number, 1).font = { italic: true, size: 9, color: { argb: "FF6B7280" }, name: "Calibri" };
+}
 
 export interface LigneLogistique {
   ref: string;
