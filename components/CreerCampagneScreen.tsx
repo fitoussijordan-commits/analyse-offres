@@ -51,6 +51,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   const [saving, setSaving] = useState(false);
   const [analysed, setAnalysed] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [filterYear, setFilterYear] = useState<string>("all");
 
   useEffect(() => { void reload(); }, []);
   // Charger le brouillon transféré depuis l'analyse (préco N+1), une seule fois.
@@ -166,6 +167,15 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
 
   const articlesValides = camp.articles.filter(a => a.ref.trim());
 
+  // Année d'une campagne = année de sa date de début (sinon de création).
+  const yearOf = (c: CampagneCreee): string => {
+    const d = c.dateDebut || c.createdAt || "";
+    const m = String(d).match(/^(\d{4})/);
+    return m ? m[1] : "—";
+  };
+  const annees = [...new Set(saved.map(yearOf))].sort((a, b) => b.localeCompare(a));
+  const savedFiltered = filterYear === "all" ? saved : saved.filter(c => yearOf(c) === filterYear);
+
   return (
     <div style={{ flex: 1, height: "100%", overflowY: "auto", padding: 24 }}>
     <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
@@ -180,18 +190,24 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 16px", boxShadow: C.shadow }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Mes campagnes sauvegardées</span>
+            <select value={filterYear} onChange={e => setFilterYear(e.target.value)} style={{ ...inputStyle, width: 120, padding: "5px 8px" }}>
+              <option value="all">Toutes années</option>
+              {annees.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
             <span style={{ fontSize: 12, color: C.textMuted }}>Coche celles à inclure dans l'export annuel.</span>
             <div style={{ flex: 1 }} />
             <button onClick={exporterMulti} disabled={exportingMulti || selected.size === 0} style={{ padding: "7px 14px", background: selected.size ? C.teal : C.border, border: "none", borderRadius: 8, cursor: exportingMulti || !selected.size ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingMulti ? 0.6 : 1 }}>{exportingMulti ? "Export…" : `⬇ Exporter sélection (${selected.size}) + synthèse logistique`}</button>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {saved.map(s => (
+            {savedFiltered.map(s => (
               <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, background: selected.has(s.id) ? C.tealSoft : C.white, border: `1px solid ${selected.has(s.id) ? C.teal : C.border}`, borderRadius: 8, padding: "5px 8px 5px 8px", fontSize: 12 }}>
                 <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)} style={{ cursor: "pointer" }} />
                 <button onClick={() => charger(s)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>{s.nom || "(sans nom)"}</button>
+                <span style={{ fontSize: 10, color: C.textMuted, background: C.bg, borderRadius: 4, padding: "1px 5px" }}>{yearOf(s)}</span>
                 <button onClick={() => supprimer(s.id)} title="Supprimer" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 14 }}>×</button>
               </div>
             ))}
+            {savedFiltered.length === 0 && <span style={{ fontSize: 12, color: C.textMuted }}>Aucune campagne pour {filterYear}.</span>}
           </div>
         </div>
       )}
