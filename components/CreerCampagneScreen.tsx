@@ -210,30 +210,28 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
           </thead>
           <tbody>
             {camp.articles.map((a, ai) => {
-              // Réf "libre" : introuvable dans Odoo après analyse → champs éditables.
-              const libre = a.manuel || (analysed && a.found === false && !!a.ref.trim());
+              // Réf inconnue d'Odoo (après analyse) → surlignée pour signaler une saisie 100% libre.
+              const inconnue = analysed && a.found === false && !!a.ref.trim();
+              // Tous les champs (désignation, EAN, prix) sont TOUJOURS éditables : modifier une
+              // valeur marque l'article comme manuel pour que l'analyse ne l'écrase plus.
               const numCell = (val: number | undefined, key: "standardPrice" | "listPrice" | "ppc") => (
-                <input type="number" step="0.01" style={{ ...inputStyle, width: 70, textAlign: "right", padding: "5px 6px" }} value={val ?? ""} onChange={e => setArticle(ai, { manuel: true, [key]: e.target.value === "" ? 0 : parseFloat(e.target.value) } as any)} placeholder="—" />
+                <input type="number" step="0.01" style={{ ...inputStyle, width: 75, textAlign: "right", padding: "5px 6px" }} value={val ?? ""} onChange={e => setArticle(ai, { manuel: true, [key]: e.target.value === "" ? 0 : parseFloat(e.target.value) } as any)} placeholder="—" />
               );
               return (
-              <tr key={ai} style={{ background: libre ? C.amberSoft : "transparent" }}>
+              <tr key={ai} style={{ background: inconnue ? C.amberSoft : "transparent" }}>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
                   <input style={{ ...inputStyle, width: 110, fontFamily: "monospace", padding: "5px 6px" }} value={a.ref} onChange={e => setArticle(ai, { ref: e.target.value, name: undefined, found: undefined, manuel: undefined })} placeholder="Code" />
                 </td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
-                  {libre
-                    ? <input style={{ ...inputStyle, width: 200, padding: "5px 6px" }} value={a.name ?? ""} onChange={e => setArticle(ai, { manuel: true, name: e.target.value })} placeholder="Désignation (saisie libre)" />
-                    : <span style={{ fontSize: 13, color: C.textSec }}>{a.name || "—"}</span>}
+                  <input style={{ ...inputStyle, width: 200, padding: "5px 6px" }} value={a.name ?? ""} onChange={e => setArticle(ai, { manuel: true, name: e.target.value })} placeholder="Désignation" />
                 </td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
-                  {libre
-                    ? <input style={{ ...inputStyle, width: 110, padding: "5px 6px", fontFamily: "monospace" }} value={a.barcode ?? ""} onChange={e => setArticle(ai, { manuel: true, barcode: e.target.value })} placeholder="EAN" />
-                    : <span style={{ fontSize: 12, color: C.textMuted, fontFamily: "monospace" }}>{a.barcode || "—"}</span>}
+                  <input style={{ ...inputStyle, width: 120, padding: "5px 6px", fontFamily: "monospace" }} value={a.barcode ?? ""} onChange={e => setArticle(ai, { manuel: true, barcode: e.target.value })} placeholder="EAN" />
                 </td>
-                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>{libre ? numCell(a.standardPrice, "standardPrice") : <span style={{ fontSize: 13, color: C.textSec }}>{a.standardPrice != null ? a.standardPrice : "—"}</span>}</td>
-                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>{libre ? numCell(a.listPrice, "listPrice") : <span style={{ fontSize: 13, color: C.textSec }}>{a.listPrice != null ? a.listPrice : "—"}</span>}</td>
-                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>{libre ? numCell(a.ppc, "ppc") : <span style={{ fontSize: 13, color: C.textSec }}>{a.ppc != null ? a.ppc : "—"}</span>}</td>
-                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, color: C.textSec }}>{analysed && !libre ? fmtNum(a.consoN1 || 0) : "—"}</td>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>{numCell(a.standardPrice, "standardPrice")}</td>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>{numCell(a.listPrice, "listPrice")}</td>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>{numCell(a.ppc, "ppc")}</td>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, color: C.textSec }}>{analysed ? fmtNum(a.consoN1 || 0) : "—"}</td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "center" }}>
                   {camp.articles.length > 1 && <button onClick={() => removeArticle(ai)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 15 }}>×</button>}
                 </td>
@@ -244,7 +242,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         </table>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
           <button onClick={addArticle} style={{ padding: "5px 12px", background: C.blueSoft, border: `1px solid ${C.blue}`, borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>+ Ajouter un article</button>
-          <span style={{ fontSize: 11, color: C.textMuted }}>Une réf inconnue d'Odoo (PLV/testeur de test) passe en saisie libre : renseigne désignation et prix à la main.</span>
+          <span style={{ fontSize: 11, color: C.textMuted }}>Tous les champs (désignation, EAN, prix) sont éditables : tu peux saisir/ajuster les prix à la main, même pour une réf inconnue d'Odoo (surlignée).</span>
         </div>
       </div>
 
