@@ -52,6 +52,7 @@ export interface CampagneCreee {
   periodeFin: string;
   articles: ArticleCampagne[]; // communs à tous les paliers
   paliers: PalierSaisi[];      // chaque palier porte sa propre reco % offres (par code offre)
+  annee?: string;             // année / cycle de rangement, saisi par l'utilisateur (ex. "2027")
   createdAt?: string;
 }
 

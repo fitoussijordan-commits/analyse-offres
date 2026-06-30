@@ -167,12 +167,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
 
   const articlesValides = camp.articles.filter(a => a.ref.trim());
 
-  // Année d'une campagne = année de sa date de début (sinon de création).
-  const yearOf = (c: CampagneCreee): string => {
-    const d = c.dateDebut || c.createdAt || "";
-    const m = String(d).match(/^(\d{4})/);
-    return m ? m[1] : "—";
-  };
+  // Année / cycle de rangement = le champ saisi par l'utilisateur (sinon "—").
+  const yearOf = (c: CampagneCreee): string => (c.annee || "").trim() || "—";
   const annees = [...new Set(saved.map(yearOf))].sort((a, b) => b.localeCompare(a));
   const savedFiltered = filterYear === "all" ? saved : saved.filter(c => yearOf(c) === filterYear);
 
@@ -214,8 +210,9 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
 
       {/* Infos campagne */}
       <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18, boxShadow: C.shadow }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.7fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
           <div><label style={labelStyle}>Nom de la campagne</label><input style={{ ...inputStyle, width: "100%" }} value={camp.nom} onChange={e => setField("nom", e.target.value)} placeholder="Ex. Régénérants 2026" /></div>
+          <div><label style={labelStyle}>Année / cycle</label><input style={{ ...inputStyle, width: "100%" }} value={camp.annee ?? ""} onChange={e => setField("annee", e.target.value)} placeholder="Ex. 2027" /></div>
           <div><label style={labelStyle}>Début campagne</label><input type="date" style={{ ...inputStyle, width: "100%" }} value={camp.dateDebut} onChange={e => setField("dateDebut", e.target.value)} /></div>
           <div><label style={labelStyle}>Fin campagne</label><input type="date" style={{ ...inputStyle, width: "100%" }} value={camp.dateFin} onChange={e => setField("dateFin", e.target.value)} /></div>
         </div>
