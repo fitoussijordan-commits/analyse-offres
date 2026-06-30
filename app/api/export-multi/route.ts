@@ -9,7 +9,7 @@ import { fillPropositionSheet, PROP_SHEET, PropPayload } from "@/lib/fill-propos
 import { MOIS_FR } from "@/lib/logistique";
 
 export const maxDuration = 120;
-const TEMPLATE_PATH = path.join(process.cwd(), "lib", "templates", "proposition-template-clean.xlsx");
+const TEMPLATE_PATH = path.join(process.cwd(), "lib", "templates", "proposition-template-v2.xlsx");
 
 interface MultiPayload {
   campagnes: PropPayload[];        // une PropPayload par campagne (nom + paliers enrichis)
@@ -113,8 +113,12 @@ export async function POST(req: NextRequest) {
     sw.mergeCells(note.number, 1, note.number, 15);
     sw.getCell(note.number, 1).font = { italic: true, size: 9, color: { argb: "FF6B7280" }, name: "Calibri" };
 
-    // 3) Supprimer le gabarit modèle (on ne garde que campagnes + synthèse).
-    wb.removeWorksheet(tplId);
+    // 3) Supprimer les onglets du gabarit de base (Proposition modèle, Synthese, Mapping) :
+    //    on ne garde que les onglets campagnes + la synthèse logistique.
+    for (const sheet of [...wb.worksheets]) {
+      if (sheet.id !== tplId && sheet.name !== "Synthese" && sheet.name !== "Mapping") continue;
+      try { wb.removeWorksheet(sheet.id); } catch { /* ignore */ }
+    }
 
     const buf = await wb.xlsx.writeBuffer();
     return new NextResponse(buf, {

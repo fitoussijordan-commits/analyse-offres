@@ -15,6 +15,7 @@ const C = {
   blue: "#3b82f6", blueDark: "#1d4ed8", blueSoft: "#eff6ff",
   green: "#10b981", greenSoft: "#ecfdf5",
   red: "#ef4444", redSoft: "#fef2f2",
+  amber: "#f59e0b", amberSoft: "#fffbeb",
   teal: "#0d9488", tealSoft: "#f0fdfa",
   shadow: "0 1px 3px rgba(0,0,0,0.06)", shadowMd: "0 4px 16px rgba(0,0,0,0.10)",
 };
@@ -202,29 +203,49 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {["Code article", "Libellé (Odoo)", "Conso N-1", ""].map((h, i) => (
-                <th key={i} style={{ padding: "6px 8px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i === 2 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
+              {["Code", "Libellé", "EAN", "Coût", "Tarif rev.", "PPC", "Conso N-1", ""].map((h, i) => (
+                <th key={i} style={{ padding: "6px 6px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i >= 3 && i <= 6 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {camp.articles.map((a, ai) => (
-              <tr key={ai}>
-                <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
-                  <input style={{ ...inputStyle, width: 130, fontFamily: "monospace" }} value={a.ref} onChange={e => setArticle(ai, { ref: e.target.value, name: undefined, found: undefined })} placeholder="Code" />
+            {camp.articles.map((a, ai) => {
+              // Réf "libre" : introuvable dans Odoo après analyse → champs éditables.
+              const libre = a.manuel || (analysed && a.found === false && !!a.ref.trim());
+              const numCell = (val: number | undefined, key: "standardPrice" | "listPrice" | "ppc") => (
+                <input type="number" step="0.01" style={{ ...inputStyle, width: 70, textAlign: "right", padding: "5px 6px" }} value={val ?? ""} onChange={e => setArticle(ai, { manuel: true, [key]: e.target.value === "" ? 0 : parseFloat(e.target.value) } as any)} placeholder="—" />
+              );
+              return (
+              <tr key={ai} style={{ background: libre ? C.amberSoft : "transparent" }}>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
+                  <input style={{ ...inputStyle, width: 110, fontFamily: "monospace", padding: "5px 6px" }} value={a.ref} onChange={e => setArticle(ai, { ref: e.target.value, name: undefined, found: undefined, manuel: undefined })} placeholder="Code" />
                 </td>
-                <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 13, color: a.found === false && a.ref ? C.red : C.textSec }}>
-                  {a.name || (a.found === false && a.ref ? "Introuvable dans Odoo" : "—")}
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
+                  {libre
+                    ? <input style={{ ...inputStyle, width: 200, padding: "5px 6px" }} value={a.name ?? ""} onChange={e => setArticle(ai, { manuel: true, name: e.target.value })} placeholder="Désignation (saisie libre)" />
+                    : <span style={{ fontSize: 13, color: C.textSec }}>{a.name || "—"}</span>}
                 </td>
-                <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, color: C.textSec }}>{analysed ? fmtNum(a.consoN1 || 0) : "—"}</td>
-                <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "center" }}>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
+                  {libre
+                    ? <input style={{ ...inputStyle, width: 110, padding: "5px 6px", fontFamily: "monospace" }} value={a.barcode ?? ""} onChange={e => setArticle(ai, { manuel: true, barcode: e.target.value })} placeholder="EAN" />
+                    : <span style={{ fontSize: 12, color: C.textMuted, fontFamily: "monospace" }}>{a.barcode || "—"}</span>}
+                </td>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>{libre ? numCell(a.standardPrice, "standardPrice") : <span style={{ fontSize: 13, color: C.textSec }}>{a.standardPrice != null ? a.standardPrice : "—"}</span>}</td>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>{libre ? numCell(a.listPrice, "listPrice") : <span style={{ fontSize: 13, color: C.textSec }}>{a.listPrice != null ? a.listPrice : "—"}</span>}</td>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>{libre ? numCell(a.ppc, "ppc") : <span style={{ fontSize: 13, color: C.textSec }}>{a.ppc != null ? a.ppc : "—"}</span>}</td>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, color: C.textSec }}>{analysed && !libre ? fmtNum(a.consoN1 || 0) : "—"}</td>
+                <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "center" }}>
                   {camp.articles.length > 1 && <button onClick={() => removeArticle(ai)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 15 }}>×</button>}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
-        <button onClick={addArticle} style={{ marginTop: 8, padding: "5px 12px", background: C.blueSoft, border: `1px solid ${C.blue}`, borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>+ Ajouter un article</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+          <button onClick={addArticle} style={{ padding: "5px 12px", background: C.blueSoft, border: `1px solid ${C.blue}`, borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>+ Ajouter un article</button>
+          <span style={{ fontSize: 11, color: C.textMuted }}>Une réf inconnue d'Odoo (PLV/testeur de test) passe en saisie libre : renseigne désignation et prix à la main.</span>
+        </div>
       </div>
 
       {/* Paliers : nb packs + qté/pack par article */}
@@ -235,6 +256,14 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             <input style={{ ...inputStyle, width: 150 }} value={pal.label} onChange={e => setPalier(pi, { label: e.target.value })} placeholder="Libellé" />
             <span style={{ fontSize: 12, color: C.textMuted }}>Nb packs cible</span>
             <input type="number" style={{ ...inputStyle, width: 90 }} value={pal.nbPacks || ""} onChange={e => setPalier(pi, { nbPacks: parseInt(e.target.value) || 0 })} placeholder="0" />
+            <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: C.textSec, cursor: "pointer", marginLeft: 6 }}>
+              <input type="checkbox" checked={!!pal.remiseStandard} onChange={e => setPalier(pi, { remiseStandard: e.target.checked })} style={{ cursor: "pointer" }} />
+              Remise statut standard
+            </label>
+            {pal.remiseStandard && (
+              <input type="number" step="0.1" style={{ ...inputStyle, width: 70 }} value={pal.remiseStandardTaux != null ? Math.round(pal.remiseStandardTaux * 1000) / 10 : ""} onChange={e => setPalier(pi, { remiseStandardTaux: e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0) / 100 })} placeholder="17" title="% remise pour toutes les typologies" />
+            )}
+            {pal.remiseStandard && <span style={{ fontSize: 12, color: C.textMuted }}>%</span>}
             <div style={{ flex: 1 }} />
             {camp.paliers.length > 1 && <button onClick={() => removePalier(pi)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.red, fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>Supprimer le palier</button>}
           </div>

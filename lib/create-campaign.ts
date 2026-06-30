@@ -17,6 +17,9 @@ export interface ArticleCampagne {
   ppc?: number;
   consoN1?: number;       // conso N-1 sur la période
   found?: boolean;
+  // Réf libre (PLV/testeur non créé sur Odoo) : l'utilisateur saisit nom + prix à la main.
+  // Quand manuel = true, l'analyse Odoo ne doit pas écraser ces valeurs.
+  manuel?: boolean;
 }
 
 export interface PalierSaisi {
@@ -25,6 +28,9 @@ export interface PalierSaisi {
   nbPacks: number;        // nb de packs cible du palier
   // qté/pack par article, indexée par ref. Vide = on prend la reco (conso ÷ nbPacks).
   qtyParPack: Record<string, number>;
+  // Remise statut : standard (même % pour toutes les typologies) ou spécifique (gabarit).
+  remiseStandard?: boolean;
+  remiseStandardTaux?: number; // ex. 0.17
 }
 
 export interface CampagneCreee {
@@ -108,11 +114,17 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
     const ref = a.ref.trim();
     const resolved = prods[ref];
     const pid = resolved?.id || 0;
+    // Réf manuelle OU réf absente d'Odoo → on conserve les valeurs saisies (ne pas écraser).
+    if (a.manuel || !pid) {
+      const c = conso[ref];
+      return { ...a, ref, manuel: true, productId: pid, found: false, consoN1: c?.qty ?? a.consoN1 ?? 0 } as ArticleCampagne;
+    }
     const pr = pricingByRef[ref];
     const c = conso[ref];
     return {
       ...a,
       ref,
+      manuel: false,
       productId: pid,
       name: pr?.name || resolved?.name || c?.name || "",
       barcode: pr?.barcode || "",
@@ -120,7 +132,7 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
       listPrice: pr?.listPrice || 0,
       ppc: pr?.ppc || 0,
       consoN1: c?.qty || 0,
-      found: !!pid,
+      found: true,
     } as ArticleCampagne;
   });
 
@@ -143,6 +155,7 @@ export interface ExportPayload {
   nom: string;
   paliers: Array<{
     code: string; label: string; qtyPacks: number;
+    remiseStandard?: boolean; remiseStandardTaux?: number;
     produits: Array<{
       ref: string; name: string; productId: number;
       qtyParPack: number;
@@ -160,6 +173,8 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
       code: pal.code,
       label: pal.label,
       qtyPacks: pal.nbPacks || 0,
+      remiseStandard: pal.remiseStandard,
+      remiseStandardTaux: pal.remiseStandardTaux,
       produits: arts.map(a => ({
         ref: a.ref.trim(),
         name: a.name || "",
