@@ -5,10 +5,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import path from "path";
-import { fillPropositionSheet, PROP_SHEET, PropPayload } from "@/lib/fill-proposition";
+import { fillPropositionWorkbook, PROP_SHEET, PropPayload } from "@/lib/fill-proposition";
 
 export const maxDuration = 60;
-const TEMPLATE_PATH = path.join(process.cwd(), "lib", "templates", "proposition-template-clean.xlsx");
+const TEMPLATE_PATH = path.join(process.cwd(), "lib", "templates", "proposition-template-v2.xlsx");
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     const ws = wb.getWorksheet(PROP_SHEET);
     if (!ws) return NextResponse.json({ error: `Onglet "${PROP_SHEET}" introuvable dans le gabarit` }, { status: 500 });
 
-    fillPropositionSheet(ws, payload);
+    fillPropositionWorkbook(wb, payload);
 
     const buf = await wb.xlsx.writeBuffer();
     return new NextResponse(buf, {

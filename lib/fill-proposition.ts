@@ -10,10 +10,18 @@ export interface PropProduit {
   qtyParPack: number;
   barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number;
 }
-export interface PropPalier { code: string; label: string; qtyPacks: number; produits: PropProduit[]; }
+export interface PropPalier {
+  code: string; label: string; qtyPacks: number; produits: PropProduit[];
+  // Remise statut : si standard, on applique le même taux à toutes les typologies.
+  remiseStandard?: boolean;   // true = standard (même % pour tous)
+  remiseStandardTaux?: number; // ex. 0.17 pour 17%
+}
 export interface PropPayload { nom: string; paliers: PropPalier[]; }
 
 export const PROP_SHEET = "Proposition template";
+export const MAPPING_SHEET = "Mapping";
+// Colonnes de l'onglet Mapping : A=réf, B=désignation, C=EAN, D=coût, E=tarif, F=PPC.
+const MAP_HEADER = ["Code article", "Libellé article", "Code à barres (EAN)", "Coût achat unitaire", "Tarif revendeur unitaire", "PPC"];
 
 const BLOCKS = [
   { title: 3,  nbOffresRow: 4,  nbProduitsRow: 5,  pvFirst: 17, pvCount: 13, remiseRow: 10, nbOffRow: 11, synRow: 15, dataFirst: 17, dataLast: 36 },
@@ -40,8 +48,59 @@ function writeTypoFormulas(ws: ExcelJS.Worksheet, row: number, remiseRow: number
   }
 }
 
-/** Remplit la feuille `ws` (un gabarit Proposition vierge) avec les données d'une campagne. */
-export function fillPropositionSheet(ws: ExcelJS.Worksheet, payload: PropPayload) {
+// Remplit l'onglet Mapping avec tous les articles uniques (Odoo + réfs libres) et renvoie
+// l'ensemble des réfs présentes (pour savoir si un VLOOKUP est possible).
+function fillMapping(wb: ExcelJS.Workbook, payload: PropPayload): Set<string> {
+  const map = wb.getWorksheet(MAPPING_SHEET);
+  const refs = new Set<string>();
+  if (!map) return refs;
+
+  // En-tête.
+  MAP_HEADER.forEach((h, i) => {
+    const c = map.getCell(1, i + 1);
+    c.value = h; c.font = { bold: true };
+  });
+
+  // Articles uniques par réf (1re occurrence non vide gagne).
+  const byRef = new Map<string, PropProduit>();
+  for (const pal of payload.paliers) for (const p of pal.produits) {
+    const ref = (p.ref || "").trim();
+    if (!ref) continue;
+    if (!byRef.has(ref) || (!byRef.get(ref)!.name && p.name)) byRef.set(ref, p);
+  }
+  let row = 2;
+  for (const [ref, p] of byRef) {
+    map.getCell(row, 1).value = ref;
+    map.getCell(row, 2).value = p.name || "";
+    map.getCell(row, 3).value = p.barcode || "";
+    map.getCell(row, 4).value = round2(p.standardPrice || 0);
+    map.getCell(row, 5).value = round2(p.listPrice || 0);
+    map.getCell(row, 6).value = round2(p.ppc || 0);
+    refs.add(ref);
+    row++;
+  }
+  return refs;
+}
+
+// VLOOKUP vers l'onglet Mapping : colonne `mapCol` (2=libellé,3=EAN,4=coût,5=tarif,6=PPC).
+function vlookup(refCell: string, mapCol: number): string {
+  return `IFERROR(VLOOKUP(${refCell},${MAPPING_SHEET}!$A:$F,${mapCol},FALSE),"")`;
+}
+
+/**
+ * Remplit le classeur (3 onglets) à partir d'une campagne :
+ *  - onglet Mapping : base articles (réf, désignation, EAN, coût, tarif, PPC),
+ *  - onglet Proposition : code article (valeur) + B/C/F/H/J en VLOOKUP vers Mapping,
+ *    remise standard/spécifique par palier, CA/Marges, GC, logistique.
+ */
+export function fillPropositionWorkbook(wb: ExcelJS.Workbook, payload: PropPayload) {
+  const ws = wb.getWorksheet(PROP_SHEET);
+  if (!ws) return;
+  const mapRefs = fillMapping(wb, payload);
+  fillProposition(ws, payload, mapRefs);
+}
+
+function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: Set<string>) {
   const paliers = (payload.paliers || []).filter(p => p.produits && p.produits.length);
   const used = Math.min(paliers.length, BLOCKS.length);
 
@@ -54,6 +113,11 @@ export function fillPropositionSheet(ws: ExcelJS.Worksheet, payload: PropPayload
       ws.getCell(blk.title, 1).value = titre;
       ws.getCell(blk.nbOffresRow, 2).value = pal.qtyPacks || 0;
       ws.getCell(blk.nbProduitsRow, 2).value = pal.produits.reduce((s, p) => s + (p.qtyParPack || 0), 0);
+
+      // Remise statut STANDARD : même taux pour toutes les typologies du palier.
+      if (pal.remiseStandard && typeof pal.remiseStandardTaux === "number") {
+        for (const t of TYPO_COLS) ws.getCell(`${t.param}${blk.remiseRow}`).value = pal.remiseStandardTaux;
+      }
     }
 
     // Recâbler les "Nb Offres" (bug gabarit : pointent tous sur $B$4).
@@ -68,13 +132,23 @@ export function fillPropositionSheet(ws: ExcelJS.Worksheet, payload: PropPayload
       const row = blk.pvFirst + i;
       const p = pal ? pal.produits[i] : undefined;
       if (p) {
-        ws.getCell(row, 1).value = p.ref || "";
-        ws.getCell(row, 2).value = p.name || "";
-        ws.getCell(row, 3).value = p.barcode || "";
-        ws.getCell(row, 5).value = p.qtyParPack || 0;
-        ws.getCell(row, 6).value = round2(p.standardPrice || 0);
-        ws.getCell(row, 8).value = round2(p.listPrice || 0);
-        ws.getCell(row, 10).value = round2(p.ppc || 0);
+        const ref = (p.ref || "").trim();
+        ws.getCell(row, 1).value = ref;                                  // A : code (valeur)
+        // B/C/F/H/J = VLOOKUP vers Mapping si la réf y est, sinon valeur en dur (sécurité).
+        if (mapRefs.has(ref)) {
+          ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) }; // libellé
+          ws.getCell(row, 3).value = { formula: vlookup(`A${row}`, 3) }; // EAN
+          ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) }; // coût
+          ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) }; // tarif
+          ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) }; // PPC
+        } else {
+          ws.getCell(row, 2).value = p.name || "";
+          ws.getCell(row, 3).value = p.barcode || "";
+          ws.getCell(row, 6).value = round2(p.standardPrice || 0);
+          ws.getCell(row, 8).value = round2(p.listPrice || 0);
+          ws.getCell(row, 10).value = round2(p.ppc || 0);
+        }
+        ws.getCell(row, 5).value = p.qtyParPack || 0;                    // E : qté/pack
         writeTypoFormulas(ws, row, blk.remiseRow, blk.nbOffRow);
       } else {
         for (const c of [1, 2, 3, 5, 6, 8, 10]) ws.getCell(row, c).value = null;
@@ -96,24 +170,39 @@ export function fillPropositionSheet(ws: ExcelJS.Worksheet, payload: PropPayload
     ab.numFmt = '#,##0;(#,##0);" - "';
   }
 
-  // GRANDS COMPTES (palier 1) : code, libellé, prix.
+  // GRANDS COMPTES (palier 1) : code (valeur) + libellé/prix en VLOOKUP vers Mapping.
   const pal1 = paliers[0];
   const GC_PV_FIRST = 123, GC_PV_COUNT = 13, LOG_PV_FIRST = 149, LOG_PV_COUNT = 13;
   for (let i = 0; i < GC_PV_COUNT; i++) {
     const row = GC_PV_FIRST + i, p = pal1 ? pal1.produits[i] : undefined;
     if (p) {
-      ws.getCell(row, 1).value = p.ref || ""; ws.getCell(row, 2).value = p.name || "";
-      ws.getCell(row, 6).value = round2(p.standardPrice || 0); ws.getCell(row, 8).value = round2(p.listPrice || 0);
-      ws.getCell(row, 10).value = round2(p.ppc || 0);
+      const ref = (p.ref || "").trim();
+      ws.getCell(row, 1).value = ref;
+      if (mapRefs.has(ref)) {
+        ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) };
+        ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
+        ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) };
+        ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) };
+      } else {
+        ws.getCell(row, 2).value = p.name || "";
+        ws.getCell(row, 6).value = round2(p.standardPrice || 0); ws.getCell(row, 8).value = round2(p.listPrice || 0);
+        ws.getCell(row, 10).value = round2(p.ppc || 0);
+      }
     } else for (const c of [1, 2, 6, 8, 10]) ws.getCell(row, c).value = null;
   }
-  // Besoins logistiques (palier 1) : code, libellé.
+  // Besoins logistiques (palier 1) : code + libellé en VLOOKUP.
   for (let i = 0; i < LOG_PV_COUNT; i++) {
     const row = LOG_PV_FIRST + i, p = pal1 ? pal1.produits[i] : undefined;
-    ws.getCell(row, 1).value = p ? (p.ref || "") : null;
-    ws.getCell(row, 2).value = p ? (p.name || "") : null;
+    const ref = p ? (p.ref || "").trim() : "";
+    ws.getCell(row, 1).value = ref || null;
+    ws.getCell(row, 2).value = ref && mapRefs.has(ref) ? { formula: vlookup(`A${row}`, 2) } : (p ? (p.name || "") : null);
   }
   // Vider PLV/Testeurs fixes du gabarit.
   for (const row of [136, 137, 138, 139, 140, 141, 142]) for (const c of [1, 2, 4, 6, 8, 10]) ws.getCell(row, c).value = null;
   for (const row of [162, 163, 164, 165, 166, 167, 168]) for (const c of [1, 2, 4]) ws.getCell(row, c).value = null;
+}
+
+// Compat : ancienne signature (feuille seule, sans Mapping). Garde le remplissage en valeurs.
+export function fillPropositionSheet(ws: ExcelJS.Worksheet, payload: PropPayload) {
+  fillProposition(ws, payload, new Set());
 }
