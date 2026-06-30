@@ -307,6 +307,9 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       if (pal && typeof pal.remiseAddTaux === "number") ws.getCell(row, 9).value = pal.remiseAddTaux;
       // CA/Marges : toujours en formules (donnent 0 si E vide), pour rester remplissables.
       writeTypoFormulas(ws, row, blk.remiseRow, blk.nbOffRow);
+      // Masquer les lignes Produit Vente VIDES (sans réf) pour alléger le fichier ; les lignes
+      // remplies restent visibles. La formule/format reste en place (démasquable dans Excel).
+      ws.getRow(row).hidden = !ref;
     }
 
     // Lignes PLV / Testeurs / SR (au-delà des Produit Vente, jusqu'à dataLast) : on garde leurs
