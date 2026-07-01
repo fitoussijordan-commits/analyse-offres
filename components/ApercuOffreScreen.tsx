@@ -23,6 +23,7 @@ const C = {
 const fmtEur = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
 const fmtNum = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n || 0));
 const fmtPct = (n: number) => `${(Math.round((n || 0) * 1000) / 10).toFixed(1)} %`;
+const fmtDate = (d: string) => { const m = (d || "").match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : "—"; };
 
 const input: React.CSSProperties = { padding: "4px 7px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: C.text, outline: "none", width: 70, textAlign: "right" };
 
@@ -139,6 +140,17 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
         </select>
         <button onClick={exporter} disabled={exporting} style={{ padding: "8px 16px", background: C.blue, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter Excel"}</button>
       </div>
+
+      {/* Bannière : nom + dates de campagne */}
+      {camp && (
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 18px", boxShadow: C.shadow }}>
+          <span style={{ fontSize: 18, fontWeight: 800, color: C.text }}>{camp.nom || "(sans nom)"}</span>
+          {camp.annee && <span style={{ fontSize: 12, fontWeight: 700, color: C.blueDark, background: C.blueSoft, borderRadius: 6, padding: "3px 10px" }}>{camp.annee}</span>}
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 13, color: C.textMuted }}>📅 Campagne</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{fmtDate(camp.dateDebut)} → {fmtDate(camp.dateFin)}</span>
+        </div>
+      )}
 
       {/* KPI synthèse globale */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
