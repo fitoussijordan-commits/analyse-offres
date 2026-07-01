@@ -63,6 +63,22 @@ export function genId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+// Forme de campagne d'analyse (lib/campaigns.ts) pour le pont vers l'outil Analyse, sans dépendance.
+export interface CampagneAnalyseLike { id: string; nom: string; offres: string[]; produits: string[]; notes: string[]; }
+
+/**
+ * Convertit une campagne CRÉÉE en campagne d'ANALYSE pour suivre sa progression :
+ *  - offres  = codes des paliers (packs Odoo),
+ *  - produits = réfs des articles (fallback si les packs n'existent pas encore),
+ *  - notes    = vide (l'utilisateur peut en ajouter dans l'analyse).
+ * L'outil d'analyse existant compte alors les ventes réelles via codes offres → sinon produits.
+ */
+export function campagneCreeeToAnalyse(camp: CampagneCreee): CampagneAnalyseLike {
+  const offres = [...new Set(camp.paliers.map(p => (p.code || "").trim()).filter(Boolean))];
+  const produits = [...new Set(camp.articles.map(a => (a.ref || "").trim()).filter(Boolean))];
+  return { id: genId(), nom: camp.nom || "Campagne", offres, produits, notes: [] };
+}
+
 // Forme minimale d'une préco (lib/preco.ts) pour la conversion, sans dépendance circulaire.
 interface PrecoLigneLike { ref: string; name: string; productId: number; qtyParPack: number; conserve: boolean; }
 interface PrecoPalierLike { code: string; label: string; qtyPacks: number; produits: PrecoLigneLike[]; }

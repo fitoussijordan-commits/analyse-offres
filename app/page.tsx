@@ -300,7 +300,7 @@ export default function Home() {
         {view === "hub" && <HubView onNavigate={setView} />}
         {view === "analyse" && <CampagneScreen session={session} onToast={showToast} onTransferToCreer={(draft) => { setTransferDraft(draft); setView("creer"); }} />}
         {view === "creer" && <CreerCampagneScreen session={session} onToast={showToast} initialDraft={transferDraft} onDraftConsumed={() => setTransferDraft(null)} />}
-        {view === "apercu" && <ApercuOffreScreen session={session} onToast={showToast} />}
+        {view === "apercu" && <ApercuOffreScreen session={session} onToast={showToast} onGoAnalyse={() => setView("analyse")} />}
         {view === "projets" && <ProjetScreen session={session} onToast={showToast} />}
         {view === "planning" && <PlanningTab onToast={showToast} />}
       </main>

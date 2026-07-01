@@ -1,8 +1,8 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
-import { loadCampagnesCreees } from "@/lib/campaigns";
-import { CampagneCreee, qtyParPack } from "@/lib/create-campaign";
+import { loadCampagnesCreees, upsertCampagne } from "@/lib/campaigns";
+import { CampagneCreee, qtyParPack, campagneCreeeToAnalyse } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef,
@@ -30,6 +30,7 @@ const input: React.CSSProperties = { padding: "4px 7px", border: `1px solid ${C.
 interface Props {
   session: odoo.OdooSession;
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
+  onGoAnalyse?: () => void; // bascule vers l'outil Analyse des campagnes
 }
 
 interface PalierEdit {
@@ -55,7 +56,7 @@ function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
 
 type SubTab = "offre" | "logistique" | "synthese";
 
-export default function ApercuOffreScreen({ session, onToast }: Props) {
+export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Props) {
   const [saved, setSaved] = useState<CampagneCreee[]>([]);
   const [camp, setCamp] = useState<CampagneCreee | null>(null);
   const [paliers, setPaliers] = useState<PalierEdit[]>([]);
@@ -124,6 +125,17 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
     finally { setExporting(false); }
   };
 
+  // Valider la campagne → la rendre analysable dans « Analyse des campagnes » (suivi de progression).
+  const validerPourAnalyse = async () => {
+    if (!camp) return;
+    try {
+      const analyse = campagneCreeeToAnalyse(camp);
+      await upsertCampagne(analyse); // enregistre dans la table campagnes (outil Analyse)
+      onToast(`« ${camp.nom} » ajoutée à l'Analyse des campagnes`, "success");
+      onGoAnalyse?.();
+    } catch (e: any) { onToast("Erreur : " + e.message, "error"); }
+  };
+
   if (!saved.length) return <div style={{ padding: 40, textAlign: "center", color: C.textMuted }}>Aucune campagne sauvegardée. Crée-en une dans « Créer une campagne » d'abord.</div>;
 
   const TABS: [SubTab, string][] = [["offre", "Offre"], ["logistique", "Besoin logistique"], ["synthese", "Synthèse détaillée"]];
@@ -138,6 +150,7 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
         <select value={camp?.id || ""} onChange={e => { const c = saved.find(s => s.id === e.target.value); if (c) selectCamp(c); }} style={{ ...input, width: 240, textAlign: "left", fontSize: 13, padding: "7px 10px" }}>
           {saved.map(s => <option key={s.id} value={s.id}>{s.nom || "(sans nom)"}</option>)}
         </select>
+        <button onClick={validerPourAnalyse} style={{ padding: "8px 16px", background: C.teal, border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit" }}>✓ Valider → suivre la progression</button>
         <button onClick={exporter} disabled={exporting} style={{ padding: "8px 16px", background: C.blue, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter Excel"}</button>
       </div>
 
