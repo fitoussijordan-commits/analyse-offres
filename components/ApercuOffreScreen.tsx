@@ -34,7 +34,7 @@ interface Props {
 interface PalierEdit {
   code: string; label: string; nbPacks: number;
   pcts: number[]; remises: number[]; remiseAdd: number;
-  produits: { ref: string; name: string; qtyParPack: number; standardPrice: number; listPrice: number; ppc: number }[];
+  produits: { ref: string; name: string; barcode: string; qtyParPack: number; standardPrice: number; listPrice: number; ppc: number }[];
 }
 
 // Convertit une CampagneCreee (sauvegardée) en paliers éditables pour l'aperçu.
@@ -46,7 +46,7 @@ function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
     remises: pal.remiseStandard && pal.remiseStandardTaux != null ? new Array(7).fill(pal.remiseStandardTaux) : [...DEFAULT_REMISES],
     remiseAdd: pal.remiseAddTaux != null ? pal.remiseAddTaux : REMISE_ADD_DEFAUT,
     produits: arts.map(a => ({
-      ref: a.ref.trim(), name: a.name || "",
+      ref: a.ref.trim(), name: a.name || "", barcode: a.barcode || "",
       qtyParPack: qtyParPack(a, pal),
       standardPrice: a.standardPrice || 0, listPrice: a.listPrice || 0, ppc: a.ppc || 0,
     })),
@@ -58,6 +58,7 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
   const [campId, setCampId] = useState<string>("");
   const [paliers, setPaliers] = useState<PalierEdit[]>([]);
   const [nom, setNom] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => { void (async () => {
     try { const list = await loadCampagnesCreees(); setSaved(list); if (list.length && !campId) selectCamp(list[0], list); }
@@ -82,6 +83,37 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
   const synthese = useMemo(() => calcSynthese(calcPaliers), [calcPaliers]);
   const besoin = useMemo(() => calcBesoinParRef(calcPaliers), [calcPaliers]);
 
+  // ── Export Excel depuis l'aperçu (avec les valeurs éditées) ────────────────
+  const exporter = async () => {
+    if (!paliers.length) { onToast("Rien à exporter", "error"); return; }
+    setExporting(true);
+    try {
+      const payload: any = {
+        nom,
+        paliers: paliers.map(p => ({
+          code: p.code, label: p.label, qtyPacks: p.nbPacks,
+          pctOffres: p.pcts,                    // % offres édités
+          remises: p.remises,                   // remises éditées (par typologie)
+          remiseAddTaux: p.remiseAdd,
+          produits: p.produits.map(pr => ({
+            ref: pr.ref, name: pr.name, productId: 0, qtyParPack: pr.qtyParPack,
+            barcode: pr.barcode, standardPrice: pr.standardPrice, listPrice: pr.listPrice, ppc: pr.ppc,
+          })),
+        })),
+      };
+      try {
+        const catalogue = await odoo.getAllProducts(session);
+        payload.mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc }));
+      } catch { /* mapping limité aux articles */ }
+      const res = await fetch("/api/export-template", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
+      const blob = await res.blob(); const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = `proposition_${(nom || "campagne").replace(/[^a-zA-Z0-9_-]+/g, "_")}.xlsx`; a.click(); URL.revokeObjectURL(url);
+      onToast("Fichier Proposition exporté", "success");
+    } catch (e: any) { onToast("Erreur export : " + e.message, "error"); }
+    finally { setExporting(false); }
+  };
+
   if (!saved.length) return <div style={{ padding: 40, textAlign: "center", color: C.textMuted }}>Aucune campagne sauvegardée. Crée-en une dans « Créer une campagne » d'abord.</div>;
 
   return (
@@ -91,13 +123,14 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
         <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Aperçu interactif de l'offre</h1>
         <span style={{ fontSize: 13, color: C.textMuted }}>Édite les paramètres → CA et marges se recalculent en direct.</span>
         <div style={{ flex: 1 }} />
-        <select value={campId} onChange={e => { const c = saved.find(s => s.id === e.target.value); if (c) selectCamp(c); }} style={{ ...input, width: 260, textAlign: "left", fontSize: 13, padding: "7px 10px" }}>
+        <select value={campId} onChange={e => { const c = saved.find(s => s.id === e.target.value); if (c) selectCamp(c); }} style={{ ...input, width: 240, textAlign: "left", fontSize: 13, padding: "7px 10px" }}>
           {saved.map(s => <option key={s.id} value={s.id}>{s.nom || "(sans nom)"}</option>)}
         </select>
+        <button onClick={exporter} disabled={exporting} style={{ padding: "8px 16px", background: C.blue, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter Excel"}</button>
       </div>
 
-      {/* Synthèse globale (live) */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+      {/* Synthèse globale (live) — figée en haut au scroll */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 10, background: C.bg, paddingTop: 4, paddingBottom: 8 }}>
         <Kpi label="CA total campagne" value={fmtEur(synthese.caTotal)} color={C.blue} />
         <Kpi label="Marge totale" value={fmtEur(synthese.margeTotal)} color={C.teal} />
         <Kpi label="Marge %" value={fmtPct(synthese.margePct)} color={C.green} />
@@ -109,8 +142,8 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
         const r = calcPalier(calcPaliers[pi]);
         return (
           <div key={pi} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
-            {/* En-tête palier */}
-            <div style={{ padding: "12px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {/* En-tête palier — figé au scroll, sous la barre KPI */}
+            <div style={{ padding: "12px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", position: "sticky", top: 92, zIndex: 8 }}>
               <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: C.blue, color: "#fff", borderRadius: 5, padding: "2px 8px" }}>{pal.code}</span>
               <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{pal.label}</span>
               <span style={{ fontSize: 12, color: C.textMuted }}>Nb packs</span>
@@ -166,7 +199,7 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr>
-                    {["Réf", "Produit", "Qté/pack", "Coût", "Tarif", "PPC"].map((h, i) => <th key={i} style={{ padding: "5px 8px", textAlign: i >= 2 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
+                    {["Réf", "Produit", "EAN", "Qté/pack", "Coût", "Tarif", "PPC"].map((h, i) => <th key={i} style={{ padding: "5px 8px", textAlign: i >= 3 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -174,6 +207,7 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
                     <tr key={ri}>
                       <td style={{ padding: "4px 8px", fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.ref}</td>
                       <td style={{ padding: "4px 8px", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.name}</td>
+                      <td style={{ padding: "4px 8px", color: C.textMuted, fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.barcode || "—"}</td>
                       <td style={{ padding: "3px 8px", textAlign: "right", borderBottom: `1px solid ${C.border}` }}>
                         <input type="number" style={{ ...input, width: 60, fontWeight: 700, color: C.blue }} value={p.qtyParPack || ""} onChange={e => setQty(pi, ri, parseInt(e.target.value) || 0)} />
                       </td>

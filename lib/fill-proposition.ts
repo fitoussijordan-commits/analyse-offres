@@ -20,6 +20,8 @@ export interface PropPalier {
   remiseAddTaux?: number;
   // % offres reco par typologie (7 valeurs, ordre Ambassadeur..Calendula) propre à ce palier.
   pctOffres?: number[];
+  // Remises par typologie (7 valeurs) — surchargent les remises du gabarit si fournies.
+  remises?: number[];
 }
 // Ligne du Mapping (catalogue complet ou articles campagne).
 export interface MapRow { ref: string; name?: string; barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number; }
@@ -266,8 +268,11 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
         TYPO_COLS.forEach((t, idx) => { ws.getCell(`${t.param}${pctRow}`).value = pal.pctOffres![idx]; });
       }
 
-      // Remise statut STANDARD : même taux pour toutes les typologies du palier.
-      if (pal.remiseStandard && typeof pal.remiseStandardTaux === "number") {
+      // Remises par typologie : priorité (1) remises éditées (aperçu), (2) remise standard,
+      // (3) valeurs du gabarit (on ne touche pas).
+      if (pal.remises && pal.remises.length === TYPO_COLS.length) {
+        TYPO_COLS.forEach((t, idx) => { ws.getCell(`${t.param}${blk.remiseRow}`).value = pal.remises![idx]; });
+      } else if (pal.remiseStandard && typeof pal.remiseStandardTaux === "number") {
         for (const t of TYPO_COLS) ws.getCell(`${t.param}${blk.remiseRow}`).value = pal.remiseStandardTaux;
       }
     }
