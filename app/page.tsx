@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import CampagneScreen from "@/components/CampagneScreen";
 import CreerCampagneScreen from "@/components/CreerCampagneScreen";
+import ApercuOffreScreen from "@/components/ApercuOffreScreen";
 import ProjetScreen from "@/components/ProjetScreen";
 import PlanningTab from "@/components/PlanningTab";
 
@@ -29,7 +30,7 @@ function saveSession(s: odoo.OdooSession) { try { localStorage.setItem(LS_SESSIO
 function clearSession() { try { localStorage.removeItem(LS_SESSION); } catch {} }
 
 interface Toast { msg: string; type: "success" | "error" | "info"; id: number; }
-type AppView = "hub" | "analyse" | "creer" | "projets" | "planning";
+type AppView = "hub" | "analyse" | "creer" | "apercu" | "projets" | "planning";
 
 // ── Nav item ──────────────────────────────────────────────────────────────────
 function NavItem({ icon, label, active, locked, onClick }: { icon: React.ReactNode; label: string; active?: boolean; locked?: boolean; onClick?: () => void; }) {
@@ -71,6 +72,15 @@ function HubView({ onNavigate }: { onNavigate: (v: AppView) => void }) {
         </svg>
       ),
       label: "Créer une Campagne", desc: "Construis une campagne de zéro : paliers, articles, dates, et reco des quantités selon la conso N-1",
+      active: true,
+    },
+    {
+      id: "apercu" as AppView, icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0d9488" strokeWidth="1.8">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+        </svg>
+      ),
+      label: "Aperçu offre", desc: "Aperçu interactif d'une campagne : édite qté/remises/%, CA et marges recalculés en direct",
       active: true,
     },
     {
@@ -268,6 +278,10 @@ export default function Home() {
             icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>}
             label="Créer une Campagne" active={view === "creer"} onClick={() => setView("creer")}
           />
+          <NavItem
+            icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>}
+            label="Aperçu offre" active={view === "apercu"} onClick={() => setView("apercu")}
+          />
         </nav>
 
         {/* User */}
@@ -286,6 +300,7 @@ export default function Home() {
         {view === "hub" && <HubView onNavigate={setView} />}
         {view === "analyse" && <CampagneScreen session={session} onToast={showToast} onTransferToCreer={(draft) => { setTransferDraft(draft); setView("creer"); }} />}
         {view === "creer" && <CreerCampagneScreen session={session} onToast={showToast} initialDraft={transferDraft} onDraftConsumed={() => setTransferDraft(null)} />}
+        {view === "apercu" && <ApercuOffreScreen session={session} onToast={showToast} />}
         {view === "projets" && <ProjetScreen session={session} onToast={showToast} />}
         {view === "planning" && <PlanningTab onToast={showToast} />}
       </main>
