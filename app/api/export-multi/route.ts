@@ -6,22 +6,15 @@ import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import path from "path";
 import { fillPropositionSheet, PROP_SHEET, PropPayload } from "@/lib/fill-proposition";
-import { MOIS_FR } from "@/lib/logistique";
+import { writeSyntheseLogistiqueSheet, SyntheseLogistique } from "@/lib/logistique";
 
 export const maxDuration = 120;
 const TEMPLATE_PATH = path.join(process.cwd(), "lib", "templates", "proposition-template-v2.xlsx");
 
 interface MultiPayload {
   campagnes: PropPayload[];        // une PropPayload par campagne (nom + paliers enrichis)
-  logistique: {                    // synthèse pré-calculée côté client
-    lignes: { ref: string; name: string; parMois: number[]; total: number }[];
-    totalParMois: number[];
-    totalGeneral: number;
-  };
+  logistique: SyntheseLogistique;  // synthèse pré-calculée côté client (axe mois dynamique)
 }
-
-// Couleurs de l'onglet synthèse.
-const TEAL = "0D9488", DARK = "1A1A2E", WHITE = "FFFFFF", LGRAY = "F1F5F9";
 
 function sanitizeSheetName(name: string, fallback: string): string {
   // Excel : max 31 car, pas de \ / ? * [ ] :
@@ -56,62 +49,14 @@ export async function POST(req: NextRequest) {
       fillPropositionSheet(ws, camp);
     });
 
-    // 2) Onglet Synthèse logistique (réf × mois).
-    const log = payload.logistique;
-    const sw = wb.addWorksheet("Synthèse logistique", { views: [{ showGridLines: false }] });
-    sw.columns = [{ width: 16 }, { width: 42 }, ...MOIS_FR.map(() => ({ width: 10 })), { width: 12 }];
-
-    // Titre
-    const titleRow = sw.addRow(["Synthèse besoins logistiques — par référence et par mois"]);
-    sw.mergeCells(titleRow.number, 1, titleRow.number, 15);
-    const tc = sw.getCell(titleRow.number, 1);
-    tc.font = { bold: true, size: 13, color: { argb: "FF" + WHITE }, name: "Calibri" };
-    tc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
-    tc.alignment = { horizontal: "left", vertical: "middle", indent: 1 };
-    titleRow.height = 24;
-    sw.addRow([]);
-
-    // En-tête colonnes
-    const head = sw.addRow(["Réf", "Produit", ...MOIS_FR, "Total"]);
-    head.height = 20;
-    head.eachCell(c => {
-      c.font = { bold: true, color: { argb: "FF" + WHITE }, size: 10, name: "Calibri" };
-      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
-      c.alignment = { horizontal: "center", vertical: "middle" };
-    });
-
-    // Fallback libellé : si une ligne logistique n'a pas de nom, on le récupère depuis les
-    // produits des campagnes (par réf), qui portent le libellé Odoo.
+    // 2) Onglet Synthèse logistique (réf × mois) — fonction partagée (axe des mois dynamique,
+    //    déborde sur N+1 si une offre finit l'année suivante).
     const nameByRef: Record<string, string> = {};
     for (const camp of campagnes) for (const pal of camp.paliers) for (const p of pal.produits) {
       const ref = (p.ref || "").trim();
       if (ref && p.name && !nameByRef[ref]) nameByRef[ref] = p.name;
     }
-
-    const numFmt = "#,##0";
-    for (const l of log.lignes) {
-      const libelle = l.name || nameByRef[l.ref] || "";
-      const row = sw.addRow([l.ref, libelle, ...l.parMois, l.total]);
-      row.eachCell((c, col) => {
-        c.font = { size: 10, name: "Calibri", color: { argb: "FF" + DARK }, bold: col === 15 };
-        c.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
-        if (col >= 3) { c.numFmt = numFmt; c.alignment = { horizontal: "right" }; }
-        if (col === 1) c.font = { ...c.font, name: "Consolas" };
-      });
-    }
-    // Ligne total
-    const totRow = sw.addRow(["", "TOTAL", ...log.totalParMois, log.totalGeneral]);
-    totRow.eachCell((c, col) => {
-      c.font = { bold: true, size: 10, name: "Calibri", color: { argb: "FF" + WHITE } };
-      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
-      if (col >= 3) { c.numFmt = numFmt; c.alignment = { horizontal: "right" }; }
-    });
-
-    // Note profil
-    sw.addRow([]);
-    const note = sw.addRow(["Profil de livraison : 40 % le mois précédant le début de l'offre, puis 60 % lissé à parts égales jusqu'à 1 mois avant la fin."]);
-    sw.mergeCells(note.number, 1, note.number, 15);
-    sw.getCell(note.number, 1).font = { italic: true, size: 9, color: { argb: "FF6B7280" }, name: "Calibri" };
+    writeSyntheseLogistiqueSheet(wb, payload.logistique, nameByRef);
 
     // 3) Supprimer les onglets du gabarit de base (Proposition modèle, Synthese, Mapping) :
     //    on ne garde que les onglets campagnes + la synthèse logistique.
