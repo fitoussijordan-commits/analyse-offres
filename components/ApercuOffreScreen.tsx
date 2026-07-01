@@ -7,6 +7,7 @@ import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef,
 } from "@/lib/calc-offre";
+import { buildSyntheseLogistique } from "@/lib/logistique";
 
 const C = {
   bg: "#f1f5f9", white: "#ffffff",
@@ -30,14 +31,12 @@ interface Props {
   onToast: (msg: string, type?: "success" | "error" | "info") => void;
 }
 
-// État éditable d'un palier dans l'aperçu (paramètres pilotables).
 interface PalierEdit {
   code: string; label: string; nbPacks: number;
   pcts: number[]; remises: number[]; remiseAdd: number;
   produits: { ref: string; name: string; barcode: string; qtyParPack: number; standardPrice: number; listPrice: number; ppc: number }[];
 }
 
-// Convertit une CampagneCreee (sauvegardée) en paliers éditables pour l'aperçu.
 function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
   const arts = camp.articles.filter(a => a.ref.trim());
   return camp.paliers.map(pal => ({
@@ -53,23 +52,24 @@ function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
   }));
 }
 
+type SubTab = "offre" | "logistique" | "synthese";
+
 export default function ApercuOffreScreen({ session, onToast }: Props) {
   const [saved, setSaved] = useState<CampagneCreee[]>([]);
-  const [campId, setCampId] = useState<string>("");
+  const [camp, setCamp] = useState<CampagneCreee | null>(null);
   const [paliers, setPaliers] = useState<PalierEdit[]>([]);
-  const [nom, setNom] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [tab, setTab] = useState<SubTab>("offre");
 
   useEffect(() => { void (async () => {
-    try { const list = await loadCampagnesCreees(); setSaved(list); if (list.length && !campId) selectCamp(list[0], list); }
+    try { const list = await loadCampagnesCreees(); setSaved(list); if (list.length) selectCamp(list[0]); }
     catch (e: any) { onToast("Erreur chargement : " + e.message, "error"); }
   })(); }, []);
 
-  function selectCamp(c: CampagneCreee, list = saved) {
-    setCampId(c.id); setNom(c.nom); setPaliers(toPaliersEdit(c));
-  }
+  function selectCamp(c: CampagneCreee) { setCamp(c); setPaliers(toPaliersEdit(c)); }
+  const nom = camp?.nom || "";
 
-  // ── Mutations (édition live) ──────────────────────────────────────────────
+  // ── Mutations ──────────────────────────────────────────────────────────────
   const setPalier = (pi: number, patch: Partial<PalierEdit>) => setPaliers(ps => ps.map((p, i) => i === pi ? { ...p, ...patch } : p));
   const setPct = (pi: number, ti: number, v: number) => setPaliers(ps => ps.map((p, i) => i !== pi ? p : { ...p, pcts: p.pcts.map((x, j) => j === ti ? v : x) }));
   const setRemise = (pi: number, ti: number, v: number) => setPaliers(ps => ps.map((p, i) => i !== pi ? p : { ...p, remises: p.remises.map((x, j) => j === ti ? v : x) }));
@@ -77,13 +77,26 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
 
   // ── Calculs live ──────────────────────────────────────────────────────────
   const calcPaliers: CalcPalier[] = useMemo(() => paliers.map(p => ({
-    code: p.code, label: p.label, nbPacks: p.nbPacks, pcts: p.pcts, remises: p.remises, remiseAdd: p.remiseAdd,
-    produits: p.produits,
+    code: p.code, label: p.label, nbPacks: p.nbPacks, pcts: p.pcts, remises: p.remises, remiseAdd: p.remiseAdd, produits: p.produits,
   })), [paliers]);
   const synthese = useMemo(() => calcSynthese(calcPaliers), [calcPaliers]);
   const besoin = useMemo(() => calcBesoinParRef(calcPaliers), [calcPaliers]);
 
-  // ── Export Excel depuis l'aperçu (avec les valeurs éditées) ────────────────
+  // Besoin logistique par mois (réutilise la logique testée, avec les qtés éditées + dates campagne).
+  const logistique = useMemo(() => {
+    if (!camp) return null;
+    const virtual: CampagneCreee = {
+      ...camp,
+      articles: (paliers[0]?.produits || []).map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode })),
+      paliers: paliers.map(p => ({
+        code: p.code, label: p.label, nbPacks: p.nbPacks,
+        qtyParPack: Object.fromEntries(p.produits.map(pr => [pr.ref, pr.qtyParPack])),
+      })) as any,
+    };
+    return buildSyntheseLogistique([virtual]);
+  }, [camp, paliers]);
+
+  // ── Export ─────────────────────────────────────────────────────────────────
   const exporter = async () => {
     if (!paliers.length) { onToast("Rien à exporter", "error"); return; }
     setExporting(true);
@@ -92,19 +105,15 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
         nom,
         paliers: paliers.map(p => ({
           code: p.code, label: p.label, qtyPacks: p.nbPacks,
-          pctOffres: p.pcts,                    // % offres édités
-          remises: p.remises,                   // remises éditées (par typologie)
-          remiseAddTaux: p.remiseAdd,
-          produits: p.produits.map(pr => ({
-            ref: pr.ref, name: pr.name, productId: 0, qtyParPack: pr.qtyParPack,
-            barcode: pr.barcode, standardPrice: pr.standardPrice, listPrice: pr.listPrice, ppc: pr.ppc,
-          })),
+          pctOffres: p.pcts, remises: p.remises, remiseAddTaux: p.remiseAdd,
+          produits: p.produits.map(pr => ({ ref: pr.ref, name: pr.name, productId: 0, qtyParPack: pr.qtyParPack, barcode: pr.barcode, standardPrice: pr.standardPrice, listPrice: pr.listPrice, ppc: pr.ppc })),
         })),
       };
+      if (logistique) payload.logistique = logistique;
       try {
         const catalogue = await odoo.getAllProducts(session);
         payload.mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc }));
-      } catch { /* mapping limité aux articles */ }
+      } catch { /* mapping limité */ }
       const res = await fetch("/api/export-template", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
@@ -116,34 +125,57 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
 
   if (!saved.length) return <div style={{ padding: 40, textAlign: "center", color: C.textMuted }}>Aucune campagne sauvegardée. Crée-en une dans « Créer une campagne » d'abord.</div>;
 
+  const TABS: [SubTab, string][] = [["offre", "Offre"], ["logistique", "Besoin logistique"], ["synthese", "Synthèse détaillée"]];
+
   return (
     <div style={{ flex: 1, height: "100%", overflowY: "auto", padding: 24 }}>
     <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Aperçu interactif de l'offre</h1>
-        <span style={{ fontSize: 13, color: C.textMuted }}>Édite les paramètres → CA et marges se recalculent en direct.</span>
+        <span style={{ fontSize: 13, color: C.textMuted }}>Édite les paramètres → tout se recalcule en direct.</span>
         <div style={{ flex: 1 }} />
-        <select value={campId} onChange={e => { const c = saved.find(s => s.id === e.target.value); if (c) selectCamp(c); }} style={{ ...input, width: 240, textAlign: "left", fontSize: 13, padding: "7px 10px" }}>
+        <select value={camp?.id || ""} onChange={e => { const c = saved.find(s => s.id === e.target.value); if (c) selectCamp(c); }} style={{ ...input, width: 240, textAlign: "left", fontSize: 13, padding: "7px 10px" }}>
           {saved.map(s => <option key={s.id} value={s.id}>{s.nom || "(sans nom)"}</option>)}
         </select>
         <button onClick={exporter} disabled={exporting} style={{ padding: "8px 16px", background: C.blue, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter Excel"}</button>
       </div>
 
-      {/* Synthèse globale (live) — figée en haut au scroll */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 10, background: C.bg, paddingTop: 4, paddingBottom: 8 }}>
+      {/* KPI synthèse globale */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <Kpi label="CA total campagne" value={fmtEur(synthese.caTotal)} color={C.blue} />
         <Kpi label="Marge totale" value={fmtEur(synthese.margeTotal)} color={C.teal} />
         <Kpi label="Marge %" value={fmtPct(synthese.margePct)} color={C.green} />
         <Kpi label="Nb packs (tous paliers)" value={fmtNum(synthese.nbPacks)} color={C.amber} />
       </div>
 
-      {/* Un bloc par palier */}
-      {paliers.map((pal, pi) => {
+      {/* Sous-onglets */}
+      <div style={{ display: "flex", gap: 6, borderBottom: `1px solid ${C.border}` }}>
+        {TABS.map(([id, label]) => (
+          <button key={id} onClick={() => setTab(id)} style={{ padding: "8px 16px", border: "none", background: "transparent", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", color: tab === id ? C.blueDark : C.textMuted, borderBottom: tab === id ? `2px solid ${C.blue}` : "2px solid transparent" }}>{label}</button>
+        ))}
+      </div>
+
+      {tab === "offre" && <OffreTab paliers={paliers} calcPaliers={calcPaliers} setPalier={setPalier} setPct={setPct} setRemise={setRemise} setQty={setQty} besoin={besoin} />}
+      {tab === "logistique" && <LogistiqueTab log={logistique} />}
+      {tab === "synthese" && <SyntheseTab paliers={paliers} calcPaliers={calcPaliers} />}
+
+      <div style={{ fontSize: 12, color: C.textMuted, fontStyle: "italic", paddingBottom: 20 }}>
+        Aperçu en lecture/édition — les modifications ne sont pas sauvegardées. Utilise « Exporter Excel » pour récupérer le fichier avec tes valeurs.
+      </div>
+    </div>
+    </div>
+  );
+}
+
+// ── Onglet OFFRE ──────────────────────────────────────────────────────────────
+function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, besoin }: any) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {paliers.map((pal: PalierEdit, pi: number) => {
         const r = calcPalier(calcPaliers[pi]);
         return (
           <div key={pi} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
-            {/* En-tête palier — figé au scroll, sous la barre KPI */}
-            <div style={{ padding: "12px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", position: "sticky", top: 92, zIndex: 8 }}>
+            <div style={{ padding: "12px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: C.blue, color: "#fff", borderRadius: 5, padding: "2px 8px" }}>{pal.code}</span>
               <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{pal.label}</span>
               <span style={{ fontSize: 12, color: C.textMuted }}>Nb packs</span>
@@ -155,26 +187,24 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
               <span style={{ fontSize: 13, fontWeight: 800, color: C.blue }}>CA {fmtEur(r.caTotal)}</span>
               <span style={{ fontSize: 13, fontWeight: 800, color: C.teal }}>Marge {fmtEur(r.margeTotal)} ({fmtPct(r.margePct)})</span>
             </div>
-
-            {/* Grille typologies (% offres + remises éditables, CA/marge live) */}
             <div style={{ padding: "8px 16px", overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr>
                     <th style={{ textAlign: "left", padding: "4px 8px", color: C.textMuted, borderBottom: `1px solid ${C.border}` }}></th>
-                    {TYPOLOGIES.map(t => <th key={t} style={{ padding: "4px 8px", color: C.textSec, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{t}</th>)}
+                    {TYPOLOGIES.map(t => <th key={t} style={{ padding: "4px 8px", color: C.textSec, fontWeight: 700, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{t}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
                     <td style={{ padding: "4px 8px", color: C.textMuted, fontWeight: 600 }}>% Offres</td>
-                    {pal.pcts.map((v, ti) => <td key={ti} style={{ padding: "3px 4px", textAlign: "center" }}>
+                    {pal.pcts.map((v: number, ti: number) => <td key={ti} style={{ padding: "3px 4px", textAlign: "center" }}>
                       <input type="number" step="1" style={{ ...input, width: 52, textAlign: "center" }} value={Math.round(v * 1000) / 10} onChange={e => setPct(pi, ti, (parseFloat(e.target.value) || 0) / 100)} />
                     </td>)}
                   </tr>
                   <tr>
                     <td style={{ padding: "4px 8px", color: C.textMuted, fontWeight: 600 }}>Remise</td>
-                    {pal.remises.map((v, ti) => <td key={ti} style={{ padding: "3px 4px", textAlign: "center" }}>
+                    {pal.remises.map((v: number, ti: number) => <td key={ti} style={{ padding: "3px 4px", textAlign: "center" }}>
                       <input type="number" step="0.1" style={{ ...input, width: 52, textAlign: "center" }} value={Math.round(v * 1000) / 10} onChange={e => setRemise(pi, ti, (parseFloat(e.target.value) || 0) / 100)} />
                     </td>)}
                   </tr>
@@ -184,26 +214,22 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
                   </tr>
                   <tr style={{ background: C.blueSoft }}>
                     <td style={{ padding: "4px 8px", color: C.blueDark, fontWeight: 700 }}>CA</td>
-                    {r.parTypo.map((tr, ti) => <td key={ti} style={{ padding: "4px 8px", textAlign: "center", fontWeight: 600, color: C.text }}>{fmtEur(tr.ca)}</td>)}
+                    {r.parTypo.map((tr, ti) => <td key={ti} style={{ padding: "4px 8px", textAlign: "center", fontWeight: 600, color: C.text, whiteSpace: "nowrap" }}>{fmtEur(tr.ca)}</td>)}
                   </tr>
                   <tr style={{ background: C.tealSoft }}>
                     <td style={{ padding: "4px 8px", color: C.teal, fontWeight: 700 }}>Marge</td>
-                    {r.parTypo.map((tr, ti) => <td key={ti} style={{ padding: "4px 8px", textAlign: "center", fontWeight: 600, color: tr.marge >= 0 ? C.text : C.red }}>{fmtEur(tr.marge)}</td>)}
+                    {r.parTypo.map((tr, ti) => <td key={ti} style={{ padding: "4px 8px", textAlign: "center", fontWeight: 600, color: tr.marge >= 0 ? C.text : C.red, whiteSpace: "nowrap" }}>{fmtEur(tr.marge)}</td>)}
                   </tr>
                 </tbody>
               </table>
             </div>
-
-            {/* Produits du palier (qté/pack éditable) */}
-            <div style={{ padding: "0 16px 14px" }}>
+            <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
-                  <tr>
-                    {["Réf", "Produit", "EAN", "Qté/pack", "Coût", "Tarif", "PPC"].map((h, i) => <th key={i} style={{ padding: "5px 8px", textAlign: i >= 3 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
-                  </tr>
+                  <tr>{["Réf", "Produit", "EAN", "Qté/pack", "Coût", "Tarif", "PPC"].map((h, i) => <th key={i} style={{ padding: "5px 8px", textAlign: i >= 3 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
-                  {pal.produits.map((p, ri) => (
+                  {pal.produits.map((p: any, ri: number) => (
                     <tr key={ri}>
                       <td style={{ padding: "4px 8px", fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.ref}</td>
                       <td style={{ padding: "4px 8px", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.name}</td>
@@ -222,30 +248,105 @@ export default function ApercuOffreScreen({ session, onToast }: Props) {
           </div>
         );
       })}
+    </div>
+  );
+}
 
-      {/* Besoin logistique (total par réf, live) */}
-      <div style={{ background: C.white, border: `2px solid ${C.teal}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
-        <div style={{ padding: "12px 16px", background: C.tealSoft, borderBottom: `1px solid ${C.border}` }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: C.teal }}>📦 Besoin total par référence</span>
-        </div>
+// ── Onglet BESOIN LOGISTIQUE (réf × mois) ────────────────────────────────────
+function LogistiqueTab({ log }: { log: any }) {
+  if (!log || !log.lignes?.length) return <div style={{ padding: 30, textAlign: "center", color: C.textMuted }}>Renseigne les dates de campagne (dans « Créer une campagne ») pour calculer le planning par mois.</div>;
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: C.shadow }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <thead>
+          <tr style={{ background: C.tealSoft }}>
+            <th style={{ padding: "8px 10px", textAlign: "left", color: C.teal, fontWeight: 700, borderBottom: `1px solid ${C.border}`, position: "sticky", left: 0, background: C.tealSoft }}>Réf</th>
+            <th style={{ padding: "8px 10px", textAlign: "left", color: C.teal, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Produit</th>
+            {log.moisLabels.map((m: string) => <th key={m} style={{ padding: "8px 10px", textAlign: "right", color: C.textSec, fontWeight: 700, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{m}</th>)}
+            <th style={{ padding: "8px 10px", textAlign: "right", color: C.teal, fontWeight: 800, borderBottom: `1px solid ${C.border}` }}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {log.lignes.map((l: any) => (
+            <tr key={l.ref}>
+              <td style={{ padding: "6px 10px", fontFamily: "monospace", borderBottom: `1px solid ${C.border}`, position: "sticky", left: 0, background: C.white }}>{l.ref}</td>
+              <td style={{ padding: "6px 10px", color: C.textSec, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{l.name}</td>
+              {l.parMois.map((q: number, i: number) => <td key={i} style={{ padding: "6px 10px", textAlign: "right", color: q ? C.text : C.textMuted, borderBottom: `1px solid ${C.border}` }}>{q ? fmtNum(q) : "—"}</td>)}
+              <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: C.teal, borderBottom: `1px solid ${C.border}` }}>{fmtNum(l.total)}</td>
+            </tr>
+          ))}
+          <tr style={{ background: C.tealSoft }}>
+            <td style={{ padding: "8px 10px", fontWeight: 800, color: C.teal, position: "sticky", left: 0, background: C.tealSoft }}>TOTAL</td>
+            <td style={{ background: C.tealSoft }} />
+            {log.totalParMois.map((q: number, i: number) => <td key={i} style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: C.teal }}>{fmtNum(q)}</td>)}
+            <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 800, color: C.teal }}>{fmtNum(log.totalGeneral)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style={{ padding: "10px 14px", fontSize: 11, color: C.textMuted, fontStyle: "italic" }}>Profil : 40 % le mois précédant le début de l'offre, puis 60 % lissé jusqu'à 1 mois avant la fin. Les mois débordent sur l'année suivante si l'offre l'exige.</div>
+    </div>
+  );
+}
+
+// ── Onglet SYNTHÈSE DÉTAILLÉE (CA/Marge par offre + par statut) ──────────────
+function SyntheseTab({ paliers, calcPaliers }: { paliers: PalierEdit[]; calcPaliers: CalcPalier[] }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* CA/Marge par offre */}
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+        <div style={{ padding: "10px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, fontSize: 13, fontWeight: 800, color: C.blueDark }}>CA / Marge par offre</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead><tr>{["Réf", "Produit", "Besoin total"].map((h, i) => <th key={i} style={{ padding: "8px 14px", textAlign: i === 2 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}</tr></thead>
+          <thead><tr>{["Offre", "Nb packs", "CA", "Marge €", "Marge %"].map((h, i) => <th key={i} style={{ padding: "8px 14px", textAlign: i >= 1 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}</tr></thead>
           <tbody>
-            {Object.entries(besoin).sort((a, b) => b[1].total - a[1].total).map(([ref, v]) => (
-              <tr key={ref}>
-                <td style={{ padding: "7px 14px", fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{ref}</td>
-                <td style={{ padding: "7px 14px", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{v.name}</td>
-                <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: C.teal, borderBottom: `1px solid ${C.border}` }}>{fmtNum(v.total)}</td>
-              </tr>
-            ))}
+            {paliers.map((pal, pi) => {
+              const r = calcPalier(calcPaliers[pi]);
+              return (
+                <tr key={pi}>
+                  <td style={{ padding: "7px 14px", fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>{pal.code} — {pal.label}</td>
+                  <td style={{ padding: "7px 14px", textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtNum(pal.nbPacks)}</td>
+                  <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 600, color: C.blue, borderBottom: `1px solid ${C.border}` }}>{fmtEur(r.caTotal)}</td>
+                  <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 600, color: C.teal, borderBottom: `1px solid ${C.border}` }}>{fmtEur(r.margeTotal)}</td>
+                  <td style={{ padding: "7px 14px", textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtPct(r.margePct)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
-      <div style={{ fontSize: 12, color: C.textMuted, fontStyle: "italic", paddingBottom: 20 }}>
-        Aperçu en lecture/édition — les modifications ici ne sont pas sauvegardées. Pour exporter l'Excel, utilise « Créer une campagne ».
+      {/* Ventilation par statut (typologie) : nb offres, CA, marge — agrégés tous paliers */}
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: C.shadow }}>
+        <div style={{ padding: "10px 16px", background: C.tealSoft, borderBottom: `1px solid ${C.border}`, fontSize: 13, fontWeight: 800, color: C.teal }}>Ventilation par statut client (tous paliers)</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr>
+            <th style={{ padding: "6px 10px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}></th>
+            {TYPOLOGIES.map(t => <th key={t} style={{ padding: "6px 10px", textAlign: "right", color: C.textSec, fontWeight: 700, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{t}</th>)}
+            <th style={{ padding: "6px 10px", textAlign: "right", color: C.text, fontWeight: 800, borderBottom: `1px solid ${C.border}` }}>Total</th>
+          </tr></thead>
+          <tbody>
+            {(() => {
+              // Agrège par typologie sur tous les paliers.
+              const nbOff = new Array(7).fill(0), ca = new Array(7).fill(0), marge = new Array(7).fill(0);
+              for (const cp of calcPaliers) {
+                const r = calcPalier(cp);
+                for (let t = 0; t < 7; t++) { nbOff[t] += r.parTypo[t].nbOffres; ca[t] += r.parTypo[t].ca; marge[t] += r.parTypo[t].marge; }
+              }
+              const row = (label: string, arr: number[], fmt: (n: number) => string, color: string, bg?: string) => (
+                <tr style={{ background: bg }}>
+                  <td style={{ padding: "6px 10px", fontWeight: 700, color }}>{label}</td>
+                  {arr.map((v, i) => <td key={i} style={{ padding: "6px 10px", textAlign: "right", whiteSpace: "nowrap" }}>{fmt(v)}</td>)}
+                  <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 800 }}>{fmt(arr.reduce((s, x) => s + x, 0))}</td>
+                </tr>
+              );
+              return <>
+                {row("Nb offres", nbOff, fmtNum, C.textSec)}
+                {row("CA", ca, fmtEur, C.blueDark, C.blueSoft)}
+                {row("Marge", marge, fmtEur, C.teal, C.tealSoft)}
+              </>;
+            })()}
+          </tbody>
+        </table>
       </div>
-    </div>
     </div>
   );
 }
