@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import {
   CampagneCreee, PalierSaisi, ArticleCampagne, genId,
-  analyseCampagneCreee, toExportPayload, qtyParPack, TYPES_PRODUIT,
+  analyseCampagneCreee, toExportPayload, qtyParPack, totalPacks, TYPES_PRODUIT,
 } from "@/lib/create-campaign";
 import { loadCampagnesCreees, upsertCampagneCreee, deleteCampagneCreee, loadCampagnesCreeesCorbeille, restoreCampagneCreee, hardDeleteCampagneCreee } from "@/lib/campaigns";
 import { buildSyntheseLogistique } from "@/lib/logistique";
@@ -187,6 +187,9 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   };
 
   const articlesValides = camp.articles.filter(a => a.ref.trim());
+  // Dénominateur de la reco : total des packs de TOUS les paliers (la conso est répartie,
+  // pas recopiée dans chaque palier).
+  const totalP = totalPacks(camp.paliers);
 
   // Année / cycle de rangement = le champ saisi par l'utilisateur (sinon "—").
   const yearOf = (c: CampagneCreee): string => (c.annee || "").trim() || "—";
@@ -359,7 +362,10 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 </thead>
                 <tbody>
                   {articlesValides.map((a) => {
-                    const reco = pal.nbPacks > 0 ? Math.round((a.consoN1 || 0) / pal.nbPacks) : 0;
+                    // Reco = conso répartie sur le TOTAL des packs (pas ÷ nbPacks du palier seul).
+                    // Pas de conso → pas de reco (on n'invente pas un chiffre).
+                    const hasConso = (a.consoN1 || 0) > 0;
+                    const reco = hasConso ? qtyParPack({ ...a, ref: a.ref }, pal, totalP) : 0;
                     const m = pal.qtyParPack[a.ref];
                     // Valeur affichée : saisie >0 sinon reco. Un 0 résiduel n'écrase pas la reco.
                     const manual = (m != null && m > 0) ? m : undefined;
@@ -368,12 +374,12 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontFamily: "monospace", fontSize: 13, color: C.text }}>{a.ref}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 13, color: C.textSec }}>{a.name || "—"}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, color: C.textMuted }}>{analysed ? fmtNum(a.consoN1 || 0) : "—"}</td>
-                      <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, fontWeight: 700, color: pal.nbPacks > 0 ? C.teal : C.textMuted }}>{pal.nbPacks > 0 ? fmtNum(reco) : "—"}</td>
+                      <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, fontWeight: 700, color: (hasConso && pal.nbPacks > 0) ? C.teal : C.textMuted }}>{(hasConso && pal.nbPacks > 0) ? fmtNum(reco) : "—"}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>
                         <input type="number" style={{ ...inputStyle, width: 80, textAlign: "right", fontWeight: 700, color: C.blue }}
-                          value={manual != null ? manual : (pal.nbPacks > 0 ? reco : "")}
+                          value={manual != null ? manual : ((hasConso && pal.nbPacks > 0) ? reco : "")}
                           onChange={e => setPalierQty(pi, a.ref, e.target.value === "" ? null : (parseInt(e.target.value) || 0))}
-                          placeholder={pal.nbPacks > 0 ? String(reco) : "—"} />
+                          placeholder={(hasConso && pal.nbPacks > 0) ? String(reco) : "—"} />
                       </td>
                     </tr>
                     );
