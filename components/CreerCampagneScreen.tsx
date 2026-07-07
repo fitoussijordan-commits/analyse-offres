@@ -5,7 +5,7 @@ import {
   CampagneCreee, PalierSaisi, ArticleCampagne, genId,
   analyseCampagneCreee, toExportPayload, qtyParPack, TYPES_PRODUIT,
 } from "@/lib/create-campaign";
-import { loadCampagnesCreees, upsertCampagneCreee, deleteCampagneCreee } from "@/lib/campaigns";
+import { loadCampagnesCreees, upsertCampagneCreee, deleteCampagneCreee, loadCampagnesCreeesCorbeille, restoreCampagneCreee, hardDeleteCampagneCreee } from "@/lib/campaigns";
 import { buildSyntheseLogistique } from "@/lib/logistique";
 
 const C = {
@@ -52,6 +52,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   const [analysed, setAnalysed] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filterYear, setFilterYear] = useState<string>("all");
+  const [corbeille, setCorbeille] = useState<CampagneCreee[]>([]);
+  const [showCorbeille, setShowCorbeille] = useState(false);
 
   useEffect(() => { void reload(); }, []);
   // Charger le brouillon transféré depuis l'analyse (préco N+1), une seule fois.
@@ -65,7 +67,10 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialDraft]);
   async function reload() {
-    try { setSaved(await loadCampagnesCreees()); } catch (e: any) { onToast("Erreur chargement : " + e.message, "error"); }
+    try {
+      setSaved(await loadCampagnesCreees());
+      setCorbeille(await loadCampagnesCreeesCorbeille());
+    } catch (e: any) { onToast("Erreur chargement : " + e.message, "error"); }
   }
 
   const setField = (k: keyof CampagneCreee, v: any) => setCamp(c => ({ ...c, [k]: v }));
@@ -114,7 +119,12 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   };
 
   const charger = (c: CampagneCreee) => { setCamp(c); setAnalysed(false); onToast(`Campagne « ${c.nom} » chargée`, "info"); };
-  const supprimer = async (id: string) => { try { await deleteCampagneCreee(id); await reload(); onToast("Supprimée", "success"); } catch (e: any) { onToast(e.message, "error"); } };
+  const supprimer = async (id: string) => { try { await deleteCampagneCreee(id); await reload(); onToast("Déplacée dans la corbeille", "success"); } catch (e: any) { onToast(e.message, "error"); } };
+  const restaurer = async (id: string) => { try { await restoreCampagneCreee(id); await reload(); onToast("Campagne restaurée", "success"); } catch (e: any) { onToast(e.message, "error"); } };
+  const supprimerDefinitif = async (c: CampagneCreee) => {
+    if (!window.confirm(`Supprimer DÉFINITIVEMENT « ${c.nom || "(sans nom)"} » ? Cette action est irréversible.`)) return;
+    try { await hardDeleteCampagneCreee(c.id); await reload(); onToast("Supprimée définitivement", "success"); } catch (e: any) { onToast(e.message, "error"); }
+  };
   const nouvelle = () => { setCamp(emptyCampagne()); setAnalysed(false); };
 
   const exporter = async () => {
@@ -179,8 +189,32 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Créer une campagne</h1>
         <span style={{ fontSize: 13, color: C.textMuted }}>Mêmes articles dans tous les paliers ; seules les quantités changent.</span>
         <div style={{ flex: 1 }} />
+        <button onClick={() => setShowCorbeille(v => !v)} style={{ padding: "7px 14px", background: showCorbeille ? C.bg : C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>🗑 Corbeille{corbeille.length ? ` (${corbeille.length})` : ""}</button>
         <button onClick={nouvelle} style={{ padding: "7px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>+ Nouvelle</button>
       </div>
+
+      {showCorbeille && (
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 16px", boxShadow: C.shadow }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>🗑 Corbeille</span>
+            <span style={{ fontSize: 12, color: C.textMuted }}>Restaure une campagne ou supprime-la définitivement.</span>
+          </div>
+          {corbeille.length === 0 ? (
+            <span style={{ fontSize: 12, color: C.textMuted }}>La corbeille est vide.</span>
+          ) : (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {corbeille.map(s => (
+                <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 8px", fontSize: 12 }}>
+                  <span style={{ fontWeight: 600, color: C.text }}>{s.nom || "(sans nom)"}</span>
+                  <span style={{ fontSize: 10, color: C.textMuted, background: C.white, borderRadius: 4, padding: "1px 5px" }}>{yearOf(s)}</span>
+                  <button onClick={() => restaurer(s.id)} title="Restaurer" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.teal, fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>↩ Restaurer</button>
+                  <button onClick={() => supprimerDefinitif(s)} title="Supprimer définitivement" style={{ border: "none", background: "transparent", cursor: "pointer", color: "#c0392b", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>Supprimer définitivement</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {saved.length > 0 && (
         <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 16px", boxShadow: C.shadow }}>
@@ -200,7 +234,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)} style={{ cursor: "pointer" }} />
                 <button onClick={() => charger(s)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>{s.nom || "(sans nom)"}</button>
                 <span style={{ fontSize: 10, color: C.textMuted, background: C.bg, borderRadius: 4, padding: "1px 5px" }}>{yearOf(s)}</span>
-                <button onClick={() => supprimer(s.id)} title="Supprimer" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 14 }}>×</button>
+                <button onClick={() => supprimer(s.id)} title="Mettre à la corbeille" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 14 }}>×</button>
               </div>
             ))}
             {savedFiltered.length === 0 && <span style={{ fontSize: 12, color: C.textMuted }}>Aucune campagne pour {filterYear}.</span>}

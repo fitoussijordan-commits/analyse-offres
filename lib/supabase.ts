@@ -35,6 +35,11 @@ class MutationBuilder {
     return this
   }
 
+  is(col: string, val: 'null' | 'not.null' | null): this {
+    this.filters.push(`${col}=is.${val === null ? 'null' : val}`)
+    return this
+  }
+
   then(resolve: (v: { data: any; error: any }) => void) {
     let url = `${BASE}/${this.table}`
     if (this.filters.length) url += '?' + this.filters.join('&')
@@ -69,6 +74,11 @@ class SelectBuilder {
   }
 
   eq(col: string, val: unknown) { this._filters.push(`${col}=eq.${val}`); return this }
+
+  is(col: string, val: 'null' | 'not.null' | null) {
+    this._filters.push(`${col}=is.${val === null ? 'null' : val}`)
+    return this
+  }
 
   then(resolve: (v: { data: any; error: any }) => void) {
     fetch(buildUrl(this.table, this._filters, this._order, this._select), { headers: H })

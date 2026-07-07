@@ -75,7 +75,13 @@ function campagneToRow(c: Campagne) {
 }
 
 export async function loadCampagnes(): Promise<Campagne[]> {
-  const { data, error } = await supabase.from("campagnes").select("*").order("created_at");
+  const { data, error } = await supabase.from("campagnes").select("*").is("deleted_at", "null").order("created_at");
+  if (error) throw new Error(error.message);
+  return (data || []).map(rowToCampagne);
+}
+
+export async function loadCampagnesCorbeille(): Promise<Campagne[]> {
+  const { data, error } = await supabase.from("campagnes").select("*").is("deleted_at", "not.null").order("created_at");
   if (error) throw new Error(error.message);
   return (data || []).map(rowToCampagne);
 }
@@ -85,7 +91,19 @@ export async function upsertCampagne(c: Campagne): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/** Suppression douce : part à la corbeille (récupérable). */
 export async function deleteCampagne(id: string): Promise<void> {
+  const { error } = await supabase.from("campagnes").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function restoreCampagne(id: string): Promise<void> {
+  const { error } = await supabase.from("campagnes").update({ deleted_at: null }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Suppression DÉFINITIVE (irréversible). */
+export async function hardDeleteCampagne(id: string): Promise<void> {
   const { error } = await supabase.from("campagnes").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
@@ -125,7 +143,15 @@ function campagneCreeeToRow(c: CampagneCreee) {
 }
 
 export async function loadCampagnesCreees(): Promise<CampagneCreee[]> {
-  const { data, error } = await supabase.from("campagnes_creees").select("*").order("created_at");
+  // On ne charge que les campagnes NON supprimées (deleted_at is null).
+  const { data, error } = await supabase.from("campagnes_creees").select("*").is("deleted_at", "null").order("created_at");
+  if (error) throw new Error(error.message);
+  return (data || []).map(rowToCampagneCreee);
+}
+
+/** Campagnes dans la corbeille (soft-deleted). */
+export async function loadCampagnesCreeesCorbeille(): Promise<CampagneCreee[]> {
+  const { data, error } = await supabase.from("campagnes_creees").select("*").is("deleted_at", "not.null").order("created_at");
   if (error) throw new Error(error.message);
   return (data || []).map(rowToCampagneCreee);
 }
@@ -135,7 +161,20 @@ export async function upsertCampagneCreee(c: CampagneCreee): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/** Suppression douce : la campagne part à la corbeille (récupérable), elle n'est PAS effacée. */
 export async function deleteCampagneCreee(id: string): Promise<void> {
+  const { error } = await supabase.from("campagnes_creees").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Restaure une campagne depuis la corbeille. */
+export async function restoreCampagneCreee(id: string): Promise<void> {
+  const { error } = await supabase.from("campagnes_creees").update({ deleted_at: null }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Suppression DÉFINITIVE : efface réellement la ligne (irréversible). */
+export async function hardDeleteCampagneCreee(id: string): Promise<void> {
   const { error } = await supabase.from("campagnes_creees").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
