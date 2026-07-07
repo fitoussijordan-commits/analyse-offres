@@ -127,6 +127,17 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   };
   const nouvelle = () => { setCamp(emptyCampagne()); setAnalysed(false); };
 
+  // Vide les quantités saisies de tous les paliers → laisse la reco automatique
+  // (conso ÷ total des packs) s'appliquer. Ne modifie que l'état local : rien n'est
+  // enregistré tant que l'utilisateur ne clique pas sur « Sauvegarder ».
+  const reinitialiserRecos = () => {
+    const nbSaisies = camp.paliers.reduce((s, p) => s + Object.keys(p.qtyParPack || {}).length, 0);
+    if (nbSaisies === 0) { onToast("Aucune quantité saisie : la reco est déjà active", "info"); return; }
+    if (!window.confirm(`Effacer ${nbSaisies} quantité(s) saisie(s) et laisser la reco automatique ? (non enregistré tant que tu ne sauvegardes pas)`)) return;
+    setCamp(c => ({ ...c, paliers: c.paliers.map(p => ({ ...p, qtyParPack: {} })) }));
+    onToast("Recos réinitialisées — vérifie puis sauvegarde", "success");
+  };
+
   const exporter = async () => {
     const payload: any = toExportPayload(camp);
     if (!payload.paliers.length) { onToast("Aucun article à exporter", "error"); return; }
@@ -189,6 +200,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Créer une campagne</h1>
         <span style={{ fontSize: 13, color: C.textMuted }}>Mêmes articles dans tous les paliers ; seules les quantités changent.</span>
         <div style={{ flex: 1 }} />
+        <button onClick={reinitialiserRecos} title="Efface les quantités saisies pour laisser la reco automatique (conso ÷ total packs)" style={{ padding: "7px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>↻ Réinitialiser les recos</button>
         <button onClick={() => setShowCorbeille(v => !v)} style={{ padding: "7px 14px", background: showCorbeille ? C.bg : C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>🗑 Corbeille{corbeille.length ? ` (${corbeille.length})` : ""}</button>
         <button onClick={nouvelle} style={{ padding: "7px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>+ Nouvelle</button>
       </div>
