@@ -36,7 +36,8 @@ class MutationBuilder {
   }
 
   is(col: string, val: 'null' | 'not.null' | null): this {
-    this.filters.push(`${col}=is.${val === null ? 'null' : val}`)
+    // PostgREST: null → "is.null" ; non-null → "not.is.null"
+    this.filters.push(val === 'not.null' ? `${col}=not.is.null` : `${col}=is.null`)
     return this
   }
 
@@ -76,7 +77,8 @@ class SelectBuilder {
   eq(col: string, val: unknown) { this._filters.push(`${col}=eq.${val}`); return this }
 
   is(col: string, val: 'null' | 'not.null' | null) {
-    this._filters.push(`${col}=is.${val === null ? 'null' : val}`)
+    // PostgREST: null → "is.null" ; non-null → "not.is.null"
+    this._filters.push(val === 'not.null' ? `${col}=not.is.null` : `${col}=is.null`)
     return this
   }
 
