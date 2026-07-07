@@ -322,3 +322,80 @@ export async function getConsumption(session: OdooSession, refs: string[], dateF
   }
   return out;
 }
+
+// ── Diagnostic : ventilation des QUANTITÉS vendues par statut client ──────────
+export interface VentilationStatut {
+  ref: string;                       // code article
+  name: string;
+  qtyTotal: number;                  // total unités vendues sur la période
+  parStatut: Record<string, number>; // statut client -> unités
+  qtyInconnu: number;                // unités dont le client n'a pas de statut renseigné
+}
+
+/**
+ * Pour chaque article, somme les quantités vendues sur la période, ventilées par statut du
+ * client (x_statut_client_id). Sert à VÉRIFIER si les statuts sont exploitables avant de
+ * baser la reco dessus. Renvoie aussi la part "inconnu" (client sans statut).
+ */
+export async function getQtyByStatut(session: OdooSession, refs: string[], dateFrom: string, dateTo: string): Promise<Record<string, VentilationStatut>> {
+  const out: Record<string, VentilationStatut> = {};
+  const clean = [...new Set(refs.map(r => (r || "").trim()).filter(Boolean))];
+  if (!clean.length || !dateFrom || !dateTo) return out;
+
+  // 1) refs → product.product
+  const prods = await searchRead(session, "product.product", [["default_code", "in", clean]], ["id", "default_code", "name"], 0);
+  const byId: Record<number, { ref: string; name: string }> = {};
+  const ids: number[] = [];
+  for (const p of (prods || []) as any[]) {
+    if (!p.default_code) continue;
+    byId[p.id] = { ref: p.default_code, name: p.name || "" };
+    ids.push(p.id);
+    out[p.default_code] = { ref: p.default_code, name: p.name || "", qtyTotal: 0, parStatut: {}, qtyInconnu: 0 };
+  }
+  if (!ids.length) return out;
+
+  // 2) lignes de vente (avec order_id pour remonter au client) sur la période.
+  const lines = await searchRead(
+    session, "sale.order.line",
+    [
+      ["product_id", "in", ids],
+      ["order_id.state", "in", ["sale", "done"]],
+      ["order_id.date_order", ">=", `${dateFrom} 00:00:00`],
+      ["order_id.date_order", "<=", `${dateTo} 23:59:59`],
+      ["display_type", "=", false],
+      ["is_downpayment", "=", false],
+    ],
+    ["product_id", "product_uom_qty", "order_id", "state"],
+    0
+  );
+  const validLines = (lines || []).filter((l: any) => l.state !== "cancel" && l.product_id && l.order_id);
+  const orderIds = [...new Set(validLines.map((l: any) => (Array.isArray(l.order_id) ? l.order_id[0] : l.order_id) as number))];
+  if (!orderIds.length) return out;
+
+  // 3) commandes → client
+  const orders = await searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "partner_id"], 0);
+  const partnerByOrder: Record<number, number> = {};
+  const partnerIds = new Set<number>();
+  for (const o of (orders || []) as any[]) if (o.partner_id) { partnerByOrder[o.id] = o.partner_id[0]; partnerIds.add(o.partner_id[0]); }
+
+  // 4) clients → statut
+  const partners = partnerIds.size
+    ? await searchRead(session, "res.partner", [["id", "in", [...partnerIds]]], ["id", "x_statut_client_id"], 0)
+    : [];
+  const statutByPartner: Record<number, string> = {};
+  for (const p of (partners || []) as any[]) if (p.x_statut_client_id) statutByPartner[p.id] = p.x_statut_client_id[1];
+
+  // 5) sommer les quantités par statut
+  for (const l of validLines as any[]) {
+    const entry = byId[l.product_id[0]];
+    if (!entry) continue;
+    const v = out[entry.ref];
+    const qty = l.product_uom_qty || 0;
+    v.qtyTotal += qty;
+    const oid = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
+    const statut = statutByPartner[partnerByOrder[oid]] || "";
+    if (statut) v.parStatut[statut] = (v.parStatut[statut] || 0) + qty;
+    else v.qtyInconnu += qty;
+  }
+  return out;
+}
