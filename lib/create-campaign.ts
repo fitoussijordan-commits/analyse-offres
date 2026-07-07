@@ -191,14 +191,25 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
   return { ...camp, articles, paliers };
 }
 
-/** Qté/pack effective d'un article dans un palier : valeur saisie (>0) sinon reco (conso ÷ nbPacks).
- *  Un 0 stocké n'écrase PAS la reco : si l'utilisateur veut exclure un article, il le retire.
- *  Cela évite qu'un 0 résiduel (transfert/chargement) masque la recommandation. */
-export function qtyParPack(art: ArticleCampagne, pal: PalierSaisi): number {
+/** Somme des packs de tous les paliers d'une campagne (dénominateur de la reco). */
+export function totalPacks(paliers: PalierSaisi[]): number {
+  return paliers.reduce((s, p) => s + (p.nbPacks || 0), 0);
+}
+
+/** Qté/pack effective d'un article dans un palier : valeur saisie (>0) sinon reco.
+ *
+ *  Reco = conso N-1 répartie sur TOUS les paliers, pas recopiée dans chacun :
+ *    qté/pack = conso ÷ (total des packs de la campagne)
+ *  Ainsi Σ(paliers) qté/pack × nbPacks ≈ conso N-1 (le gâteau est réparti, pas multiplié).
+ *  `totalP` = somme des packs de tous les paliers ; si omis (ancien appel), on retombe sur
+ *  l'ancien comportement (÷ nbPacks du palier seul) pour rétro-compatibilité.
+ *
+ *  Un 0 stocké n'écrase PAS la reco : si l'utilisateur veut exclure un article, il le retire. */
+export function qtyParPack(art: ArticleCampagne, pal: PalierSaisi, totalP?: number): number {
   const manual = pal.qtyParPack[art.ref];
   if (manual != null && manual > 0) return manual;
-  const nb = pal.nbPacks || 0;
-  const reco = nb > 0 ? Math.round((art.consoN1 || 0) / nb) : 0;
+  const denom = (totalP != null && totalP > 0) ? totalP : (pal.nbPacks || 0);
+  const reco = denom > 0 ? Math.round((art.consoN1 || 0) / denom) : 0;
   // Si pas de reco possible (pas de conso), on respecte une éventuelle saisie 0.
   return reco > 0 ? reco : (manual ?? 0);
 }
@@ -221,6 +232,7 @@ export interface ExportPayload {
 /** Convertit la campagne (enrichie) vers le payload d'export Proposition. */
 export function toExportPayload(camp: CampagneCreee): ExportPayload {
   const arts = camp.articles.filter(a => a.ref.trim());
+  const totalP = totalPacks(camp.paliers);
   return {
     nom: camp.nom,
     paliers: camp.paliers.map(pal => ({
@@ -235,7 +247,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
         ref: a.ref.trim(),
         name: a.name || "",
         productId: a.productId || 0,
-        qtyParPack: qtyParPack(a, pal),
+        qtyParPack: qtyParPack(a, pal, totalP),
         barcode: a.barcode || "",
         standardPrice: a.standardPrice || 0,
         listPrice: a.listPrice || 0,

@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadCampagnesCreees, upsertCampagne } from "@/lib/campaigns";
-import { CampagneCreee, qtyParPack, campagneCreeeToAnalyse } from "@/lib/create-campaign";
+import { CampagneCreee, qtyParPack, totalPacks, campagneCreeeToAnalyse } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef,
@@ -41,6 +41,7 @@ interface PalierEdit {
 
 function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
   const arts = camp.articles.filter(a => a.ref.trim());
+  const totalP = totalPacks(camp.paliers);
   return camp.paliers.map(pal => ({
     code: pal.code, label: pal.label, nbPacks: pal.nbPacks || 0,
     pcts: (pal as any).pctOffresReco && (pal as any).pctOffresReco.length === 7 ? [...(pal as any).pctOffresReco] : [...DEFAULT_PCTS],
@@ -48,7 +49,7 @@ function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
     remiseAdd: pal.remiseAddTaux != null ? pal.remiseAddTaux : REMISE_ADD_DEFAUT,
     produits: arts.map(a => ({
       ref: a.ref.trim(), name: a.name || "", barcode: a.barcode || "",
-      qtyParPack: qtyParPack(a, pal),
+      qtyParPack: qtyParPack(a, pal, totalP),
       standardPrice: a.standardPrice || 0, listPrice: a.listPrice || 0, ppc: a.ppc || 0,
     })),
   }));
