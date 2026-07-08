@@ -39,10 +39,13 @@ export const MAPPING_SHEET = "Mapping";
 // Colonnes de l'onglet Mapping : A=réf, B=désignation, C=EAN, D=coût, E=tarif, F=PPC.
 const MAP_HEADER = ["Code article", "Libellé article", "Code à barres (EAN)", "Coût achat unitaire", "Tarif revendeur unitaire", "PPC"];
 
+// Positions calées sur "TEMPLATE VIERGE_Campagne marketing.xlsx" (4 paliers + GC en L149).
+// Chaque bloc : 20 lignes de données (13 Produit Vente + 7 PLV/Testeurs).
 const BLOCKS = [
-  { title: 3,  nbOffresRow: 4,  nbProduitsRow: 5,  pvFirst: 17, pvCount: 13, remiseRow: 10, nbOffRow: 11, synRow: 15, dataFirst: 17, dataLast: 36 },
-  { title: 40, nbOffresRow: 42, nbProduitsRow: 43, pvFirst: 55, pvCount: 13, remiseRow: 48, nbOffRow: 49, synRow: 53, dataFirst: 55, dataLast: 74 },
-  { title: 76, nbOffresRow: 78, nbProduitsRow: 79, pvFirst: 91, pvCount: 13, remiseRow: 84, nbOffRow: 85, synRow: 89, dataFirst: 91, dataLast: 110 },
+  { title: 3,   nbOffresRow: 4,   nbProduitsRow: 5,   pvFirst: 17,  pvCount: 13, remiseRow: 10,  nbOffRow: 11,  synRow: 15,  dataFirst: 17,  dataLast: 36 },
+  { title: 39,  nbOffresRow: 40,  nbProduitsRow: 41,  pvFirst: 53,  pvCount: 13, remiseRow: 46,  nbOffRow: 47,  synRow: 51,  dataFirst: 53,  dataLast: 72 },
+  { title: 75,  nbOffresRow: 77,  nbProduitsRow: 78,  pvFirst: 90,  pvCount: 13, remiseRow: 83,  nbOffRow: 84,  synRow: 88,  dataFirst: 90,  dataLast: 109 },
+  { title: 112, nbOffresRow: 114, nbProduitsRow: 115, pvFirst: 127, pvCount: 13, remiseRow: 120, nbOffRow: 121, synRow: 125, dataFirst: 127, dataLast: 146 },
 ];
 const TYPO_COLS = [
   { ca: "M", marge: "N", param: "N" }, { ca: "O", marge: "P", param: "P" },
@@ -378,9 +381,10 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     ab.numFmt = '#,##0;(#,##0);" - "';
   }
 
-  // GRANDS COMPTES (palier 1) : code (valeur) + libellé/prix en VLOOKUP vers Mapping.
+  // GRANDS COMPTES : bloc en L149 (template vierge). Code (valeur) + libellé/prix VLOOKUP.
   const pal1 = paliers[0];
-  const GC_PV_FIRST = 123, GC_PV_COUNT = 13, LOG_PV_FIRST = 149, LOG_PV_COUNT = 13;
+  const GC_PV_FIRST = 159, GC_PV_COUNT = 13, LOG_PV_FIRST = 185, LOG_PV_COUNT = 13;
+  const GC_NOM_ROW = 152, GC_REMISE_ROW = 153;
   // 6 enseignes GC : colonne du nom (=col qté), colonne de la remise. Ordre = template.
   const GC_ENSEIGNE_COLS = [
     { nom: 13, qte: 13, remise: 15 },  // BIOCOOP : nom/qté M, remise O
@@ -390,13 +394,13 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     { nom: 25, qte: 25, remise: 27 },  // Place des tendances : Y / AA
     { nom: 28, qte: 28, remise: 30 },  // NewPharma : AB / AD
   ];
-  // En-têtes enseignes : nom (ligne 116) + remise (ligne 117), si fournis.
+  // En-têtes enseignes : nom (ligne 152) + remise (ligne 153), si fournis.
   if (payload.gcEnseignes) {
     GC_ENSEIGNE_COLS.forEach((cols, idx) => {
       const ens = payload.gcEnseignes![idx];
       if (!ens) return;
-      if (ens.nom) ws.getCell(116, cols.nom).value = ens.nom;
-      if (typeof ens.remise === "number") ws.getCell(117, cols.remise).value = ens.remise;
+      if (ens.nom) ws.getCell(GC_NOM_ROW, cols.nom).value = ens.nom;
+      if (typeof ens.remise === "number") ws.getCell(GC_REMISE_ROW, cols.remise).value = ens.remise;
     });
   }
   // Clé GC : réf seule si unique dans le palier, sinon "ref#type" (doublons vendu/UG).
@@ -443,9 +447,9 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     setRefText(ws, row, ref);
     ws.getCell(row, 2).value = horsMapping ? (p!.name || "") : { formula: vlookup(`A${row}`, 2) };
   }
-  // Vider PLV/Testeurs fixes du gabarit.
-  for (const row of [136, 137, 138, 139, 140, 141, 142]) for (const c of [1, 2, 4, 6, 8, 10]) ws.getCell(row, c).value = null;
-  for (const row of [162, 163, 164, 165, 166, 167, 168]) for (const c of [1, 2, 4]) ws.getCell(row, c).value = null;
+  // Vider PLV/Testeurs fixes du gabarit (positions du template vierge : GC 172-178, log 192-197).
+  for (const row of [172, 173, 174, 175, 176, 177, 178]) for (const c of [1, 2, 4, 6, 8, 10]) ws.getCell(row, c).value = null;
+  for (const row of [192, 193, 194, 195, 196, 197]) for (const c of [1, 2, 4]) ws.getCell(row, c).value = null;
 }
 
 // Compat : ancienne signature (feuille seule, sans Mapping). Garde le remplissage en valeurs.
