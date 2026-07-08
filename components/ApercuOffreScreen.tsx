@@ -36,7 +36,7 @@ interface Props {
 }
 
 interface PalierEdit {
-  code: string; label: string; nbPacks: number;
+  code: string; label: string; nbPacks: number; descriptif?: string;
   pcts: number[]; remises: number[]; remiseAdd: number;
   produits: { ref: string; name: string; barcode: string; qtyParPack: number; standardPrice: number; listPrice: number; ppc: number; typProd?: string }[];
 }
@@ -47,7 +47,7 @@ function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
   return camp.paliers.map(pal => {
     const vent = ventilationPalier(arts, pal);
     return {
-    code: pal.code, label: pal.label, nbPacks: pal.nbPacks || 0,
+    code: pal.code, label: pal.label, nbPacks: pal.nbPacks || 0, descriptif: pal.descriptif,
     pcts: (pal as any).pctOffresReco && (pal as any).pctOffresReco.length === 7 ? [...(pal as any).pctOffresReco] : [...DEFAULT_PCTS],
     // Remise unique du palier (Créer campagne) → répliquée sur les 7 typologies.
     // Dès qu'un taux est défini (>=0), on l'applique aux 7, même si le flag remiseStandard
@@ -132,7 +132,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
         nom,
         gcEnseignes,
         paliers: paliers.map(p => ({
-          code: p.code, label: p.label, qtyPacks: p.nbPacks,
+          code: p.code, label: p.label, qtyPacks: p.nbPacks, descriptif: p.descriptif,
           pctOffres: p.pcts, remises: p.remises, remiseAddTaux: p.remiseAdd,
           produits: p.produits.map(pr => ({ ref: pr.ref, name: pr.name, productId: 0, qtyParPack: pr.qtyParPack, barcode: pr.barcode, standardPrice: pr.standardPrice, listPrice: pr.listPrice, ppc: pr.ppc, typProd: pr.typProd })),
         })),
@@ -240,6 +240,10 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
               <div style={{ flex: 1 }} />
               <span style={{ fontSize: 13, fontWeight: 800, color: C.blue }}>CA {fmtEur(r.caTotal)}</span>
               <span style={{ fontSize: 13, fontWeight: 800, color: C.teal }}>Marge {fmtEur(r.margeTotal)} ({fmtPct(r.margePct)})</span>
+            </div>
+            <div style={{ padding: "8px 16px 0", display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, color: C.textMuted, whiteSpace: "nowrap" }}>Descriptif</span>
+              <input style={{ ...input, flex: 1, textAlign: "left", width: "auto" }} value={pal.descriptif ?? ""} onChange={e => setPalier(pi, { descriptif: e.target.value })} placeholder="Texte retranscrit dans l'Excel à côté du nom du palier" />
             </div>
             <div style={{ padding: "8px 16px", overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>

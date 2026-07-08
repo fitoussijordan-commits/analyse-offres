@@ -7,6 +7,7 @@ import ExcelJS from "exceljs";
 import path from "path";
 import { fillPropositionWorkbook, PROP_SHEET, PropPayload } from "@/lib/fill-proposition";
 import { writeSyntheseLogistiqueSheet, SyntheseLogistique } from "@/lib/logistique";
+import { writeSyntheseDetailleeSheet } from "@/lib/synthese-detaillee";
 
 export const maxDuration = 60;
 const TEMPLATE_PATH = path.join(process.cwd(), "lib", "templates", "proposition-template-v2.xlsx");
@@ -23,6 +24,9 @@ export async function POST(req: NextRequest) {
     if (!ws) return NextResponse.json({ error: `Onglet "${PROP_SHEET}" introuvable dans le gabarit` }, { status: 500 });
 
     fillPropositionWorkbook(wb, payload);
+
+    // Onglet "Synthèse détaillée" (CA/marge par offre + par statut).
+    if (paliers.length) writeSyntheseDetailleeSheet(wb, paliers);
 
     // Onglet "Synthèse logistique" (réf × mois) si la campagne fournit ses besoins.
     if (payload.logistique && payload.logistique.lignes?.length) {

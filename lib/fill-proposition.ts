@@ -435,9 +435,19 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
         const ens = payload.gcEnseignes![idx];
         if (!ens) return;
         const q = ens.qties[gk];
-        if (q != null) ws.getCell(row, cols.qte).value = q;
+        if (q != null) {
+          const cell = ws.getCell(row, cols.qte);
+          cell.value = q;
+          cell.numFmt = "0";   // BUG template : ces cellules étaient en 0% → forcer format nombre.
+        }
       });
     }
+  }
+  // Élargir les colonnes CA/Marges des 6 enseignes GC pour éviter les "########".
+  // (colonnes CA = qte+1, Marges = qte+2 pour chaque enseigne)
+  for (const cols of GC_ENSEIGNE_COLS) {
+    ws.getColumn(cols.qte + 1).width = 13;   // CA
+    ws.getColumn(cols.qte + 2).width = 13;   // Marges
   }
   // Besoins logistiques (palier 1) : code + libellé en VLOOKUP sur toutes les lignes.
   for (let i = 0; i < LOG_PV_COUNT; i++) {
