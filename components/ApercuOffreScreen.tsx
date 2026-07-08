@@ -49,11 +49,18 @@ function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
     pcts: (pal as any).pctOffresReco && (pal as any).pctOffresReco.length === 7 ? [...(pal as any).pctOffresReco] : [...DEFAULT_PCTS],
     remises: pal.remiseStandard && pal.remiseStandardTaux != null ? new Array(7).fill(pal.remiseStandardTaux) : [...DEFAULT_REMISES],
     remiseAdd: pal.remiseAddTaux != null ? pal.remiseAddTaux : REMISE_ADD_DEFAUT,
-    produits: arts.map(a => ({
-      ref: a.ref.trim(), name: a.name || "", barcode: a.barcode || "",
-      qtyParPack: qtyParPack(a, pal, totalP),
-      standardPrice: a.standardPrice || 0, listPrice: a.listPrice || 0, ppc: a.ppc || 0,
-    })),
+    produits: arts.map(a => {
+      // Réplique la gratuité : UG / Testeur / PLV / Échantillon → tarif de vente et PPC = 0
+      // (aucun CA). Le coût reste réel. Même règle que l'export.
+      const estVente = (a.typProd || "Produit Vente") === "Produit Vente";
+      return {
+        ref: a.ref.trim(), name: a.name || "", barcode: a.barcode || "",
+        qtyParPack: qtyParPack(a, pal, totalP),
+        standardPrice: a.standardPrice || 0,
+        listPrice: estVente ? (a.listPrice || 0) : 0,
+        ppc: estVente ? (a.ppc || 0) : 0,
+      };
+    }),
   }));
 }
 
