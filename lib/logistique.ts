@@ -21,6 +21,10 @@ export function writeSyntheseLogistiqueSheet(wb: ExcelJS.Workbook, log: Synthese
   const mois = log.moisLabels && log.moisLabels.length ? log.moisLabels : MOIS_FR;
   const nbCols = 2 + mois.length + 1;               // Réf + Produit + N mois + Total
   const totalCol = nbCols;                          // index colonne "Total"
+  // Le template peut déjà contenir un onglet "Synthèse logistique" → on le retire d'abord
+  // pour éviter l'erreur "Worksheet name already exists", puis on le (re)crée proprement.
+  const existant = wb.getWorksheet("Synthèse logistique");
+  if (existant) wb.removeWorksheet(existant.id);
   const sw = wb.addWorksheet("Synthèse logistique", { views: [{ showGridLines: false }] });
   sw.columns = [{ width: 16 }, { width: 42 }, ...mois.map(() => ({ width: 12 })), { width: 12 }];
 
