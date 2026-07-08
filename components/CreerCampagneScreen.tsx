@@ -385,8 +385,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["Code", "Libellé", "Conso N-1", "Reco", "Qté / pack"].map((h, i) => (
-                      <th key={i} style={{ padding: "6px 8px", fontSize: 11, fontWeight: 700, color: i === 4 ? C.blue : C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i >= 2 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                    {["Code", "Libellé", "Type", "Conso N-1", "Reco", "Qté / pack"].map((h, i) => (
+                      <th key={i} style={{ padding: "6px 8px", fontSize: 11, fontWeight: 700, color: i === 5 ? C.blue : C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i >= 3 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -403,6 +403,13 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                     <tr key={a.ref}>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontFamily: "monospace", fontSize: 13, color: C.text }}>{a.ref}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 13, color: C.textSec }}>{a.name || "—"}</td>
+                      <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 12 }}>
+                        {(() => {
+                          const t = a.typProd || "Produit Vente";
+                          const vente = t === "Produit Vente";
+                          return <span title={vente ? "Génère du CA" : "Gratuit : prix de vente et PPC = 0"} style={{ fontWeight: 600, color: vente ? C.textMuted : "#b45309", background: vente ? "transparent" : "#fef3c7", borderRadius: 4, padding: vente ? 0 : "1px 6px" }}>{t}</span>;
+                        })()}
+                      </td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, color: C.textMuted }}>{analysed ? fmtNum(a.consoN1 || 0) : "—"}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, fontWeight: 700, color: (hasConso && pal.nbPacks > 0) ? C.teal : C.textMuted }}>{(hasConso && pal.nbPacks > 0) ? fmtNum(reco) : "—"}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>

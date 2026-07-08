@@ -28,6 +28,12 @@ export interface MapRow { ref: string; name?: string; barcode?: string; standard
 export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; }
 
 export const PROP_SHEET = "Proposition template";
+
+/** Un produit génère du CA seulement s'il est "Produit Vente". UG / Testeur / PLV /
+ *  Échantillon sont gratuits → prix de vente (col 8) et PPC (col 10) forcés à 0. */
+function estVente(p?: { typProd?: string }): boolean {
+  return !p || (p.typProd || "Produit Vente") === "Produit Vente";
+}
 export const MAPPING_SHEET = "Mapping";
 // Colonnes de l'onglet Mapping : A=réf, B=désignation, C=EAN, D=coût, E=tarif, F=PPC.
 const MAP_HEADER = ["Code article", "Libellé article", "Code à barres (EAN)", "Coût achat unitaire", "Tarif revendeur unitaire", "PPC"];
@@ -298,19 +304,21 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       const horsMapping = !!p && p.productId === 0 && !mapRefs.has(ref);
 
       setRefText(ws, row, ref);                                          // A : code en TEXTE
+      const vente = estVente(p);
       if (horsMapping) {
         ws.getCell(row, 2).value = p!.name || "";
         ws.getCell(row, 3).value = p!.barcode || "";
         ws.getCell(row, 6).value = round2(p!.standardPrice || 0);
-        ws.getCell(row, 8).value = round2(p!.listPrice || 0);
-        ws.getCell(row, 10).value = round2(p!.ppc || 0);
+        ws.getCell(row, 8).value = vente ? round2(p!.listPrice || 0) : 0;   // prix vente = 0 si gratuit
+        ws.getCell(row, 10).value = vente ? round2(p!.ppc || 0) : 0;        // PPC = 0 si gratuit
       } else {
         // VLOOKUP (renvoie "" si A vide → ligne vide propre, mais remplissable).
         ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) };
         ws.getCell(row, 3).value = { formula: vlookup(`A${row}`, 3) };
         ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
-        ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) };
-        ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) };
+        // Prix vente / PPC : VLOOKUP si Produit Vente, sinon 0 en dur (UG/Testeur/PLV gratuits).
+        ws.getCell(row, 8).value = vente ? { formula: vlookup(`A${row}`, 5) } : 0;
+        ws.getCell(row, 10).value = vente ? { formula: vlookup(`A${row}`, 6) } : 0;
       }
       if (p && p.typProd) ws.getCell(row, 4).value = p.typProd;            // D : Typ. Prod
       ws.getCell(row, 5).value = p ? (p.qtyParPack || 0) : null;          // E : qté/pack
@@ -335,8 +343,9 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) };
       ws.getCell(row, 3).value = { formula: vlookup(`A${row}`, 3) };
       ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
-      ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) };
-      ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) };
+      // Ces lignes sont des PLV / Testeurs / SR (non "Produit Vente") → prix vente + PPC = 0.
+      ws.getCell(row, 8).value = 0;
+      ws.getCell(row, 10).value = 0;
       // Remise additionnelle du palier (col I) aussi sur ces lignes.
       if (pal && typeof pal.remiseAddTaux === "number") ws.getCell(row, 9).value = pal.remiseAddTaux;
       ws.getCell(row, 11).value = { formula: `J${row}*(1-I${row})` };           // K : PPC remisé
@@ -366,15 +375,17 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     const ref = p ? (p.ref || "").trim() : "";
     const horsMapping = !!p && p.productId === 0 && !mapRefs.has(ref);
     setRefText(ws, row, ref);
+    const venteGC = estVente(p);
     if (horsMapping) {
       ws.getCell(row, 2).value = p!.name || "";
-      ws.getCell(row, 6).value = round2(p!.standardPrice || 0); ws.getCell(row, 8).value = round2(p!.listPrice || 0);
-      ws.getCell(row, 10).value = round2(p!.ppc || 0);
+      ws.getCell(row, 6).value = round2(p!.standardPrice || 0);
+      ws.getCell(row, 8).value = venteGC ? round2(p!.listPrice || 0) : 0;
+      ws.getCell(row, 10).value = venteGC ? round2(p!.ppc || 0) : 0;
     } else {
       ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) };
       ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
-      ws.getCell(row, 8).value = { formula: vlookup(`A${row}`, 5) };
-      ws.getCell(row, 10).value = { formula: vlookup(`A${row}`, 6) };
+      ws.getCell(row, 8).value = venteGC ? { formula: vlookup(`A${row}`, 5) } : 0;
+      ws.getCell(row, 10).value = venteGC ? { formula: vlookup(`A${row}`, 6) } : 0;
     }
   }
   // Besoins logistiques (palier 1) : code + libellé en VLOOKUP sur toutes les lignes.

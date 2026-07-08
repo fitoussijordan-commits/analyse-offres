@@ -243,17 +243,24 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
       remiseStandardTaux: pal.remiseStandardTaux,
       remiseAddTaux: pal.remiseAddTaux,
       pctOffres: pal.pctOffresReco,
-      produits: arts.map(a => ({
-        ref: a.ref.trim(),
-        name: a.name || "",
-        productId: a.productId || 0,
-        qtyParPack: qtyParPack(a, pal, totalP),
-        barcode: a.barcode || "",
-        standardPrice: a.standardPrice || 0,
-        listPrice: a.listPrice || 0,
-        ppc: a.ppc || 0,
-        typProd: a.typProd || "Produit Vente",
-      })),
+      produits: arts.map(a => {
+        // Tout ce qui n'est PAS "Produit Vente" (UG, Testeur, PLV, Échantillon) est gratuit :
+        // prix de vente (listPrice) et PPC forcés à 0 → aucun CA généré. Le coût (standardPrice)
+        // est conservé car ces produits ont un coût réel pour l'entreprise.
+        const typ = a.typProd || "Produit Vente";
+        const estVente = typ === "Produit Vente";
+        return {
+          ref: a.ref.trim(),
+          name: a.name || "",
+          productId: a.productId || 0,
+          qtyParPack: qtyParPack(a, pal, totalP),
+          barcode: a.barcode || "",
+          standardPrice: a.standardPrice || 0,
+          listPrice: estVente ? (a.listPrice || 0) : 0,
+          ppc: estVente ? (a.ppc || 0) : 0,
+          typProd: typ,
+        };
+      }),
     })).filter(p => p.produits.length),
   };
 }
