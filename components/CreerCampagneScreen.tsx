@@ -319,9 +319,18 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
               const inconnue = analysed && a.found === false && !!a.ref.trim();
               // Tous les champs (désignation, EAN, prix) sont TOUJOURS éditables : modifier une
               // valeur marque l'article comme manuel pour que l'analyse ne l'écrase plus.
-              const numCell = (val: number | undefined, key: "standardPrice" | "listPrice" | "ppc") => (
-                <input type="number" step="0.01" style={{ ...inputStyle, width: 75, textAlign: "right", padding: "5px 6px" }} value={val ?? ""} onChange={e => setArticle(ai, { manuel: true, [key]: e.target.value === "" ? 0 : parseFloat(e.target.value) } as any)} placeholder="—" />
-              );
+              const estVenteArt = (a.typProd ?? "Produit Vente") === "Produit Vente";
+              const numCell = (val: number | undefined, key: "standardPrice" | "listPrice" | "ppc") => {
+                // Tarif de vente et PPC sont forcés à 0 (lecture seule) pour les non-Produit Vente.
+                const bloque = !estVenteArt && (key === "listPrice" || key === "ppc");
+                return (
+                  <input type="number" step="0.01" disabled={bloque}
+                    style={{ ...inputStyle, width: 75, textAlign: "right", padding: "5px 6px", background: bloque ? C.bg : undefined, color: bloque ? C.textMuted : undefined }}
+                    value={bloque ? 0 : (val ?? "")}
+                    onChange={e => setArticle(ai, { manuel: true, [key]: e.target.value === "" ? 0 : parseFloat(e.target.value) } as any)}
+                    placeholder="—" title={bloque ? "Gratuit (non Produit Vente) → 0" : undefined} />
+                );
+              };
               return (
               <tr key={ai} style={{ background: inconnue ? C.amberSoft : "transparent" }}>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
@@ -331,7 +340,13 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                   <input style={{ ...inputStyle, width: 200, padding: "5px 6px" }} value={a.name ?? ""} onChange={e => setArticle(ai, { manuel: true, name: e.target.value })} placeholder="Désignation" />
                 </td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
-                  <select style={{ ...inputStyle, width: 130, padding: "5px 6px" }} value={a.typProd ?? "Produit Vente"} onChange={e => setArticle(ai, { typProd: e.target.value })}>
+                  <select style={{ ...inputStyle, width: 130, padding: "5px 6px" }} value={a.typProd ?? "Produit Vente"} onChange={e => {
+                    const t = e.target.value;
+                    // Non "Produit Vente" (UG/Testeur/PLV/Échantillon) = gratuit → tarif de vente et PPC à 0.
+                    const patch: any = { typProd: t };
+                    if (t !== "Produit Vente") { patch.listPrice = 0; patch.ppc = 0; }
+                    setArticle(ai, patch);
+                  }}>
                     {TYPES_PRODUIT.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </td>
