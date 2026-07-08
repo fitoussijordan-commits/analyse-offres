@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadCampagnesCreees, upsertCampagne } from "@/lib/campaigns";
-import { CampagneCreee, qtyParPack, totalPacks, campagneCreeeToAnalyse } from "@/lib/create-campaign";
+import { CampagneCreee, qtyParPack, totalPacks, ventilationPalier, campagneCreeeToAnalyse } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef,
@@ -44,10 +44,15 @@ interface PalierEdit {
 function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
   const arts = camp.articles.filter(a => a.ref.trim());
   const totalP = totalPacks(camp.paliers);
-  return camp.paliers.map(pal => ({
+  return camp.paliers.map(pal => {
+    const vent = ventilationPalier(arts, pal);
+    return {
     code: pal.code, label: pal.label, nbPacks: pal.nbPacks || 0,
     pcts: (pal as any).pctOffresReco && (pal as any).pctOffresReco.length === 7 ? [...(pal as any).pctOffresReco] : [...DEFAULT_PCTS],
-    remises: pal.remiseStandard && pal.remiseStandardTaux != null ? new Array(7).fill(pal.remiseStandardTaux) : [...DEFAULT_REMISES],
+    // Remise unique du palier (Créer campagne) → répliquée sur les 7 typologies.
+    // Dès qu'un taux est défini (>=0), on l'applique aux 7, même si le flag remiseStandard
+    // n'a pas été (re)stocké. Sinon on garde les remises par défaut du gabarit.
+    remises: pal.remiseStandardTaux != null ? new Array(7).fill(pal.remiseStandardTaux) : [...DEFAULT_REMISES],
     remiseAdd: pal.remiseAddTaux != null ? pal.remiseAddTaux : REMISE_ADD_DEFAUT,
     produits: arts.map(a => {
       // Réplique la gratuité : UG / Testeur / PLV / Échantillon → tarif de vente et PPC = 0
@@ -55,13 +60,14 @@ function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
       const estVente = (a.typProd || "Produit Vente") === "Produit Vente";
       return {
         ref: a.ref.trim(), name: a.name || "", barcode: a.barcode || "",
-        qtyParPack: qtyParPack(a, pal, totalP),
+        qtyParPack: qtyParPack(a, pal, totalP, vent, arts),
         standardPrice: a.standardPrice || 0,
         listPrice: estVente ? (a.listPrice || 0) : 0,
         ppc: estVente ? (a.ppc || 0) : 0,
       };
     }),
-  }));
+    };
+  });
 }
 
 type SubTab = "offre" | "logistique" | "synthese";

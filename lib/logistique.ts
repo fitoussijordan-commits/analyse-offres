@@ -10,7 +10,7 @@
 
 import type ExcelJS from "exceljs";
 import type { CampagneCreee } from "@/lib/create-campaign";
-import { qtyParPack, totalPacks } from "@/lib/create-campaign";
+import { qtyParPack, totalPacks, ventilationPalier } from "@/lib/create-campaign";
 
 export const MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 
@@ -133,7 +133,10 @@ function besoinsCampagne(camp: CampagneCreee): Record<string, number> {
     if (!ref) continue;
     let total = 0;
     const totalP = totalPacks(camp.paliers);
-    for (const pal of camp.paliers) total += qtyParPack(art, pal, totalP) * (pal.nbPacks || 0);
+    for (const pal of camp.paliers) {
+      const vent = ventilationPalier(camp.articles, pal);
+      total += qtyParPack(art, pal, totalP, vent, camp.articles) * (pal.nbPacks || 0);
+    }
     out[ref] = (out[ref] || 0) + total;
   }
   return out;

@@ -36,6 +36,15 @@ function emptyCampagne(): CampagneCreee {
   return { id: genId(), nom: "", dateDebut: "", dateFin: "", periodeDebut: "", periodeFin: "", articles: [emptyArticle()], paliers: [emptyPalier(1)] };
 }
 
+// Clé de saisie qté/pack d'un article dans un palier. Si la réf est unique dans la campagne,
+// on garde la réf seule (compatible avec les campagnes existantes). Si la réf apparaît
+// plusieurs fois (ex. stick vendu + stick UG), on distingue par le type → "ref#type".
+function qtyKey(art: ArticleCampagne, articles: ArticleCampagne[]): string {
+  const ref = (art.ref || "").trim();
+  const doublon = articles.filter(a => (a.ref || "").trim() === ref).length > 1;
+  return doublon ? `${ref}#${art.typProd || "Produit Vente"}` : ref;
+}
+
 const inputStyle: React.CSSProperties = {
   padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 13,
   fontFamily: "inherit", color: C.text, background: C.white, outline: "none",
@@ -408,20 +417,23 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                   </tr>
                 </thead>
                 <tbody>
-                  {articlesValides.map((a) => {
+                  {articlesValides.map((a, ai) => {
+                    // Clé composite : distingue les doublons de réf (ex. stick vendu vs stick UG).
+                    const k = qtyKey(a, articlesValides);
                     // Ventilation "N produits/pack" si le palier a un total saisi, sinon undefined.
                     const vent = ventilationPalier(articlesValides, pal);
                     // Reco = ventilation prorata si mode N produits/pack, sinon conso ÷ total packs.
-                    // Pas de conso → pas de reco (on n'invente pas un chiffre).
+                    // La ventilation exclut les non-vente (UG/Testeur/PLV) → reco 0 pour eux.
                     const hasConso = (a.consoN1 || 0) > 0;
-                    const reco = hasConso ? qtyParPack({ ...a, ref: a.ref }, pal, totalP, vent) : 0;
-                    // Reco affichable si conso ET (mode N produits/pack actif OU nb packs défini).
-                    const recoDispo = hasConso && (!!vent || pal.nbPacks > 0);
-                    const m = pal.qtyParPack[a.ref];
+                    const estVenteLigne = (a.typProd || "Produit Vente") === "Produit Vente";
+                    const reco = (hasConso && estVenteLigne) ? qtyParPack({ ...a, ref: a.ref }, pal, totalP, vent, articlesValides) : 0;
+                    // Reco affichable si conso, Produit Vente ET (mode N produits/pack OU nb packs défini).
+                    const recoDispo = hasConso && estVenteLigne && (!!vent || pal.nbPacks > 0);
+                    const m = pal.qtyParPack[k];
                     // Valeur affichée : saisie >0 sinon reco. Un 0 résiduel n'écrase pas la reco.
                     const manual = (m != null && m > 0) ? m : undefined;
                     return (
-                    <tr key={a.ref}>
+                    <tr key={ai}>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontFamily: "monospace", fontSize: 13, color: C.text }}>{a.ref}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 13, color: C.textSec }}>{a.name || "—"}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 12 }}>
@@ -436,7 +448,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>
                         <input type="number" style={{ ...inputStyle, width: 80, textAlign: "right", fontWeight: 700, color: C.blue }}
                           value={manual != null ? manual : (recoDispo ? reco : "")}
-                          onChange={e => setPalierQty(pi, a.ref, e.target.value === "" ? null : (parseInt(e.target.value) || 0))}
+                          onChange={e => setPalierQty(pi, k, e.target.value === "" ? null : (parseInt(e.target.value) || 0))}
                           placeholder={recoDispo ? String(reco) : "—"} />
                       </td>
                     </tr>
@@ -450,7 +462,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
               const vent = ventilationPalier(articlesValides, pal);
               const totalReparti = articlesValides
                 .filter(a => (a.typProd || "Produit Vente") === "Produit Vente")
-                .reduce((s, a) => s + qtyParPack(a, pal, totalP, vent), 0);
+                .reduce((s, a) => s + qtyParPack(a, pal, totalP, vent, articlesValides), 0);
               const cible = pal.nbProduitsPack;
               const ecart = totalReparti - cible;
               const ok = ecart === 0;

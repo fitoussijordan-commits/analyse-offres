@@ -246,8 +246,17 @@ export function totalProduitsPack(articles: ArticleCampagne[], pal: PalierSaisi,
  *  l'ancien comportement (÷ nbPacks du palier seul) pour rétro-compatibilité.
  *
  *  Un 0 stocké n'écrase PAS la reco : si l'utilisateur veut exclure un article, il le retire. */
-export function qtyParPack(art: ArticleCampagne, pal: PalierSaisi, totalP?: number, ventilation?: Record<string, number>): number {
-  const manual = pal.qtyParPack[art.ref];
+/** Clé de saisie qté/pack : réf seule si unique, sinon "ref#type" (doublons vendu/UG). */
+export function qtyKeyLib(art: ArticleCampagne, articles?: ArticleCampagne[]): string {
+  const ref = (art.ref || "").trim();
+  if (!articles) return ref;
+  const doublon = articles.filter(a => (a.ref || "").trim() === ref).length > 1;
+  return doublon ? `${ref}#${art.typProd || "Produit Vente"}` : ref;
+}
+
+export function qtyParPack(art: ArticleCampagne, pal: PalierSaisi, totalP?: number, ventilation?: Record<string, number>, articles?: ArticleCampagne[]): number {
+  const key = qtyKeyLib(art, articles);
+  const manual = pal.qtyParPack[key];
   if (manual != null && manual > 0) return manual;
   // Mode "N produits/pack" : si une ventilation est fournie (palier avec nbProduitsPack défini),
   // la reco de l'article vient de cette ventilation au prorata conso N-1.
@@ -307,7 +316,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
           ref: a.ref.trim(),
           name: a.name || "",
           productId: a.productId || 0,
-          qtyParPack: qtyParPack(a, pal, totalP, vent),
+          qtyParPack: qtyParPack(a, pal, totalP, vent, arts),
           barcode: a.barcode || "",
           standardPrice: a.standardPrice || 0,
           listPrice: estVente ? (a.listPrice || 0) : 0,
