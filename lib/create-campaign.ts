@@ -166,24 +166,26 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
     } as ArticleCampagne;
   });
 
-  // Reco % offres par typologie = répartition des commandes N-1 par statut client, calculée sur
-  // les ARTICLES de la campagne (qui les a achetés l'an dernier). Robuste même si l'offre est
-  // nouvelle. Matching tolérant (casse/accents/partiel). Appliquée à chaque palier.
+  // Reco % offres par typologie = répartition des QUANTITÉS vendues N-1 par statut client,
+  // calculée sur les ARTICLES de la campagne. On ne compte QUE les 7 typologies exactes :
+  // les statuts hors-liste (GC Concept Store, Siège…) et l'inconnu sont IGNORÉS, et le % de
+  // chaque typologie est rapporté au total des seules 7 typologies (donc Σ des 7 = 100%).
   const norm = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
   let paliers = camp.paliers;
   if (camp.periodeDebut && camp.periodeFin && refs.length) {
-    const dist = await odoo.getStatutDistribution(session, refs, camp.periodeDebut, camp.periodeFin);
-    const total = Object.values(dist).reduce((s, n) => s + n, 0);
-    if (total > 0) {
-      const reco = TYPOLOGIES.map(typo => {
-        const nt = norm(typo);
-        let cnt = 0;
-        for (const [statut, n] of Object.entries(dist)) {
-          const ns = norm(statut);
-          if (ns === nt || ns.includes(nt) || nt.includes(ns)) cnt += n;
-        }
-        return cnt / total;
-      });
+    // Quantités par statut (tous articles de la campagne confondus).
+    const vent = await odoo.getQtyByStatut(session, refs, camp.periodeDebut, camp.periodeFin);
+    const qtyParStatut: Record<string, number> = {};
+    for (const v of Object.values(vent)) {
+      for (const [statut, q] of Object.entries(v.parStatut)) {
+        qtyParStatut[norm(statut)] = (qtyParStatut[norm(statut)] || 0) + q;
+      }
+    }
+    // Quantité de chaque typologie = match EXACT (nom normalisé identique) uniquement.
+    const qtyTypo = TYPOLOGIES.map(typo => qtyParStatut[norm(typo)] || 0);
+    const totalTypo = qtyTypo.reduce((s, n) => s + n, 0);
+    if (totalTypo > 0) {
+      const reco = qtyTypo.map(q => q / totalTypo);
       paliers = camp.paliers.map(pal => ({ ...pal, pctOffresReco: reco }));
     }
   }

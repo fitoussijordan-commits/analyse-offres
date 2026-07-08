@@ -23,6 +23,8 @@ const C = {
 const fmtEur = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
 const fmtNum = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n || 0));
 const fmtPct = (n: number) => `${(Math.round((n || 0) * 1000) / 10).toFixed(1)} %`;
+// Prix : arrondi à 2 décimales (évite les artefacts flottants type 2.7600000000000002).
+const fmtPrix = (n: number) => (Math.round((n || 0) * 100) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDate = (d: string) => { const m = (d || "").match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : "—"; };
 
 const input: React.CSSProperties = { padding: "4px 7px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: C.text, outline: "none", width: 70, textAlign: "right" };
@@ -263,9 +265,9 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
                       <td style={{ padding: "3px 8px", textAlign: "right", borderBottom: `1px solid ${C.border}` }}>
                         <input type="number" style={{ ...input, width: 60, fontWeight: 700, color: C.blue }} value={p.qtyParPack || ""} onChange={e => setQty(pi, ri, parseInt(e.target.value) || 0)} />
                       </td>
-                      <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.standardPrice}</td>
-                      <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.listPrice}</td>
-                      <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.ppc}</td>
+                      <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.standardPrice)}</td>
+                      <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.listPrice)}</td>
+                      <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.ppc)}</td>
                     </tr>
                   ))}
                 </tbody>
