@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadCampagnesCreees, upsertCampagne } from "@/lib/campaigns";
-import { CampagneCreee, GcEnseigne, GC_ENSEIGNES_DEFAUT, qtyParPack, totalPacks, ventilationPalier, campagneCreeeToAnalyse } from "@/lib/create-campaign";
+import { CampagneCreee, GcEnseigne, GC_ENSEIGNES_DEFAUT, qtyParPack, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef,
@@ -151,6 +151,30 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
     finally { setExporting(false); }
   };
 
+  // Gros export annuel : toutes les campagnes → 1 onglet/campagne + synthèse logistique cumulée
+  // + synthèse CA annuelle. Utilise les campagnes SAUVEGARDÉES (pas les éditions non enregistrées).
+  const [exportingAnnuel, setExportingAnnuel] = useState(false);
+  const exporterAnnuel = async () => {
+    if (!saved.length) { onToast("Aucune campagne à exporter", "error"); return; }
+    setExportingAnnuel(true);
+    try {
+      const campagnes = saved.map(c => toExportPayload(c));
+      const logistique = buildSyntheseLogistique(saved);
+      const body: any = { campagnes, logistique };
+      // Mapping catalogue (une seule fois pour tout le classeur).
+      try {
+        const catalogue = await odoo.getAllProducts(session);
+        body.mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc }));
+      } catch { /* mapping limité */ }
+      const res = await fetch("/api/export-multi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
+      const blob = await res.blob(); const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = `campagnes_annee.xlsx`; a.click(); URL.revokeObjectURL(url);
+      onToast(`Export annuel : ${saved.length} campagne(s)`, "success");
+    } catch (e: any) { onToast("Erreur export annuel : " + e.message, "error"); }
+    finally { setExportingAnnuel(false); }
+  };
+
   // Valider la campagne → la rendre analysable dans « Analyse des campagnes » (suivi de progression).
   const validerPourAnalyse = async () => {
     if (!camp) return;
@@ -178,6 +202,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
         </select>
         <button onClick={validerPourAnalyse} style={{ padding: "8px 16px", background: C.teal, border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit" }}>✓ Valider → suivre la progression</button>
         <button onClick={exporter} disabled={exporting} style={{ padding: "8px 16px", background: C.blue, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter Excel"}</button>
+        <button onClick={exporterAnnuel} disabled={exportingAnnuel} title="Toutes les campagnes : 1 onglet par campagne + synthèse logistique cumulée + synthèse CA annuelle" style={{ padding: "8px 16px", background: C.blueDark, border: "none", borderRadius: 8, cursor: exportingAnnuel ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingAnnuel ? 0.6 : 1 }}>{exportingAnnuel ? "Export…" : "📚 Export annuel (toutes campagnes)"}</button>
       </div>
 
       {/* Bannière : nom + dates de campagne */}

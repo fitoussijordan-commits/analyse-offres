@@ -7,6 +7,7 @@ import ExcelJS from "exceljs";
 import path from "path";
 import { fillPropositionSheet, PROP_SHEET, PropPayload } from "@/lib/fill-proposition";
 import { writeSyntheseLogistiqueSheet, SyntheseLogistique } from "@/lib/logistique";
+import { writeSyntheseAnnuelleSheet } from "@/lib/synthese-detaillee";
 
 export const maxDuration = 120;
 const TEMPLATE_PATH = path.join(process.cwd(), "lib", "templates", "proposition-template-v2.xlsx");
@@ -57,6 +58,9 @@ export async function POST(req: NextRequest) {
       if (ref && p.name && !nameByRef[ref]) nameByRef[ref] = p.name;
     }
     writeSyntheseLogistiqueSheet(wb, payload.logistique, nameByRef);
+
+    // 2bis) Onglet Synthèse CA annuelle : CA/marge par campagne + total année.
+    writeSyntheseAnnuelleSheet(wb, campagnes.map(c => ({ nom: c.nom, paliers: c.paliers })));
 
     // 3) Supprimer les onglets du gabarit de base (Proposition modèle, Synthese, Mapping) :
     //    on ne garde que les onglets campagnes + la synthèse logistique.

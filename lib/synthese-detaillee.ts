@@ -107,3 +107,43 @@ export function writeSyntheseDetailleeSheet(wb: ExcelJS.Workbook, paliers: PropP
 
   return ws;
 }
+
+/** Onglet "Synthèse CA annuelle" : CA/marge/marge% par campagne + total sur l'année. */
+export function writeSyntheseAnnuelleSheet(wb: ExcelJS.Workbook, campagnes: { nom: string; paliers: PropPalier[] }[]) {
+  const existant = wb.getWorksheet("Synthèse CA annuelle");
+  if (existant) wb.removeWorksheet(existant.id);
+  const ws = wb.addWorksheet("Synthèse CA annuelle", { views: [{ showGridLines: false }] });
+  ws.columns = [{ width: 34 }, { width: 12 }, { width: 16 }, { width: 16 }, { width: 12 }];
+
+  const titre = ws.getCell(1, 1); titre.value = "Synthèse CA annuelle — toutes campagnes"; titre.font = { bold: true, color: { argb: BLUE }, size: 14 };
+  const head = ["Campagne", "Nb offres", "CA", "Marge €", "Marge %"];
+  head.forEach((h, i) => {
+    const c = ws.getCell(3, i + 1); c.value = h;
+    c.font = { bold: true, color: { argb: WHITE } };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BLUE } };
+    c.alignment = { horizontal: i === 0 ? "left" : "right" };
+  });
+
+  let row = 4, caGrand = 0, mgGrand = 0, nbGrand = 0;
+  for (let ci = 0; ci < campagnes.length; ci++) {
+    const camp = campagnes[ci];
+    const calcs = (camp.paliers || []).map(toCalc);
+    let ca = 0, mg = 0, nb = 0;
+    for (const cp of calcs) { const r = calcPalier(cp); ca += r.caTotal; mg += r.margeTotal; nb += cp.nbPacks; }
+    caGrand += ca; mgGrand += mg; nbGrand += nb;
+    ws.getCell(row, 1).value = camp.nom || `Campagne ${ci + 1}`;
+    ws.getCell(row, 2).value = nb;
+    const cca = ws.getCell(row, 3); cca.value = ca; cca.numFmt = FMT_EUR;
+    const cmg = ws.getCell(row, 4); cmg.value = mg; cmg.numFmt = FMT_EUR;
+    const cmp = ws.getCell(row, 5); cmp.value = ca > 0 ? mg / ca : 0; cmp.numFmt = FMT_PCT;
+    if (ci % 2 === 1) for (let c = 1; c <= 5; c++) ws.getCell(row, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: SOFT } };
+    row += 1;
+  }
+  // Total annuel
+  ws.getCell(row, 1).value = "TOTAL ANNÉE"; ws.getCell(row, 1).font = { bold: true, color: { argb: TEAL } };
+  ws.getCell(row, 2).value = nbGrand;
+  const tca = ws.getCell(row, 3); tca.value = caGrand; tca.numFmt = FMT_EUR; tca.font = { bold: true, color: { argb: TEAL } };
+  const tmg = ws.getCell(row, 4); tmg.value = mgGrand; tmg.numFmt = FMT_EUR; tmg.font = { bold: true, color: { argb: TEAL } };
+  const tmp = ws.getCell(row, 5); tmp.value = caGrand > 0 ? mgGrand / caGrand : 0; tmp.numFmt = FMT_PCT; tmp.font = { bold: true, color: { argb: TEAL } };
+  return ws;
+}

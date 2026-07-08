@@ -35,6 +35,29 @@ export async function POST(req: NextRequest) {
       writeSyntheseLogistiqueSheet(wb, payload.logistique, nameByRef);
     }
 
+    // Renommer l'onglet "Proposition template" par le nom de la campagne (nettoyé : Excel
+    // interdit []:*?/\ et limite à 31 caractères). On met aussi à jour les formules qui
+    // référencent l'ancien nom d'onglet (ex. synthèse logistique).
+    const propWs = wb.getWorksheet(PROP_SHEET);
+    if (propWs && payload.nom) {
+      const safe = (payload.nom || "").replace(/[[\]:*?/\\]/g, " ").trim().slice(0, 31) || PROP_SHEET;
+      if (safe !== PROP_SHEET) {
+        const oldRef = `'${PROP_SHEET}'!`, oldRefBare = `${PROP_SHEET}!`;
+        const newRef = `'${safe}'!`;
+        wb.eachSheet(sheet => {
+          sheet.eachRow(rowObj => {
+            rowObj.eachCell({ includeEmpty: false }, cell => {
+              const v: any = cell.value;
+              if (v && typeof v === "object" && typeof v.formula === "string" && (v.formula.includes(oldRef) || v.formula.includes(oldRefBare))) {
+                cell.value = { ...v, formula: v.formula.split(oldRef).join(newRef).split(oldRefBare).join(newRef) };
+              }
+            });
+          });
+        });
+        propWs.name = safe;
+      }
+    }
+
     const buf = await wb.xlsx.writeBuffer();
     return new NextResponse(buf, {
       status: 200,

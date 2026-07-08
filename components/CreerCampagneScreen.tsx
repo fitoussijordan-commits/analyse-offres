@@ -4,6 +4,7 @@ import * as odoo from "@/lib/odoo";
 import {
   CampagneCreee, PalierSaisi, ArticleCampagne, genId,
   analyseCampagneCreee, toExportPayload, qtyParPack, totalPacks, ventilationPalier, TYPES_PRODUIT,
+  GcEnseigne, GC_ENSEIGNES_DEFAUT,
 } from "@/lib/create-campaign";
 import { loadCampagnesCreees, upsertCampagneCreee, deleteCampagneCreee, loadCampagnesCreeesCorbeille, restoreCampagneCreee, hardDeleteCampagneCreee } from "@/lib/campaigns";
 import { buildSyntheseLogistique } from "@/lib/logistique";
@@ -90,6 +91,13 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
 
   const setPalier = (pi: number, patch: Partial<PalierSaisi>) =>
     setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => i === pi ? { ...p, ...patch } : p) }));
+
+  // ── Grands Comptes (6 enseignes) — mêmes données que dans Aperçu Offre, mais ici sauvegardées.
+  const gcEnseignes: GcEnseigne[] = camp.gcEnseignes && camp.gcEnseignes.length ? camp.gcEnseignes : GC_ENSEIGNES_DEFAUT;
+  const ensureGc = (c: CampagneCreee): GcEnseigne[] => (c.gcEnseignes && c.gcEnseignes.length ? c.gcEnseignes.map(e => ({ ...e, qties: { ...e.qties } })) : GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} })));
+  const setGcQty = (ei: number, key: string, v: number) => setCamp(c => { const g = ensureGc(c); g[ei] = { ...g[ei], qties: { ...g[ei].qties, [key]: v } }; return { ...c, gcEnseignes: g }; });
+  const setGcNom = (ei: number, nom: string) => setCamp(c => { const g = ensureGc(c); g[ei] = { ...g[ei], nom }; return { ...c, gcEnseignes: g }; });
+  const setGcRemise = (ei: number, remise: number) => setCamp(c => { const g = ensureGc(c); g[ei] = { ...g[ei], remise }; return { ...c, gcEnseignes: g }; });
   const setPalierQty = (pi: number, ref: string, val: number | null) =>
     setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => {
       if (i !== pi) return p;
@@ -484,6 +492,66 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
       ))}
 
       <button onClick={addPalier} style={{ alignSelf: "flex-start", padding: "8px 16px", background: C.white, border: `1px dashed ${C.blue}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>+ Ajouter un palier</button>
+
+      {/* Bloc GRANDS COMPTES : 6 enseignes (qté + remise par article), sauvegardé avec la campagne. */}
+      {articlesValides.length > 0 && (
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+          <div style={{ padding: "12px 16px", background: "#fff7ed", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: "#b45309", color: "#fff", borderRadius: 5, padding: "2px 8px" }}>GRANDS COMPTES</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités par enseigne (nom et remise éditables, sauvegardés)</span>
+          </div>
+          <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }} colSpan={2}>Enseigne →</th>
+                  {gcEnseignes.map((e, ei) => (
+                    <th key={ei} style={{ padding: "4px 4px", borderBottom: `1px solid ${C.border}` }}>
+                      <input style={{ ...inputStyle, width: 100, textAlign: "center", fontWeight: 700, color: "#b45309", padding: "4px 6px" }} value={e.nom} onChange={ev => setGcNom(ei, ev.target.value)} />
+                    </th>
+                  ))}
+                </tr>
+                <tr>
+                  <th style={{ padding: "3px 8px", textAlign: "right", color: C.textMuted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }} colSpan={2}>Remise %</th>
+                  {gcEnseignes.map((e, ei) => (
+                    <th key={ei} style={{ padding: "3px 4px", textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
+                      <input type="number" step="0.1" style={{ ...inputStyle, width: 64, textAlign: "center", padding: "4px 6px" }} value={Math.round(e.remise * 1000) / 10} onChange={ev => setGcRemise(ei, (parseFloat(ev.target.value) || 0) / 100)} />
+                    </th>
+                  ))}
+                </tr>
+                <tr>
+                  <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Réf</th>
+                  <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Libellé</th>
+                  {gcEnseignes.map((e, ei) => <th key={ei} style={{ padding: "5px 4px", textAlign: "center", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Qté</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {articlesValides.map((a, ai) => {
+                  const k = qtyKey(a, articlesValides);
+                  return (
+                    <tr key={ai}>
+                      <td style={{ padding: "4px 8px", fontFamily: "monospace", fontSize: 13, borderBottom: `1px solid ${C.border}` }}>{a.ref}</td>
+                      <td style={{ padding: "4px 8px", color: C.textSec, fontSize: 13, borderBottom: `1px solid ${C.border}` }}>{a.name || "—"}{(a.typProd && a.typProd !== "Produit Vente") ? ` (${a.typProd})` : ""}</td>
+                      {gcEnseignes.map((e, ei) => (
+                        <td key={ei} style={{ padding: "3px 4px", textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
+                          <input type="number" style={{ ...inputStyle, width: 60, textAlign: "center", color: "#b45309", padding: "4px 6px" }} value={e.qties[k] || ""} onChange={ev => setGcQty(ei, k, parseInt(ev.target.value) || 0)} placeholder="0" />
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+                <tr style={{ background: "#fff7ed" }}>
+                  <td style={{ padding: "5px 8px", fontWeight: 800, color: "#b45309" }} colSpan={2}>TOTAL</td>
+                  {gcEnseignes.map((e, ei) => {
+                    const tot = articlesValides.reduce((s, a) => s + (e.qties[qtyKey(a, articlesValides)] || 0), 0);
+                    return <td key={ei} style={{ padding: "5px 4px", textAlign: "center", fontWeight: 800, color: "#b45309" }}>{fmtNum(tot)}</td>;
+                  })}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Barre d'action */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", position: "sticky", bottom: -24, background: C.bg, padding: "14px 24px", margin: "0 -24px -24px", borderTop: `1px solid ${C.border}`, zIndex: 5 }}>
