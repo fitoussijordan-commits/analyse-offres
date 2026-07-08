@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadCampagnesCreees, upsertCampagne } from "@/lib/campaigns";
-import { CampagneCreee, qtyParPack, totalPacks, ventilationPalier, campagneCreeeToAnalyse } from "@/lib/create-campaign";
+import { CampagneCreee, GcEnseigne, GC_ENSEIGNES_DEFAUT, qtyParPack, totalPacks, ventilationPalier, campagneCreeeToAnalyse } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef,
@@ -38,7 +38,7 @@ interface Props {
 interface PalierEdit {
   code: string; label: string; nbPacks: number;
   pcts: number[]; remises: number[]; remiseAdd: number;
-  produits: { ref: string; name: string; barcode: string; qtyParPack: number; standardPrice: number; listPrice: number; ppc: number }[];
+  produits: { ref: string; name: string; barcode: string; qtyParPack: number; standardPrice: number; listPrice: number; ppc: number; typProd?: string }[];
 }
 
 function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
@@ -64,6 +64,7 @@ function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
         standardPrice: a.standardPrice || 0,
         listPrice: estVente ? (a.listPrice || 0) : 0,
         ppc: estVente ? (a.ppc || 0) : 0,
+        typProd: a.typProd || "Produit Vente",
       };
     }),
     };
@@ -78,16 +79,21 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
   const [paliers, setPaliers] = useState<PalierEdit[]>([]);
   const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<SubTab>("offre");
-  // Quantités Grands Comptes par ref (bloc GC, indépendant des paliers).
-  const [gcQties, setGcQties] = useState<Record<string, number>>({});
+  // Grands Comptes : 6 enseignes (nom, remise, qtés par article).
+  const [gcEnseignes, setGcEnseignes] = useState<GcEnseigne[]>(GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} })));
 
   useEffect(() => { void (async () => {
     try { const list = await loadCampagnesCreees(); setSaved(list); if (list.length) selectCamp(list[0]); }
     catch (e: any) { onToast("Erreur chargement : " + e.message, "error"); }
   })(); }, []);
 
-  function selectCamp(c: CampagneCreee) { setCamp(c); setPaliers(toPaliersEdit(c)); setGcQties(c.gcQties || {}); }
-  const setGcQty = (ref: string, v: number) => setGcQties(q => ({ ...q, [ref]: v }));
+  function selectCamp(c: CampagneCreee) {
+    setCamp(c); setPaliers(toPaliersEdit(c));
+    setGcEnseignes(c.gcEnseignes && c.gcEnseignes.length ? c.gcEnseignes.map(e => ({ ...e, qties: { ...e.qties } })) : GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} })));
+  }
+  const setGcQty = (ei: number, key: string, v: number) => setGcEnseignes(es => es.map((e, i) => i === ei ? { ...e, qties: { ...e.qties, [key]: v } } : e));
+  const setGcNom = (ei: number, nom: string) => setGcEnseignes(es => es.map((e, i) => i === ei ? { ...e, nom } : e));
+  const setGcRemise = (ei: number, remise: number) => setGcEnseignes(es => es.map((e, i) => i === ei ? { ...e, remise } : e));
   const nom = camp?.nom || "";
 
   // ── Mutations ──────────────────────────────────────────────────────────────
@@ -124,11 +130,11 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
     try {
       const payload: any = {
         nom,
-        gcQties,
+        gcEnseignes,
         paliers: paliers.map(p => ({
           code: p.code, label: p.label, qtyPacks: p.nbPacks,
           pctOffres: p.pcts, remises: p.remises, remiseAddTaux: p.remiseAdd,
-          produits: p.produits.map(pr => ({ ref: pr.ref, name: pr.name, productId: 0, qtyParPack: pr.qtyParPack, barcode: pr.barcode, standardPrice: pr.standardPrice, listPrice: pr.listPrice, ppc: pr.ppc })),
+          produits: p.produits.map(pr => ({ ref: pr.ref, name: pr.name, productId: 0, qtyParPack: pr.qtyParPack, barcode: pr.barcode, standardPrice: pr.standardPrice, listPrice: pr.listPrice, ppc: pr.ppc, typProd: pr.typProd })),
         })),
       };
       if (logistique) payload.logistique = logistique;
@@ -202,7 +208,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
 
       {tab === "offre" && <>
         <OffreTab paliers={paliers} calcPaliers={calcPaliers} setPalier={setPalier} setPct={setPct} setRemise={setRemise} setQty={setQty} besoin={besoin} />
-        <GrandsComptesBloc produits={paliers[0]?.produits || []} gcQties={gcQties} setGcQty={setGcQty} />
+        <GrandsComptesBloc produits={paliers[0]?.produits || []} enseignes={gcEnseignes} setGcQty={setGcQty} setGcNom={setGcNom} setGcRemise={setGcRemise} />
       </>}
       {tab === "logistique" && <LogistiqueTab log={logistique} />}
       {tab === "synthese" && <SyntheseTab paliers={paliers} calcPaliers={calcPaliers} />}
@@ -300,37 +306,75 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
   );
 }
 
-// ── Bloc GRANDS COMPTES : mêmes articles, quantités totales GC libres ─────────
-function GrandsComptesBloc({ produits, gcQties, setGcQty }: { produits: any[]; gcQties: Record<string, number>; setGcQty: (ref: string, v: number) => void }) {
+// ── Bloc GRANDS COMPTES : mêmes articles × 6 enseignes (qté + remise par enseigne) ──
+function GrandsComptesBloc({ produits, enseignes, setGcQty, setGcNom, setGcRemise }: {
+  produits: any[]; enseignes: GcEnseigne[];
+  setGcQty: (ei: number, key: string, v: number) => void;
+  setGcNom: (ei: number, nom: string) => void;
+  setGcRemise: (ei: number, remise: number) => void;
+}) {
   if (!produits.length) return null;
-  const total = produits.reduce((s, p) => s + (gcQties[p.ref] || 0), 0);
+  // Clé composite : distingue les doublons de réf (stick vendu vs stick UG).
+  const refCount: Record<string, number> = {};
+  for (const p of produits) { const r = (p.ref || "").trim(); if (r) refCount[r] = (refCount[r] || 0) + 1; }
+  const keyOf = (p: any) => { const r = (p.ref || "").trim(); return (r && refCount[r] > 1) ? `${r}#${p.typProd || "Produit Vente"}` : r; };
   return (
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
-      <div style={{ padding: "12px 16px", background: C.amber ? "#fff7ed" : C.blueSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ padding: "12px 16px", background: "#fff7ed", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: "#b45309", color: "#fff", borderRadius: 5, padding: "2px 8px" }}>GRANDS COMPTES</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités totales GC (indépendantes des paliers)</span>
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, color: C.textMuted }}>Total : <b style={{ color: C.text }}>{fmtNum(total)}</b></span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités par enseigne (nom et remise éditables)</span>
       </div>
       <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
-            <tr>{["Réf", "Produit", "EAN", "Qté GC", "Coût", "Tarif", "PPC"].map((h, i) => <th key={i} style={{ padding: "5px 8px", textAlign: i >= 3 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}</tr>
+            {/* Ligne 1 : noms d'enseignes éditables */}
+            <tr>
+              <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }} colSpan={2}>Enseigne →</th>
+              {enseignes.map((e, ei) => (
+                <th key={ei} style={{ padding: "4px 4px", borderBottom: `1px solid ${C.border}` }}>
+                  <input style={{ ...input, width: 96, textAlign: "center", fontWeight: 700, color: "#b45309" }} value={e.nom} onChange={ev => setGcNom(ei, ev.target.value)} />
+                </th>
+              ))}
+            </tr>
+            {/* Ligne 2 : remises éditables (%) */}
+            <tr>
+              <th style={{ padding: "3px 8px", textAlign: "right", color: C.textMuted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }} colSpan={2}>Remise %</th>
+              {enseignes.map((e, ei) => (
+                <th key={ei} style={{ padding: "3px 4px", textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
+                  <input type="number" step="0.1" style={{ ...input, width: 60, textAlign: "center" }} value={Math.round(e.remise * 1000) / 10} onChange={ev => setGcRemise(ei, (parseFloat(ev.target.value) || 0) / 100)} />
+                </th>
+              ))}
+            </tr>
+            {/* Ligne 3 : entêtes fixes */}
+            <tr>
+              <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Réf</th>
+              <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Produit</th>
+              {enseignes.map((e, ei) => <th key={ei} style={{ padding: "5px 4px", textAlign: "center", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Qté</th>)}
+            </tr>
           </thead>
           <tbody>
-            {produits.map((p: any, ri: number) => (
-              <tr key={ri}>
-                <td style={{ padding: "4px 8px", fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.ref}</td>
-                <td style={{ padding: "4px 8px", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.name}</td>
-                <td style={{ padding: "4px 8px", color: C.textMuted, fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.barcode || "—"}</td>
-                <td style={{ padding: "3px 8px", textAlign: "right", borderBottom: `1px solid ${C.border}` }}>
-                  <input type="number" style={{ ...input, width: 70, fontWeight: 700, color: "#b45309" }} value={gcQties[p.ref] || ""} onChange={e => setGcQty(p.ref, parseInt(e.target.value) || 0)} placeholder="0" />
-                </td>
-                <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.standardPrice)}</td>
-                <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.listPrice)}</td>
-                <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.ppc)}</td>
-              </tr>
-            ))}
+            {produits.map((p: any, ri: number) => {
+              const k = keyOf(p);
+              return (
+                <tr key={ri}>
+                  <td style={{ padding: "4px 8px", fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.ref}</td>
+                  <td style={{ padding: "4px 8px", color: C.textSec, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{p.name}</td>
+                  {enseignes.map((e, ei) => (
+                    <td key={ei} style={{ padding: "3px 4px", textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
+                      <input type="number" style={{ ...input, width: 60, textAlign: "center", color: "#b45309" }} value={e.qties[k] || ""} onChange={ev => setGcQty(ei, k, parseInt(ev.target.value) || 0)} placeholder="0" />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+            {/* Ligne total par enseigne */}
+            <tr style={{ background: "#fff7ed" }}>
+              <td style={{ padding: "5px 8px", fontWeight: 800, color: "#b45309" }} colSpan={2}>TOTAL</td>
+              {enseignes.map((e, ei) => {
+                const tot = produits.reduce((s, p) => s + (e.qties[keyOf(p)] || 0), 0);
+                return <td key={ei} style={{ padding: "5px 4px", textAlign: "center", fontWeight: 800, color: "#b45309" }}>{fmtNum(tot)}</td>;
+              })}
+            </tr>
           </tbody>
         </table>
       </div>

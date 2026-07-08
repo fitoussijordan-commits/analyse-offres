@@ -60,11 +60,27 @@ export interface CampagneCreee {
   articles: ArticleCampagne[]; // communs à tous les paliers
   paliers: PalierSaisi[];      // chaque palier porte sa propre reco % offres (par code offre)
   annee?: string;             // année / cycle de rangement, saisi par l'utilisateur (ex. "2027")
-  // Quantités Grands Comptes par article (ref → qté totale), saisies dans Aperçu Offre et
-  // retranscrites dans le bloc GRANDS COMPTES du fichier Excel (colonne E). Indépendantes des paliers.
-  gcQties?: Record<string, number>;
+  // Grands Comptes : 6 enseignes, chacune avec sa remise et ses quantités par article (ref→qté).
+  // Retranscrites dans le bloc GRANDS COMPTES du fichier Excel (une colonne qté + remise par enseigne).
+  gcEnseignes?: GcEnseigne[];
   createdAt?: string;
 }
+
+export interface GcEnseigne {
+  nom: string;                     // ex. "BIOCOOP"
+  remise: number;                  // ex. 0.25
+  qties: Record<string, number>;   // ref (ou clé composite) → quantité
+}
+
+// Enseignes GC par défaut (ordre = colonnes M, P, S, V, Y, AB du template).
+export const GC_ENSEIGNES_DEFAUT: GcEnseigne[] = [
+  { nom: "BIOCOOP", remise: 0.25, qties: {} },
+  { nom: "Mlle Bio", remise: 0.20, qties: {} },
+  { nom: "Galeries Lafayette", remise: 0.16, qties: {} },
+  { nom: "Printemps", remise: 0.185, qties: {} },
+  { nom: "Place des tendances", remise: 0.15, qties: {} },
+  { nom: "NewPharma", remise: 0.20, qties: {} },
+];
 
 // Ordre des 7 typologies du template (= statuts clients Odoo, mêmes noms).
 export const TYPOLOGIES = ["Ambassadeur", "Compagnon", "Challenger", "Rose", "Prunelier", "Anthylide", "Calendula"];
@@ -283,7 +299,7 @@ export function ventilationPalier(articles: ArticleCampagne[], pal: PalierSaisi)
 
 export interface ExportPayload {
   nom: string;
-  gcQties?: Record<string, number>; // quantités Grands Comptes par ref (colonne E du bloc GC)
+  gcEnseignes?: GcEnseigne[]; // Grands Comptes : 6 enseignes (qté + remise par article)
   paliers: Array<{
     code: string; label: string; qtyPacks: number; descriptif?: string;
     remiseStandard?: boolean; remiseStandardTaux?: number; remiseAddTaux?: number;
@@ -303,7 +319,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
   const totalP = totalPacks(camp.paliers);
   return {
     nom: camp.nom,
-    gcQties: camp.gcQties || {},
+    gcEnseignes: camp.gcEnseignes,
     paliers: camp.paliers.map(pal => {
       const vent = ventilationPalier(arts, pal);
       return {

@@ -25,7 +25,8 @@ export interface PropPalier {
 }
 // Ligne du Mapping (catalogue complet ou articles campagne).
 export interface MapRow { ref: string; name?: string; barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number; }
-export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; gcQties?: Record<string, number>; }
+export interface GcEnseignePayload { nom: string; remise: number; qties: Record<string, number>; }
+export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; gcEnseignes?: GcEnseignePayload[]; }
 
 export const PROP_SHEET = "Proposition template";
 
@@ -380,6 +381,31 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   // GRANDS COMPTES (palier 1) : code (valeur) + libellé/prix en VLOOKUP vers Mapping.
   const pal1 = paliers[0];
   const GC_PV_FIRST = 123, GC_PV_COUNT = 13, LOG_PV_FIRST = 149, LOG_PV_COUNT = 13;
+  // 6 enseignes GC : colonne du nom (=col qté), colonne de la remise. Ordre = template.
+  const GC_ENSEIGNE_COLS = [
+    { nom: 13, qte: 13, remise: 15 },  // BIOCOOP : nom/qté M, remise O
+    { nom: 16, qte: 16, remise: 18 },  // Mlle Bio : P / R
+    { nom: 19, qte: 19, remise: 21 },  // Galeries Lafayette : S / U
+    { nom: 22, qte: 22, remise: 24 },  // Printemps : V / X
+    { nom: 25, qte: 25, remise: 27 },  // Place des tendances : Y / AA
+    { nom: 28, qte: 28, remise: 30 },  // NewPharma : AB / AD
+  ];
+  // En-têtes enseignes : nom (ligne 116) + remise (ligne 117), si fournis.
+  if (payload.gcEnseignes) {
+    GC_ENSEIGNE_COLS.forEach((cols, idx) => {
+      const ens = payload.gcEnseignes![idx];
+      if (!ens) return;
+      if (ens.nom) ws.getCell(116, cols.nom).value = ens.nom;
+      if (typeof ens.remise === "number") ws.getCell(117, cols.remise).value = ens.remise;
+    });
+  }
+  // Clé GC : réf seule si unique dans le palier, sinon "ref#type" (doublons vendu/UG).
+  const gcRefCount: Record<string, number> = {};
+  for (const pr of pal1?.produits || []) { const r = (pr.ref || "").trim(); if (r) gcRefCount[r] = (gcRefCount[r] || 0) + 1; }
+  const gcKey = (pr?: PropProduit): string => {
+    const r = (pr?.ref || "").trim();
+    return (r && gcRefCount[r] > 1) ? `${r}#${pr!.typProd || "Produit Vente"}` : r;
+  };
   for (let i = 0; i < GC_PV_COUNT; i++) {
     const row = GC_PV_FIRST + i, p = pal1 ? pal1.produits[i] : undefined;
     const ref = p ? (p.ref || "").trim() : "";
@@ -397,9 +423,16 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 8).value = venteGC ? { formula: vlookup(`A${row}`, 5) } : 0;
       ws.getCell(row, 10).value = venteGC ? { formula: vlookup(`A${row}`, 6) } : 0;
     }
-    // Quantité Grands Comptes saisie (colonne E) : remplace la formule du gabarit si fournie.
-    if (ref && payload.gcQties && payload.gcQties[ref] != null) {
-      ws.getCell(row, 5).value = payload.gcQties[ref];
+    // Grands Comptes multi-enseignes : chaque enseigne a sa colonne qté (M/P/S/V/Y/AB) sur cette
+    // ligne article, et sa remise (ligne 117). Clé composite pour distinguer doublons vendu/UG.
+    const gk = gcKey(p);
+    if (gk && payload.gcEnseignes) {
+      GC_ENSEIGNE_COLS.forEach((cols, idx) => {
+        const ens = payload.gcEnseignes![idx];
+        if (!ens) return;
+        const q = ens.qties[gk];
+        if (q != null) ws.getCell(row, cols.qte).value = q;
+      });
     }
   }
   // Besoins logistiques (palier 1) : code + libellé en VLOOKUP sur toutes les lignes.
