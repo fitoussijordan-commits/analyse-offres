@@ -41,6 +41,10 @@ export interface PalierSaisi {
   // Reco % offres par typologie (7 valeurs, ordre TYPOLOGIES) propre à CE palier, calculée
   // sur les ventes N-1 du code offre du palier (qui l'a acheté l'an dernier).
   pctOffresReco?: number[];
+  // Nombre TOTAL de produits (Produit Vente) que doit contenir un pack de ce palier.
+  // Si défini (>0), la reco qté/pack de chaque article = ce total ventilé au prorata de la
+  // conso N-1 (au lieu de conso ÷ total packs). Les UG/Testeurs/PLV sont exclus de ce total.
+  nbProduitsPack?: number;
 }
 
 export interface CampagneCreee {
@@ -198,6 +202,41 @@ export function totalPacks(paliers: PalierSaisi[]): number {
   return paliers.reduce((s, p) => s + (p.nbPacks || 0), 0);
 }
 
+/** Un article compte-t-il dans la ventilation "N produits/pack" ? (Produit Vente uniquement) */
+function estVenteArticle(a: ArticleCampagne): boolean {
+  return (a.typProd || "Produit Vente") === "Produit Vente";
+}
+
+/**
+ * Ventile un nombre TOTAL de produits/pack entre les articles Produit Vente d'une campagne,
+ * au prorata de leur conso N-1. Renvoie une map { ref -> qté entière }. La somme des qtés
+ * vaut exactement `nbTotal` grâce à la répartition du reste (méthode du plus grand reste).
+ * Les articles sans conso ne reçoivent rien. Les UG/Testeurs/PLV sont exclus.
+ */
+export function ventilerPack(articles: ArticleCampagne[], nbTotal: number): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!nbTotal || nbTotal <= 0) return out;
+  const arts = articles.filter(a => a.ref.trim() && estVenteArticle(a) && (a.consoN1 || 0) > 0);
+  const somme = arts.reduce((s, a) => s + (a.consoN1 || 0), 0);
+  if (somme <= 0) return out;
+  // Part brute (flottante) puis arrondi entier + distribution du reste.
+  const bruts = arts.map(a => ({ ref: a.ref.trim(), exact: (a.consoN1 || 0) / somme * nbTotal }));
+  let attribue = 0;
+  for (const b of bruts) { const base = Math.floor(b.exact); out[b.ref] = base; attribue += base; }
+  // Répartir les unités restantes aux plus grands restes fractionnaires.
+  let reste = nbTotal - attribue;
+  const parReste = [...bruts].sort((a, b) => (b.exact - Math.floor(b.exact)) - (a.exact - Math.floor(a.exact)));
+  for (let i = 0; i < parReste.length && reste > 0; i++) { out[parReste[i].ref] += 1; reste--; }
+  return out;
+}
+
+/** Somme des qté/pack effectives des Produit Vente d'un palier (pour l'alerte d'écart UI). */
+export function totalProduitsPack(articles: ArticleCampagne[], pal: PalierSaisi, totalP: number): number {
+  return articles
+    .filter(a => a.ref.trim() && estVenteArticle(a))
+    .reduce((s, a) => s + qtyParPack(a, pal, totalP), 0);
+}
+
 /** Qté/pack effective d'un article dans un palier : valeur saisie (>0) sinon reco.
  *
  *  Reco = conso N-1 répartie sur TOUS les paliers, pas recopiée dans chacun :
@@ -207,13 +246,24 @@ export function totalPacks(paliers: PalierSaisi[]): number {
  *  l'ancien comportement (÷ nbPacks du palier seul) pour rétro-compatibilité.
  *
  *  Un 0 stocké n'écrase PAS la reco : si l'utilisateur veut exclure un article, il le retire. */
-export function qtyParPack(art: ArticleCampagne, pal: PalierSaisi, totalP?: number): number {
+export function qtyParPack(art: ArticleCampagne, pal: PalierSaisi, totalP?: number, ventilation?: Record<string, number>): number {
   const manual = pal.qtyParPack[art.ref];
   if (manual != null && manual > 0) return manual;
+  // Mode "N produits/pack" : si une ventilation est fournie (palier avec nbProduitsPack défini),
+  // la reco de l'article vient de cette ventilation au prorata conso N-1.
+  if (ventilation && ventilation[art.ref] != null) {
+    const v = ventilation[art.ref];
+    return v > 0 ? v : (manual ?? 0);
+  }
   const denom = (totalP != null && totalP > 0) ? totalP : (pal.nbPacks || 0);
   const reco = denom > 0 ? Math.round((art.consoN1 || 0) / denom) : 0;
   // Si pas de reco possible (pas de conso), on respecte une éventuelle saisie 0.
   return reco > 0 ? reco : (manual ?? 0);
+}
+
+/** Ventilation à utiliser pour un palier : sa map si nbProduitsPack>0, sinon undefined. */
+export function ventilationPalier(articles: ArticleCampagne[], pal: PalierSaisi): Record<string, number> | undefined {
+  return (pal.nbProduitsPack && pal.nbProduitsPack > 0) ? ventilerPack(articles, pal.nbProduitsPack) : undefined;
 }
 
 export interface ExportPayload {
@@ -237,7 +287,9 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
   const totalP = totalPacks(camp.paliers);
   return {
     nom: camp.nom,
-    paliers: camp.paliers.map(pal => ({
+    paliers: camp.paliers.map(pal => {
+      const vent = ventilationPalier(arts, pal);
+      return {
       code: pal.code,
       label: pal.label,
       qtyPacks: pal.nbPacks || 0,
@@ -255,7 +307,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
           ref: a.ref.trim(),
           name: a.name || "",
           productId: a.productId || 0,
-          qtyParPack: qtyParPack(a, pal, totalP),
+          qtyParPack: qtyParPack(a, pal, totalP, vent),
           barcode: a.barcode || "",
           standardPrice: a.standardPrice || 0,
           listPrice: estVente ? (a.listPrice || 0) : 0,
@@ -263,6 +315,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
           typProd: typ,
         };
       }),
-    })).filter(p => p.produits.length),
+    };
+    }).filter(p => p.produits.length),
   };
 }

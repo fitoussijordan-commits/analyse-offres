@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import {
   CampagneCreee, PalierSaisi, ArticleCampagne, genId,
-  analyseCampagneCreee, toExportPayload, qtyParPack, totalPacks, TYPES_PRODUIT,
+  analyseCampagneCreee, toExportPayload, qtyParPack, totalPacks, ventilationPalier, TYPES_PRODUIT,
 } from "@/lib/create-campaign";
 import { loadCampagnesCreees, upsertCampagneCreee, deleteCampagneCreee, loadCampagnesCreeesCorbeille, restoreCampagneCreee, hardDeleteCampagneCreee } from "@/lib/campaigns";
 import { buildSyntheseLogistique } from "@/lib/logistique";
@@ -379,6 +379,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             <input style={{ ...inputStyle, width: 150 }} value={pal.label} onChange={e => setPalier(pi, { label: e.target.value })} placeholder="Libellé" />
             <span style={{ fontSize: 12, color: C.textMuted }}>Nb packs cible</span>
             <input type="number" style={{ ...inputStyle, width: 90 }} value={pal.nbPacks || ""} onChange={e => setPalier(pi, { nbPacks: parseInt(e.target.value) || 0 })} placeholder="0" />
+            <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 6 }} title="Nombre total de produits (Produit Vente) par pack. La reco répartit ce total entre les articles au prorata des ventes N-1. Laisse vide pour la reco automatique.">Produits/pack</span>
+            <input type="number" style={{ ...inputStyle, width: 80 }} value={pal.nbProduitsPack || ""} onChange={e => setPalier(pi, { nbProduitsPack: e.target.value === "" ? undefined : (parseInt(e.target.value) || 0) })} placeholder="auto" />
             <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: C.textSec, cursor: "pointer", marginLeft: 6 }}>
               <input type="checkbox" checked={!!pal.remiseStandard} onChange={e => setPalier(pi, { remiseStandard: e.target.checked })} style={{ cursor: "pointer" }} />
               Remise statut unique
@@ -407,10 +409,14 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 </thead>
                 <tbody>
                   {articlesValides.map((a) => {
-                    // Reco = conso répartie sur le TOTAL des packs (pas ÷ nbPacks du palier seul).
+                    // Ventilation "N produits/pack" si le palier a un total saisi, sinon undefined.
+                    const vent = ventilationPalier(articlesValides, pal);
+                    // Reco = ventilation prorata si mode N produits/pack, sinon conso ÷ total packs.
                     // Pas de conso → pas de reco (on n'invente pas un chiffre).
                     const hasConso = (a.consoN1 || 0) > 0;
-                    const reco = hasConso ? qtyParPack({ ...a, ref: a.ref }, pal, totalP) : 0;
+                    const reco = hasConso ? qtyParPack({ ...a, ref: a.ref }, pal, totalP, vent) : 0;
+                    // Reco affichable si conso ET (mode N produits/pack actif OU nb packs défini).
+                    const recoDispo = hasConso && (!!vent || pal.nbPacks > 0);
                     const m = pal.qtyParPack[a.ref];
                     // Valeur affichée : saisie >0 sinon reco. Un 0 résiduel n'écrase pas la reco.
                     const manual = (m != null && m > 0) ? m : undefined;
@@ -426,12 +432,12 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                         })()}
                       </td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, color: C.textMuted }}>{analysed ? fmtNum(a.consoN1 || 0) : "—"}</td>
-                      <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, fontWeight: 700, color: (hasConso && pal.nbPacks > 0) ? C.teal : C.textMuted }}>{(hasConso && pal.nbPacks > 0) ? fmtNum(reco) : "—"}</td>
+                      <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, fontWeight: 700, color: recoDispo ? C.teal : C.textMuted }}>{recoDispo ? fmtNum(reco) : "—"}</td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>
                         <input type="number" style={{ ...inputStyle, width: 80, textAlign: "right", fontWeight: 700, color: C.blue }}
-                          value={manual != null ? manual : ((hasConso && pal.nbPacks > 0) ? reco : "")}
+                          value={manual != null ? manual : (recoDispo ? reco : "")}
                           onChange={e => setPalierQty(pi, a.ref, e.target.value === "" ? null : (parseInt(e.target.value) || 0))}
-                          placeholder={(hasConso && pal.nbPacks > 0) ? String(reco) : "—"} />
+                          placeholder={recoDispo ? String(reco) : "—"} />
                       </td>
                     </tr>
                     );
@@ -439,6 +445,24 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 </tbody>
               </table>
             )}
+            {/* Alerte écart : mode N produits/pack → total réparti vs cible saisie. */}
+            {pal.nbProduitsPack && pal.nbProduitsPack > 0 && (() => {
+              const vent = ventilationPalier(articlesValides, pal);
+              const totalReparti = articlesValides
+                .filter(a => (a.typProd || "Produit Vente") === "Produit Vente")
+                .reduce((s, a) => s + qtyParPack(a, pal, totalP, vent), 0);
+              const cible = pal.nbProduitsPack;
+              const ecart = totalReparti - cible;
+              const ok = ecart === 0;
+              return (
+                <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 7, fontSize: 12, fontWeight: 600,
+                  background: ok ? C.tealSoft : "#fef3c7", color: ok ? C.teal : "#b45309", display: "inline-block" }}>
+                  {ok
+                    ? `✓ ${totalReparti} produits/pack répartis (= cible ${cible})`
+                    : `⚠ ${totalReparti} produits/pack répartis vs cible ${cible} (écart ${ecart > 0 ? "+" : ""}${ecart}) — ajuste les quantités`}
+                </div>
+              );
+            })()}
           </div>
         </div>
       ))}
