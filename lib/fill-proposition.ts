@@ -331,14 +331,22 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getRow(row).hidden = !ref;
     }
 
-    // Lignes PLV / Testeurs / SR (au-delà des Produit Vente, jusqu'à dataLast) : on garde leurs
-    // réfs du gabarit MAIS on les convertit en TEXTE, on applique le VLOOKUP coût/tarif/PPC, et
-    // on tire AUSSI les formules calculées (K=PPC remisé, L=BRI, M..Z=CA/Marges) que le gabarit
-    // ne fournissait pas sur ces lignes.
+    // Lignes PLV / Testeurs / SR (au-delà des Produit Vente, jusqu'à dataLast).
+    // RÈGLE : ne garder QUE les réfs présentes dans la campagne (pal.produits). Toute réf
+    // pré-remplie du gabarit (PANNEAU REGE, PRESENTOIR REGE, SR REGE RETAIL 1…) absente de la
+    // campagne est VIDÉE (réf, libellé, prix, quantités) et la ligne masquée — sinon on
+    // exportait des références d'une ancienne campagne, ce qui n'a aucun sens.
+    const refsCampagne = new Set((pal?.produits || []).map(p => (p.ref || "").trim()).filter(Boolean));
     for (let row = blk.pvFirst + blk.pvCount; row <= blk.dataLast; row++) {
       const cur = ws.getCell(row, 1).value;
       const ref = cur == null ? "" : String(cur).trim();
       if (!ref) continue;
+      // Résidu du gabarit (réf absente de la campagne) → on vide entièrement la ligne.
+      if (!refsCampagne.has(ref)) {
+        for (let col = 1; col <= 30; col++) ws.getCell(row, col).value = null;
+        ws.getRow(row).hidden = true;
+        continue;
+      }
       setRefText(ws, row, ref);
       ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) };
       ws.getCell(row, 3).value = { formula: vlookup(`A${row}`, 3) };
