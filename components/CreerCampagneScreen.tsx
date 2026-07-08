@@ -144,35 +144,6 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   };
   const nouvelle = () => { setCamp(emptyCampagne()); setAnalysed(false); };
 
-  // ── DIAGNOSTIC TEMPORAIRE : ventilation des quantités par statut client ──────
-  // But : vérifier si le champ statut est exploitable avant de baser la reco dessus.
-  // À retirer une fois la décision prise.
-  const [diagBusy, setDiagBusy] = useState(false);
-  const diagnosticStatuts = async () => {
-    const refs = camp.articles.map(a => a.ref.trim()).filter(Boolean);
-    if (!refs.length) { onToast("Ajoute des articles d'abord", "error"); return; }
-    if (!camp.periodeDebut || !camp.periodeFin) { onToast("Renseigne la période N-1 (début et fin)", "error"); return; }
-    setDiagBusy(true);
-    try {
-      const vent = await odoo.getQtyByStatut(session, refs, camp.periodeDebut, camp.periodeFin);
-      const items = Object.values(vent).filter(v => v.qtyTotal > 0);
-      let totalQty = 0, totalInconnu = 0;
-      const lignes: string[] = [];
-      for (const v of items) {
-        totalQty += v.qtyTotal; totalInconnu += v.qtyInconnu;
-        const parts = Object.entries(v.parStatut).sort((a, b) => b[1] - a[1]).map(([s, q]) => `${s}: ${Math.round(q)}`);
-        if (v.qtyInconnu > 0) parts.push(`❓ inconnu: ${Math.round(v.qtyInconnu)}`);
-        lignes.push(`• ${v.name || v.ref} (${Math.round(v.qtyTotal)} u.) → ${parts.join(", ") || "aucun statut"}`);
-      }
-      const pctInconnu = totalQty > 0 ? Math.round((totalInconnu / totalQty) * 100) : 0;
-      const resume = `Statuts renseignés sur ${100 - pctInconnu}% des unités (${pctInconnu}% inconnu).`;
-      console.log("=== DIAGNOSTIC STATUTS ===\n" + resume + "\n" + lignes.join("\n"));
-      window.alert(resume + "\n\n" + lignes.join("\n") + "\n\n(détail complet aussi dans la console)");
-      onToast(resume, pctInconnu > 50 ? "error" : "success");
-    } catch (e: any) { onToast("Erreur diagnostic : " + e.message, "error"); }
-    finally { setDiagBusy(false); }
-  };
-
   // Vide les quantités saisies de tous les paliers → laisse la reco automatique
   // (conso ÷ total des packs) s'appliquer. Ne modifie que l'état local : rien n'est
   // enregistré tant que l'utilisateur ne clique pas sur « Sauvegarder ».
@@ -249,7 +220,6 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Créer une campagne</h1>
         <span style={{ fontSize: 13, color: C.textMuted }}>Mêmes articles dans tous les paliers ; seules les quantités changent.</span>
         <div style={{ flex: 1 }} />
-        <button onClick={diagnosticStatuts} disabled={diagBusy} title="Diagnostic : ventilation des quantités vendues par statut client (test)" style={{ padding: "7px 14px", background: C.white, border: `1px dashed ${C.blue}`, borderRadius: 8, cursor: diagBusy ? "default" : "pointer", fontSize: 13, fontWeight: 600, color: C.blue, fontFamily: "inherit", opacity: diagBusy ? 0.6 : 1 }}>{diagBusy ? "Analyse…" : "🔍 Diagnostic statuts"}</button>
         <button onClick={reinitialiserRecos} title="Efface les quantités saisies pour laisser la reco automatique (conso ÷ total packs)" style={{ padding: "7px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>↻ Réinitialiser les recos</button>
         <button onClick={() => setShowCorbeille(v => !v)} style={{ padding: "7px 14px", background: showCorbeille ? C.bg : C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>🗑 Corbeille{corbeille.length ? ` (${corbeille.length})` : ""}</button>
         <button onClick={nouvelle} style={{ padding: "7px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>+ Nouvelle</button>

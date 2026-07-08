@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import path from "path";
-import { fillPropositionSheet, PROP_SHEET, PropPayload } from "@/lib/fill-proposition";
+import { fillPropositionSheet, fillMapping, PROP_SHEET, MAPPING_SHEET, PropPayload, MapRow } from "@/lib/fill-proposition";
 import { writeSyntheseLogistiqueSheet, SyntheseLogistique } from "@/lib/logistique";
 import { writeSyntheseAnnuelleSheet } from "@/lib/synthese-detaillee";
 
@@ -15,6 +15,7 @@ const TEMPLATE_PATH = path.join(process.cwd(), "lib", "templates", "proposition-
 interface MultiPayload {
   campagnes: PropPayload[];        // une PropPayload par campagne (nom + paliers enrichis)
   logistique: SyntheseLogistique;  // synthèse pré-calculée côté client (axe mois dynamique)
+  mapping?: MapRow[];              // catalogue Odoo → onglet Mapping partagé (libellé/EAN/prix)
 }
 
 function sanitizeSheetName(name: string, fallback: string): string {
@@ -37,6 +38,12 @@ export async function POST(req: NextRequest) {
     const tplModel = JSON.parse(JSON.stringify(tpl.model));
     const tplId = tpl.id;
 
+    // 0) Remplir l'onglet Mapping UNE fois avec le catalogue + tous les articles des campagnes,
+    //    pour que les RECHERCHEV (libellé/EAN/coût/tarif/PPC) de chaque feuille fonctionnent.
+    const mapRefs = fillMapping(wb, {
+      nom: "", paliers: campagnes.flatMap(c => c.paliers), mapping: payload.mapping,
+    });
+
     // 1) Un onglet Proposition par campagne (clone du gabarit + remplissage).
     const usedNames = new Set<string>();
     campagnes.forEach((camp, idx) => {
@@ -47,7 +54,7 @@ export async function POST(req: NextRequest) {
       const ws = wb.addWorksheet(n);
       ws.model = { ...tplModel, name: n };
       ws.name = n;
-      fillPropositionSheet(ws, camp);
+      fillPropositionSheet(ws, camp, mapRefs);
     });
 
     // 2) Onglet Synthèse logistique (réf × mois) — fonction partagée (axe des mois dynamique,
@@ -62,10 +69,11 @@ export async function POST(req: NextRequest) {
     // 2bis) Onglet Synthèse CA annuelle : CA/marge par campagne + total année.
     writeSyntheseAnnuelleSheet(wb, campagnes.map(c => ({ nom: c.nom, paliers: c.paliers })));
 
-    // 3) Supprimer les onglets du gabarit de base (Proposition modèle, Synthese, Mapping) :
-    //    on ne garde que les onglets campagnes + la synthèse logistique.
+    // 3) Supprimer les onglets du gabarit de base (Proposition modèle + Synthese).
+    //    On GARDE l'onglet Mapping : les RECHERCHEV des feuilles campagnes en dépendent
+    //    (libellé/EAN/coût/tarif/PPC). Sans lui, toutes ces colonnes seraient vides.
     for (const sheet of [...wb.worksheets]) {
-      if (sheet.id !== tplId && sheet.name !== "Synthese" && sheet.name !== "Mapping") continue;
+      if (sheet.id !== tplId && sheet.name !== "Synthese") continue;
       try { wb.removeWorksheet(sheet.id); } catch { /* ignore */ }
     }
 

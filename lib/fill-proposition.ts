@@ -72,7 +72,7 @@ function writeTypoFormulas(ws: ExcelJS.Worksheet, row: number, remiseRow: number
 
 // Remplit l'onglet Mapping avec tous les articles uniques (Odoo + réfs libres) et renvoie
 // l'ensemble des réfs présentes (pour savoir si un VLOOKUP est possible).
-function fillMapping(wb: ExcelJS.Workbook, payload: PropPayload): Set<string> {
+export function fillMapping(wb: ExcelJS.Workbook, payload: PropPayload): Set<string> {
   const map = wb.getWorksheet(MAPPING_SHEET);
   const refs = new Set<string>();
   if (!map) return refs;
@@ -462,7 +462,8 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   for (const row of [192, 193, 194, 195, 196, 197]) for (const c of [1, 2, 4]) ws.getCell(row, c).value = null;
 }
 
-// Compat : ancienne signature (feuille seule, sans Mapping). Garde le remplissage en valeurs.
-export function fillPropositionSheet(ws: ExcelJS.Worksheet, payload: PropPayload) {
-  fillProposition(ws, payload, new Set());
+// Remplit une feuille Proposition. mapRefs = réfs présentes dans le Mapping partagé (pour que
+// les VLOOKUP fonctionnent). Si omis, aucun Mapping (valeurs en dur uniquement).
+export function fillPropositionSheet(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: Set<string> = new Set()) {
+  fillProposition(ws, payload, mapRefs);
 }
