@@ -12,7 +12,7 @@ export interface PropProduit {
   typProd?: string;
 }
 export interface PropPalier {
-  code: string; label: string; qtyPacks: number; produits: PropProduit[];
+  code: string; label: string; qtyPacks: number; produits: PropProduit[]; descriptif?: string;
   // Remise statut : si standard, on applique le même taux à toutes les typologies.
   remiseStandard?: boolean;   // true = standard (même % pour tous)
   remiseStandardTaux?: number; // ex. 0.17 pour 17%
@@ -25,7 +25,7 @@ export interface PropPalier {
 }
 // Ligne du Mapping (catalogue complet ou articles campagne).
 export interface MapRow { ref: string; name?: string; barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number; }
-export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; }
+export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; gcQties?: Record<string, number>; }
 
 export const PROP_SHEET = "Proposition template";
 
@@ -260,6 +260,8 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     if (pal) {
       const titre = [payload.nom, pal.code, pal.label].map(s => (s || "").trim()).filter(Boolean).join(" — ") || "Offre";
       ws.getCell(blk.title, 1).value = titre;
+      // Descriptif libre du palier → colonne D de la ligne titre (à côté du nom Premium/Standard).
+      if (pal.descriptif != null) ws.getCell(blk.title, 4).value = pal.descriptif.trim();
       ws.getCell(blk.nbOffresRow, 2).value = pal.qtyPacks || 0;
       // Nombre de produits = SUM des "Pdt dans offre" (colonne E) des lignes Produit Vente.
       // Formule (pas une valeur) pour rester cohérent si on édite une qté à la main.
@@ -394,6 +396,10 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
       ws.getCell(row, 8).value = venteGC ? { formula: vlookup(`A${row}`, 5) } : 0;
       ws.getCell(row, 10).value = venteGC ? { formula: vlookup(`A${row}`, 6) } : 0;
+    }
+    // Quantité Grands Comptes saisie (colonne E) : remplace la formule du gabarit si fournie.
+    if (ref && payload.gcQties && payload.gcQties[ref] != null) {
+      ws.getCell(row, 5).value = payload.gcQties[ref];
     }
   }
   // Besoins logistiques (palier 1) : code + libellé en VLOOKUP sur toutes les lignes.

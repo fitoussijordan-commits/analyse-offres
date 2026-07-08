@@ -386,9 +386,9 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
           <div style={{ padding: "12px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <input style={{ ...inputStyle, width: 90, fontWeight: 700 }} value={pal.code} onChange={e => setPalier(pi, { code: e.target.value })} placeholder="Code" />
             <input style={{ ...inputStyle, width: 150 }} value={pal.label} onChange={e => setPalier(pi, { label: e.target.value })} placeholder="Libellé" />
-            <span style={{ fontSize: 12, color: C.textMuted }}>Nb packs cible</span>
+            <span style={{ fontSize: 12, color: C.textMuted }}>Nb offres cible</span>
             <input type="number" style={{ ...inputStyle, width: 90 }} value={pal.nbPacks || ""} onChange={e => setPalier(pi, { nbPacks: parseInt(e.target.value) || 0 })} placeholder="0" />
-            <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 6 }} title="Nombre total de produits (Produit Vente) par pack. La reco répartit ce total entre les articles au prorata des ventes N-1. Laisse vide pour la reco automatique.">Produits/pack</span>
+            <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 6 }} title="Nombre total de produits (Produit Vente) par offre. La reco répartit ce total entre les articles au prorata des ventes N-1. Laisse vide pour la reco automatique.">Produits/offre</span>
             <input type="number" style={{ ...inputStyle, width: 80 }} value={pal.nbProduitsPack || ""} onChange={e => setPalier(pi, { nbProduitsPack: e.target.value === "" ? undefined : (parseInt(e.target.value) || 0) })} placeholder="auto" />
             <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: C.textSec, cursor: "pointer", marginLeft: 6 }}>
               <input type="checkbox" checked={!!pal.remiseStandard} onChange={e => setPalier(pi, { remiseStandard: e.target.checked })} style={{ cursor: "pointer" }} />
@@ -404,6 +404,10 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             <div style={{ flex: 1 }} />
             {camp.paliers.length > 1 && <button onClick={() => removePalier(pi)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.red, fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>Supprimer le palier</button>}
           </div>
+          <div style={{ padding: "10px 16px 0", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12, color: C.textMuted, whiteSpace: "nowrap" }}>Descriptif</span>
+            <input style={{ ...inputStyle, flex: 1 }} value={pal.descriptif ?? ""} onChange={e => setPalier(pi, { descriptif: e.target.value })} placeholder="Ex. Panachage 50 offres // Remise 15% pour BRI conso 10€…" title="Texte libre retranscrit dans l'Excel à côté du nom du palier" />
+          </div>
           <div style={{ padding: "8px 16px 14px" }}>
             {articlesValides.length === 0 ? (
               <div style={{ fontSize: 13, color: C.textMuted, padding: "8px 0" }}>Ajoute des articles à la campagne ci-dessus.</div>
@@ -411,7 +415,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["Code", "Libellé", "Type", "Conso N-1", "Reco", "Qté / pack"].map((h, i) => (
+                    {["Code", "Libellé", "Type", "Conso N-1", "Reco", "Qté / offre"].map((h, i) => (
                       <th key={i} style={{ padding: "6px 8px", fontSize: 11, fontWeight: 700, color: i === 5 ? C.blue : C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i >= 3 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
                     ))}
                   </tr>
@@ -470,8 +474,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 7, fontSize: 12, fontWeight: 600,
                   background: ok ? C.tealSoft : "#fef3c7", color: ok ? C.teal : "#b45309", display: "inline-block" }}>
                   {ok
-                    ? `✓ ${totalReparti} produits/pack répartis (= cible ${cible})`
-                    : `⚠ ${totalReparti} produits/pack répartis vs cible ${cible} (écart ${ecart > 0 ? "+" : ""}${ecart}) — ajuste les quantités`}
+                    ? `✓ ${totalReparti} produits/offre répartis (= cible ${cible})`
+                    : `⚠ ${totalReparti} produits/offre répartis vs cible ${cible} (écart ${ecart > 0 ? "+" : ""}${ecart}) — ajuste les quantités`}
                 </div>
               );
             })()}

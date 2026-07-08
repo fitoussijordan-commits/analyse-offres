@@ -45,6 +45,9 @@ export interface PalierSaisi {
   // Si défini (>0), la reco qté/pack de chaque article = ce total ventilé au prorata de la
   // conso N-1 (au lieu de conso ÷ total packs). Les UG/Testeurs/PLV sont exclus de ce total.
   nbProduitsPack?: number;
+  // Descriptif libre du palier (saisi par l'utilisateur) → retranscrit dans l'Excel à côté
+  // du nom du palier (colonne D de la ligne titre).
+  descriptif?: string;
 }
 
 export interface CampagneCreee {
@@ -57,6 +60,9 @@ export interface CampagneCreee {
   articles: ArticleCampagne[]; // communs à tous les paliers
   paliers: PalierSaisi[];      // chaque palier porte sa propre reco % offres (par code offre)
   annee?: string;             // année / cycle de rangement, saisi par l'utilisateur (ex. "2027")
+  // Quantités Grands Comptes par article (ref → qté totale), saisies dans Aperçu Offre et
+  // retranscrites dans le bloc GRANDS COMPTES du fichier Excel (colonne E). Indépendantes des paliers.
+  gcQties?: Record<string, number>;
   createdAt?: string;
 }
 
@@ -277,8 +283,9 @@ export function ventilationPalier(articles: ArticleCampagne[], pal: PalierSaisi)
 
 export interface ExportPayload {
   nom: string;
+  gcQties?: Record<string, number>; // quantités Grands Comptes par ref (colonne E du bloc GC)
   paliers: Array<{
-    code: string; label: string; qtyPacks: number;
+    code: string; label: string; qtyPacks: number; descriptif?: string;
     remiseStandard?: boolean; remiseStandardTaux?: number; remiseAddTaux?: number;
     pctOffres?: number[]; // % offres reco par typologie (7 valeurs), propre à ce palier
     produits: Array<{
@@ -296,12 +303,14 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
   const totalP = totalPacks(camp.paliers);
   return {
     nom: camp.nom,
+    gcQties: camp.gcQties || {},
     paliers: camp.paliers.map(pal => {
       const vent = ventilationPalier(arts, pal);
       return {
       code: pal.code,
       label: pal.label,
       qtyPacks: pal.nbPacks || 0,
+      descriptif: pal.descriptif,
       remiseStandard: pal.remiseStandard,
       remiseStandardTaux: pal.remiseStandardTaux,
       remiseAddTaux: pal.remiseAddTaux,

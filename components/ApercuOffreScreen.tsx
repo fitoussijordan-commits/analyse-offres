@@ -78,13 +78,16 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
   const [paliers, setPaliers] = useState<PalierEdit[]>([]);
   const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<SubTab>("offre");
+  // Quantités Grands Comptes par ref (bloc GC, indépendant des paliers).
+  const [gcQties, setGcQties] = useState<Record<string, number>>({});
 
   useEffect(() => { void (async () => {
     try { const list = await loadCampagnesCreees(); setSaved(list); if (list.length) selectCamp(list[0]); }
     catch (e: any) { onToast("Erreur chargement : " + e.message, "error"); }
   })(); }, []);
 
-  function selectCamp(c: CampagneCreee) { setCamp(c); setPaliers(toPaliersEdit(c)); }
+  function selectCamp(c: CampagneCreee) { setCamp(c); setPaliers(toPaliersEdit(c)); setGcQties(c.gcQties || {}); }
+  const setGcQty = (ref: string, v: number) => setGcQties(q => ({ ...q, [ref]: v }));
   const nom = camp?.nom || "";
 
   // ── Mutations ──────────────────────────────────────────────────────────────
@@ -121,6 +124,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
     try {
       const payload: any = {
         nom,
+        gcQties,
         paliers: paliers.map(p => ({
           code: p.code, label: p.label, qtyPacks: p.nbPacks,
           pctOffres: p.pcts, remises: p.remises, remiseAddTaux: p.remiseAdd,
@@ -186,7 +190,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
         <Kpi label="CA total campagne" value={fmtEur(synthese.caTotal)} color={C.blue} />
         <Kpi label="Marge totale" value={fmtEur(synthese.margeTotal)} color={C.teal} />
         <Kpi label="Marge %" value={fmtPct(synthese.margePct)} color={C.green} />
-        <Kpi label="Nb packs (tous paliers)" value={fmtNum(synthese.nbPacks)} color={C.amber} />
+        <Kpi label="Nb offres (tous paliers)" value={fmtNum(synthese.nbPacks)} color={C.amber} />
       </div>
 
       {/* Sous-onglets */}
@@ -196,7 +200,10 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
         ))}
       </div>
 
-      {tab === "offre" && <OffreTab paliers={paliers} calcPaliers={calcPaliers} setPalier={setPalier} setPct={setPct} setRemise={setRemise} setQty={setQty} besoin={besoin} />}
+      {tab === "offre" && <>
+        <OffreTab paliers={paliers} calcPaliers={calcPaliers} setPalier={setPalier} setPct={setPct} setRemise={setRemise} setQty={setQty} besoin={besoin} />
+        <GrandsComptesBloc produits={paliers[0]?.produits || []} gcQties={gcQties} setGcQty={setGcQty} />
+      </>}
       {tab === "logistique" && <LogistiqueTab log={logistique} />}
       {tab === "synthese" && <SyntheseTab paliers={paliers} calcPaliers={calcPaliers} />}
 
@@ -219,7 +226,7 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
             <div style={{ padding: "12px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: C.blue, color: "#fff", borderRadius: 5, padding: "2px 8px" }}>{pal.code}</span>
               <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{pal.label}</span>
-              <span style={{ fontSize: 12, color: C.textMuted }}>Nb packs</span>
+              <span style={{ fontSize: 12, color: C.textMuted }}>Nb offres</span>
               <input type="number" style={{ ...input, width: 80 }} value={pal.nbPacks || ""} onChange={e => setPalier(pi, { nbPacks: parseInt(e.target.value) || 0 })} />
               <span style={{ fontSize: 12, color: C.textMuted }}>Remise add.</span>
               <input type="number" step="0.1" style={{ ...input, width: 60 }} value={Math.round(pal.remiseAdd * 1000) / 10} onChange={e => setPalier(pi, { remiseAdd: (parseFloat(e.target.value) || 0) / 100 })} />
@@ -267,7 +274,7 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
             <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
-                  <tr>{["Réf", "Produit", "EAN", "Qté/pack", "Coût", "Tarif", "PPC"].map((h, i) => <th key={i} style={{ padding: "5px 8px", textAlign: i >= 3 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}</tr>
+                  <tr>{["Réf", "Produit", "EAN", "Qté/offre", "Coût", "Tarif", "PPC"].map((h, i) => <th key={i} style={{ padding: "5px 8px", textAlign: i >= 3 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {pal.produits.map((p: any, ri: number) => (
@@ -289,6 +296,44 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Bloc GRANDS COMPTES : mêmes articles, quantités totales GC libres ─────────
+function GrandsComptesBloc({ produits, gcQties, setGcQty }: { produits: any[]; gcQties: Record<string, number>; setGcQty: (ref: string, v: number) => void }) {
+  if (!produits.length) return null;
+  const total = produits.reduce((s, p) => s + (gcQties[p.ref] || 0), 0);
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+      <div style={{ padding: "12px 16px", background: C.amber ? "#fff7ed" : C.blueSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: "#b45309", color: "#fff", borderRadius: 5, padding: "2px 8px" }}>GRANDS COMPTES</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités totales GC (indépendantes des paliers)</span>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, color: C.textMuted }}>Total : <b style={{ color: C.text }}>{fmtNum(total)}</b></span>
+      </div>
+      <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr>{["Réf", "Produit", "EAN", "Qté GC", "Coût", "Tarif", "PPC"].map((h, i) => <th key={i} style={{ padding: "5px 8px", textAlign: i >= 3 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {produits.map((p: any, ri: number) => (
+              <tr key={ri}>
+                <td style={{ padding: "4px 8px", fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.ref}</td>
+                <td style={{ padding: "4px 8px", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.name}</td>
+                <td style={{ padding: "4px 8px", color: C.textMuted, fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.barcode || "—"}</td>
+                <td style={{ padding: "3px 8px", textAlign: "right", borderBottom: `1px solid ${C.border}` }}>
+                  <input type="number" style={{ ...input, width: 70, fontWeight: 700, color: "#b45309" }} value={gcQties[p.ref] || ""} onChange={e => setGcQty(p.ref, parseInt(e.target.value) || 0)} placeholder="0" />
+                </td>
+                <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.standardPrice)}</td>
+                <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.listPrice)}</td>
+                <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.ppc)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -337,7 +382,7 @@ function SyntheseTab({ paliers, calcPaliers }: { paliers: PalierEdit[]; calcPali
       <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
         <div style={{ padding: "10px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, fontSize: 13, fontWeight: 800, color: C.blueDark }}>CA / Marge par offre</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead><tr>{["Offre", "Nb packs", "CA", "Marge €", "Marge %"].map((h, i) => <th key={i} style={{ padding: "8px 14px", textAlign: i >= 1 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}</tr></thead>
+          <thead><tr>{["Offre", "Nb offres", "CA", "Marge €", "Marge %"].map((h, i) => <th key={i} style={{ padding: "8px 14px", textAlign: i >= 1 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}</tr></thead>
           <tbody>
             {paliers.map((pal, pi) => {
               const r = calcPalier(calcPaliers[pi]);
