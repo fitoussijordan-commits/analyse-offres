@@ -308,9 +308,10 @@ export async function getConsumption(session: OdooSession, refs: string[], dateF
   //    - state "done"                 → mouvement réellement effectué (livraison faite)
   //    - location_dest_id.usage       → "customer" : destination = emplacement client (= une sortie/livraison)
   //    - date                         → date effective du mouvement (borne la période)
-  //    On récupère `quantity` ET `product_qty` : sur Odoo 17/18 la quantité réellement
-  //    traitée (livrée) est portée par `quantity` ; `product_qty` reste la quantité
-  //    demandée/prévue. Une fois le move à l'état "done", `quantity` reflète le réel.
+  //    Quantité prise : `product_qty`. Ce champ existe sur toutes les versions d'Odoo et,
+  //    une fois le mouvement à l'état "done" (filtré ci-dessus), il reflète la quantité
+  //    réellement traitée (livrée). On évite ainsi les champs `qty_done`/`quantity` qui
+  //    n'existent que sur certaines versions.
   const moves = await searchRead(
     session, "stock.move",
     [
@@ -320,18 +321,14 @@ export async function getConsumption(session: OdooSession, refs: string[], dateF
       ["date", ">=", `${dateFrom} 00:00:00`],
       ["date", "<=", `${dateTo} 23:59:59`],
     ],
-    ["product_id", "quantity", "product_qty", "location_id", "location_dest_id"],
+    ["product_id", "product_qty", "location_id", "location_dest_id"],
     0
   );
   for (const m of (moves || []) as any[]) {
     if (!m.product_id) continue;
     const entry = byId[m.product_id[0]];
     if (!entry) continue;
-    // Priorité à `quantity` (quantité réellement traitée) ; repli sur product_qty si absent/0.
-    const qty = (typeof m.quantity === "number" && m.quantity > 0)
-      ? m.quantity
-      : (typeof m.product_qty === "number" ? m.product_qty : 0);
-    out[entry.ref].qty += qty;
+    out[entry.ref].qty += (typeof m.product_qty === "number" ? m.product_qty : 0);
   }
   return out;
 }
