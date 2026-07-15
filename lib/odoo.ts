@@ -266,9 +266,15 @@ export interface ConsoArticle {
 }
 
 /**
- * Somme les quantités vendues (et le CA) de chaque article entre deux dates, sur les
- * commandes confirmées (state sale/done). Sert à recommander les quantités d'une campagne
- * N+1 à partir de la consommation N-1 observée sur une fenêtre bornée par l'utilisateur.
+ * Somme les quantités RÉELLEMENT LIVRÉES de chaque article entre deux dates, depuis
+ * l'historique des mouvements de stock (stock.move). On ne compte que les sorties vers
+ * un client (location destination usage="customer"), à l'état "done" (mouvements
+ * effectués). C'est la même source que l'onglet Inventaire → Historique des mouvements
+ * dans Odoo, filtré sur les livraisons clients terminées.
+ *
+ * Note : le CA (`ca`) n'est plus renseigné ici — les mouvements de stock ne portent pas
+ * de prix de vente. Le champ est conservé à 0 pour compatibilité de l'interface.
+ *
  * @param refs     codes article (default_code)
  * @param dateFrom "YYYY-MM-DD" inclus
  * @param dateTo   "YYYY-MM-DD" inclus
@@ -298,27 +304,34 @@ export async function getConsumption(session: OdooSession, refs: string[], dateF
   }
   if (!ids.length) return out;
 
-  // 2) Lignes de vente confirmées sur la période. On borne via order_id.date_order.
-  const lines = await searchRead(
-    session, "sale.order.line",
+  // 2) Mouvements de stock LIVRÉS vers un client sur la période.
+  //    - state "done"                 → mouvement réellement effectué (livraison faite)
+  //    - location_dest_id.usage       → "customer" : destination = emplacement client (= une sortie/livraison)
+  //    - date                         → date effective du mouvement (borne la période)
+  //    On récupère qty_done ET product_qty : selon la version d'Odoo, la quantité réellement
+  //    déplacée est portée par l'un ou l'autre (qty_done sur les stock.move récents ; sur
+  //    certaines versions/lignes, product_qty reflète la quantité "faite" une fois le move done).
+  const moves = await searchRead(
+    session, "stock.move",
     [
       ["product_id", "in", ids],
-      ["order_id.state", "in", ["sale", "done"]],
-      ["order_id.date_order", ">=", `${dateFrom} 00:00:00`],
-      ["order_id.date_order", "<=", `${dateTo} 23:59:59`],
-      ["display_type", "=", false],
-      ["is_downpayment", "=", false],
+      ["state", "=", "done"],
+      ["location_dest_id.usage", "=", "customer"],
+      ["date", ">=", `${dateFrom} 00:00:00`],
+      ["date", "<=", `${dateTo} 23:59:59`],
     ],
-    ["product_id", "product_uom_qty", "price_subtotal", "state"],
+    ["product_id", "qty_done", "product_qty", "location_id", "location_dest_id"],
     0
   );
-  for (const l of (lines || []) as any[]) {
-    if (l.state === "cancel" || !l.product_id) continue;
-    const entry = byId[l.product_id[0]];
+  for (const m of (moves || []) as any[]) {
+    if (!m.product_id) continue;
+    const entry = byId[m.product_id[0]];
     if (!entry) continue;
-    const o = out[entry.ref];
-    o.qty += l.product_uom_qty || 0;
-    o.ca += l.price_subtotal || 0;
+    // Priorité à qty_done (quantité réellement faite) ; repli sur product_qty si absent/0.
+    const qty = (typeof m.qty_done === "number" && m.qty_done > 0)
+      ? m.qty_done
+      : (typeof m.product_qty === "number" ? m.product_qty : 0);
+    out[entry.ref].qty += qty;
   }
   return out;
 }
