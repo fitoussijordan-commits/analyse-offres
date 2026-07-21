@@ -64,6 +64,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   const [filterYear, setFilterYear] = useState<string>("all");
   const [corbeille, setCorbeille] = useState<CampagneCreee[]>([]);
   const [showCorbeille, setShowCorbeille] = useState(false);
+  const [openInfoPalier, setOpenInfoPalier] = useState<number | null>(null);
 
   useEffect(() => { void reload(); }, []);
   // Charger le brouillon transféré depuis l'analyse (préco N+1), une seule fois.
@@ -384,8 +385,49 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             <input type="number" step="0.1" style={{ ...inputStyle, width: 70 }} value={pal.remiseAddTaux != null ? Math.round(pal.remiseAddTaux * 1000) / 10 : ""} onChange={e => setPalier(pi, { remiseAddTaux: e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0) / 100 })} placeholder="—" title="% remise additionnelle (colonne I) appliquée à tous les produits du palier" />
             <span style={{ fontSize: 12, color: C.textMuted }}>%</span>
             <div style={{ flex: 1 }} />
+            <button
+              onClick={() => setOpenInfoPalier(openInfoPalier === pi ? null : pi)}
+              title="Voir le détail des calculs de ce palier"
+              style={{ padding: "3px 8px", background: openInfoPalier === pi ? C.teal : "transparent", border: `1px solid ${openInfoPalier === pi ? C.teal : C.border}`, borderRadius: 6, cursor: "pointer", color: openInfoPalier === pi ? "#fff" : C.textMuted, fontSize: 13, fontWeight: 700, fontFamily: "inherit" }}
+            >ℹ</button>
             {camp.paliers.length > 1 && <button onClick={() => removePalier(pi)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.red, fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>Supprimer le palier</button>}
           </div>
+          {openInfoPalier === pi && (() => {
+            const vent = ventilationPalier(articlesValides, pal);
+            const modeVent = !!(pal.nbProduitsPack && pal.nbProduitsPack > 0);
+            const TYPOS = ["Ambassadeur", "Compagnon", "Challenger", "Rose", "Prunelier", "Anthylide", "Calendula"];
+            const rows: { label: string; value: string; note?: string }[] = [];
+            // ── Mode de calcul ──
+            rows.push({ label: "Mode reco", value: modeVent ? `N produits/offre (${pal.nbProduitsPack})` : "Standard (conso ÷ total offres)" });
+            if (modeVent) {
+              const totalConsoVente = articlesValides.filter(a => (a.typProd || "Produit Vente") === "Produit Vente" && (a.consoN1 || 0) > 0).reduce((s, a) => s + (a.consoN1 || 0), 0);
+              rows.push({ label: "Formule", value: `qté/offre = round(consoN1 / ${fmtNum(totalConsoVente)} × ${pal.nbProduitsPack})`, note: "Répartition au prorata, méthode du plus grand reste" });
+            } else {
+              rows.push({ label: "Formule", value: `qté/offre = round(consoN1 ÷ ${fmtNum(totalP)})`, note: `${fmtNum(totalP)} = total offres sur toute la campagne (${camp.paliers.map(p => `${p.label || p.code} ×${p.nbPacks}`).join(" + ")})` });
+            }
+            rows.push({ label: "Nb offres palier", value: fmtNum(pal.nbPacks) });
+            rows.push({ label: "Total offres campagne", value: fmtNum(totalP) });
+            // ── Remises ──
+            if (pal.remiseStandard && pal.remiseStandardTaux != null) rows.push({ label: "Remise statut unique", value: `${Math.round(pal.remiseStandardTaux * 1000) / 10} %`, note: "Appliquée à toutes les typologies (colonne remise unifiée)" });
+            if (pal.remiseAddTaux != null && pal.remiseAddTaux > 0) rows.push({ label: "Remise additionnelle", value: `${Math.round(pal.remiseAddTaux * 1000) / 10} %`, note: "Colonne I de la Proposition (s'ajoute à la remise par typo)" });
+            // ── % typologies ──
+            if (pal.pctOffresReco && pal.pctOffresReco.some(v => v > 0)) {
+              rows.push({ label: "% offres par typo", value: pal.pctOffresReco.map((v, i) => v > 0 ? `${TYPOS[i]} ${Math.round(v * 100)}%` : null).filter(Boolean).join("  ·  "), note: "Calculé sur les ventes N-1 analysées (répartition réelle des commandes par statut client)" });
+            }
+            return (
+              <div style={{ margin: "0 16px 0", background: "#f8fafc", border: `1px solid ${C.teal}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: C.teal, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Détail des calculs — {pal.label || pal.code}</div>
+                {rows.map((r, ri) => (
+                  <div key={ri} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 12 }}>
+                    <span style={{ minWidth: 170, color: C.textMuted, fontWeight: 600, flexShrink: 0 }}>{r.label}</span>
+                    <span style={{ color: C.text, fontFamily: r.label === "Formule" ? "monospace" : "inherit", fontWeight: r.label === "Formule" ? 700 : 400 }}>{r.value}</span>
+                    {r.note && <span style={{ color: C.textMuted, fontSize: 11, marginLeft: 4 }}>— {r.note}</span>}
+                  </div>
+                ))}
+                {!analysed && <div style={{ fontSize: 11, color: "#b45309", marginTop: 4 }}>⚠ Lance « Analyser conso N-1 » pour voir les % typologies et les consos réelles.</div>}
+              </div>
+            );
+          })()}
           <div style={{ padding: "10px 16px 0", display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 12, color: C.textMuted, whiteSpace: "nowrap" }}>Descriptif</span>
             <input style={{ ...inputStyle, flex: 1 }} value={pal.descriptif ?? ""} onChange={e => setPalier(pi, { descriptif: e.target.value })} placeholder="Ex. Panachage 50 offres // Remise 15% pour BRI conso 10€…" title="Texte libre retranscrit dans l'Excel à côté du nom du palier" />
