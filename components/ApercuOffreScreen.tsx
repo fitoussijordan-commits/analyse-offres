@@ -79,7 +79,8 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
   const [paliers, setPaliers] = useState<PalierEdit[]>([]);
   const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<SubTab>("offre");
-  // Grands Comptes : 6 enseignes (nom, remise, qtés par article).
+  // Grands Comptes : enseignes dynamiques (max 6 = limite du template Excel).
+  const GC_MAX = 6;
   const [gcEnseignes, setGcEnseignes] = useState<GcEnseigne[]>(GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} })));
 
   useEffect(() => { void (async () => {
@@ -89,11 +90,13 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
 
   function selectCamp(c: CampagneCreee) {
     setCamp(c); setPaliers(toPaliersEdit(c));
-    setGcEnseignes(c.gcEnseignes && c.gcEnseignes.length ? c.gcEnseignes.map(e => ({ ...e, qties: { ...e.qties } })) : GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} })));
+    setGcEnseignes(c.gcEnseignes != null ? c.gcEnseignes.map(e => ({ ...e, qties: { ...e.qties } })) : GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} })));
   }
   const setGcQty = (ei: number, key: string, v: number) => setGcEnseignes(es => es.map((e, i) => i === ei ? { ...e, qties: { ...e.qties, [key]: v } } : e));
   const setGcNom = (ei: number, nom: string) => setGcEnseignes(es => es.map((e, i) => i === ei ? { ...e, nom } : e));
   const setGcRemise = (ei: number, remise: number) => setGcEnseignes(es => es.map((e, i) => i === ei ? { ...e, remise } : e));
+  const addGc = () => setGcEnseignes(es => es.length >= GC_MAX ? es : [...es, { nom: `GC${es.length + 1}`, remise: 0, qties: {} }]);
+  const removeGc = (ei: number) => setGcEnseignes(es => es.filter((_, i) => i !== ei));
   const nom = camp?.nom || "";
 
   // ── Mutations ──────────────────────────────────────────────────────────────
@@ -233,7 +236,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
 
       {tab === "offre" && <>
         <OffreTab paliers={paliers} calcPaliers={calcPaliers} setPalier={setPalier} setPct={setPct} setRemise={setRemise} setQty={setQty} besoin={besoin} />
-        <GrandsComptesBloc produits={paliers[0]?.produits || []} enseignes={gcEnseignes} setGcQty={setGcQty} setGcNom={setGcNom} setGcRemise={setGcRemise} />
+        <GrandsComptesBloc produits={paliers[0]?.produits || []} enseignes={gcEnseignes} gcMax={GC_MAX} setGcQty={setGcQty} setGcNom={setGcNom} setGcRemise={setGcRemise} addGc={addGc} removeGc={removeGc} />
       </>}
       {tab === "logistique" && <LogistiqueTab log={logistique} />}
       {tab === "synthese" && <SyntheseTab paliers={paliers} calcPaliers={calcPaliers} />}
@@ -335,12 +338,14 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
   );
 }
 
-// ── Bloc GRANDS COMPTES : mêmes articles × 6 enseignes (qté + remise par enseigne) ──
-function GrandsComptesBloc({ produits, enseignes, setGcQty, setGcNom, setGcRemise }: {
-  produits: any[]; enseignes: GcEnseigne[];
+// ── Bloc GRANDS COMPTES : mêmes articles × enseignes dynamiques (max 6, limite template) ──
+function GrandsComptesBloc({ produits, enseignes, gcMax, setGcQty, setGcNom, setGcRemise, addGc, removeGc }: {
+  produits: any[]; enseignes: GcEnseigne[]; gcMax: number;
   setGcQty: (ei: number, key: string, v: number) => void;
   setGcNom: (ei: number, nom: string) => void;
   setGcRemise: (ei: number, remise: number) => void;
+  addGc: () => void;
+  removeGc: (ei: number) => void;
 }) {
   if (!produits.length) return null;
   // Clé composite : distingue les doublons de réf (stick vendu vs stick UG).
@@ -352,18 +357,25 @@ function GrandsComptesBloc({ produits, enseignes, setGcQty, setGcNom, setGcRemis
       <div style={{ padding: "12px 16px", background: "#fff7ed", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: "#b45309", color: "#fff", borderRadius: 5, padding: "2px 8px" }}>GRANDS COMPTES</span>
         <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités par enseigne (nom et remise éditables)</span>
+        <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{enseignes.length}/{gcMax}</span>
       </div>
       <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
-            {/* Ligne 1 : noms d'enseignes éditables */}
+            {/* Ligne 1 : noms d'enseignes éditables + bouton + */}
             <tr>
               <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }} colSpan={2}>Enseigne →</th>
               {enseignes.map((e, ei) => (
                 <th key={ei} style={{ padding: "4px 4px", borderBottom: `1px solid ${C.border}` }}>
-                  <input style={{ ...input, width: 96, textAlign: "center", fontWeight: 700, color: "#b45309" }} value={e.nom} onChange={ev => setGcNom(ei, ev.target.value)} />
+                  <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                    <input style={{ ...input, width: 80, textAlign: "center", fontWeight: 700, color: "#b45309" }} value={e.nom} onChange={ev => setGcNom(ei, ev.target.value)} />
+                    <button onClick={() => removeGc(ei)} title="Supprimer cette enseigne" style={{ padding: "2px 5px", background: "none", border: "1px solid #fca5a5", borderRadius: 5, cursor: "pointer", color: "#ef4444", fontSize: 11, fontWeight: 700, lineHeight: 1 }}>×</button>
+                  </div>
                 </th>
               ))}
+              <th style={{ padding: "4px 4px", borderBottom: `1px solid ${C.border}`, verticalAlign: "middle" }}>
+                <button onClick={addGc} disabled={enseignes.length >= gcMax} title={enseignes.length >= gcMax ? `Maximum ${gcMax} enseignes (limite du template)` : "Ajouter une enseigne GC"} style={{ padding: "4px 8px", background: enseignes.length >= gcMax ? C.border : "#fff7ed", border: "1px dashed #b45309", borderRadius: 6, cursor: enseignes.length >= gcMax ? "default" : "pointer", color: enseignes.length >= gcMax ? C.textMuted : "#b45309", fontSize: 13, fontWeight: 700, opacity: enseignes.length >= gcMax ? 0.4 : 1 }}>+</button>
+              </th>
             </tr>
             {/* Ligne 2 : remises éditables (%) */}
             <tr>
@@ -373,12 +385,14 @@ function GrandsComptesBloc({ produits, enseignes, setGcQty, setGcNom, setGcRemis
                   <input type="number" step="0.1" style={{ ...input, width: 60, textAlign: "center" }} value={Math.round(e.remise * 1000) / 10} onChange={ev => setGcRemise(ei, (parseFloat(ev.target.value) || 0) / 100)} />
                 </th>
               ))}
+              <th style={{ borderBottom: `1px solid ${C.border}` }} />
             </tr>
             {/* Ligne 3 : entêtes fixes */}
             <tr>
               <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Réf</th>
               <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Produit</th>
               {enseignes.map((e, ei) => <th key={ei} style={{ padding: "5px 4px", textAlign: "center", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Qté</th>)}
+              <th style={{ borderBottom: `1px solid ${C.border}` }} />
             </tr>
           </thead>
           <tbody>
@@ -393,6 +407,7 @@ function GrandsComptesBloc({ produits, enseignes, setGcQty, setGcNom, setGcRemis
                       <input type="number" style={{ ...input, width: 60, textAlign: "center", color: "#b45309" }} value={e.qties[k] || ""} onChange={ev => setGcQty(ei, k, parseInt(ev.target.value) || 0)} placeholder="0" />
                     </td>
                   ))}
+                  <td style={{ borderBottom: `1px solid ${C.border}` }} />
                 </tr>
               );
             })}
@@ -403,6 +418,7 @@ function GrandsComptesBloc({ produits, enseignes, setGcQty, setGcNom, setGcRemis
                 const tot = produits.reduce((s, p) => s + (e.qties[keyOf(p)] || 0), 0);
                 return <td key={ei} style={{ padding: "5px 4px", textAlign: "center", fontWeight: 800, color: "#b45309" }}>{fmtNum(tot)}</td>;
               })}
+              <td />
             </tr>
           </tbody>
         </table>

@@ -92,12 +92,16 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   const setPalier = (pi: number, patch: Partial<PalierSaisi>) =>
     setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => i === pi ? { ...p, ...patch } : p) }));
 
-  // ── Grands Comptes (6 enseignes) — mêmes données que dans Aperçu Offre, mais ici sauvegardées.
-  const gcEnseignes: GcEnseigne[] = camp.gcEnseignes && camp.gcEnseignes.length ? camp.gcEnseignes : GC_ENSEIGNES_DEFAUT;
-  const ensureGc = (c: CampagneCreee): GcEnseigne[] => (c.gcEnseignes && c.gcEnseignes.length ? c.gcEnseignes.map(e => ({ ...e, qties: { ...e.qties } })) : GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} })));
+  // ── Grands Comptes (enseignes dynamiques, max 6 = limite du template Excel) ──
+  const GC_MAX = 6;
+  // undefined → nouvelles campagnes → afficher les 6 défauts ; [] → l'utilisateur a tout retiré.
+  const gcEnseignes: GcEnseigne[] = camp.gcEnseignes != null ? camp.gcEnseignes : GC_ENSEIGNES_DEFAUT;
+  const ensureGc = (c: CampagneCreee): GcEnseigne[] => c.gcEnseignes != null ? c.gcEnseignes.map(e => ({ ...e, qties: { ...e.qties } })) : GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} }));
   const setGcQty = (ei: number, key: string, v: number) => setCamp(c => { const g = ensureGc(c); g[ei] = { ...g[ei], qties: { ...g[ei].qties, [key]: v } }; return { ...c, gcEnseignes: g }; });
   const setGcNom = (ei: number, nom: string) => setCamp(c => { const g = ensureGc(c); g[ei] = { ...g[ei], nom }; return { ...c, gcEnseignes: g }; });
   const setGcRemise = (ei: number, remise: number) => setCamp(c => { const g = ensureGc(c); g[ei] = { ...g[ei], remise }; return { ...c, gcEnseignes: g }; });
+  const addGc = () => setCamp(c => { const g = ensureGc(c); if (g.length >= GC_MAX) return c; return { ...c, gcEnseignes: [...g, { nom: `GC${g.length + 1}`, remise: 0, qties: {} }] }; });
+  const removeGc = (ei: number) => setCamp(c => { const g = ensureGc(c); return { ...c, gcEnseignes: g.filter((_, i) => i !== ei) }; });
   const setPalierQty = (pi: number, ref: string, val: number | null) =>
     setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => {
       if (i !== pi) return p;
@@ -469,6 +473,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
           <div style={{ padding: "12px 16px", background: "#fff7ed", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: "#b45309", color: "#fff", borderRadius: 5, padding: "2px 8px" }}>GRANDS COMPTES</span>
             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités par enseigne (nom et remise éditables, sauvegardés)</span>
+            <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{gcEnseignes.length}/{GC_MAX}</span>
           </div>
           <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -477,9 +482,15 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                   <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }} colSpan={2}>Enseigne →</th>
                   {gcEnseignes.map((e, ei) => (
                     <th key={ei} style={{ padding: "4px 4px", borderBottom: `1px solid ${C.border}` }}>
-                      <input style={{ ...inputStyle, width: 100, textAlign: "center", fontWeight: 700, color: "#b45309", padding: "4px 6px" }} value={e.nom} onChange={ev => setGcNom(ei, ev.target.value)} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                        <input style={{ ...inputStyle, width: 84, textAlign: "center", fontWeight: 700, color: "#b45309", padding: "4px 6px" }} value={e.nom} onChange={ev => setGcNom(ei, ev.target.value)} />
+                        <button onClick={() => removeGc(ei)} title="Supprimer cette enseigne" style={{ padding: "2px 5px", background: "none", border: `1px solid #fca5a5`, borderRadius: 5, cursor: "pointer", color: "#ef4444", fontSize: 11, fontWeight: 700, lineHeight: 1 }}>×</button>
+                      </div>
                     </th>
                   ))}
+                  <th style={{ padding: "4px 4px", borderBottom: `1px solid ${C.border}`, verticalAlign: "middle" }}>
+                    <button onClick={addGc} disabled={gcEnseignes.length >= GC_MAX} title={gcEnseignes.length >= GC_MAX ? `Maximum ${GC_MAX} enseignes (limite du template)` : "Ajouter une enseigne GC"} style={{ padding: "4px 8px", background: gcEnseignes.length >= GC_MAX ? C.border : "#fff7ed", border: `1px dashed #b45309`, borderRadius: 6, cursor: gcEnseignes.length >= GC_MAX ? "default" : "pointer", color: gcEnseignes.length >= GC_MAX ? C.textMuted : "#b45309", fontSize: 13, fontWeight: 700, opacity: gcEnseignes.length >= GC_MAX ? 0.4 : 1 }}>+</button>
+                  </th>
                 </tr>
                 <tr>
                   <th style={{ padding: "3px 8px", textAlign: "right", color: C.textMuted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }} colSpan={2}>Remise %</th>
@@ -488,11 +499,13 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                       <input type="number" step="0.1" style={{ ...inputStyle, width: 64, textAlign: "center", padding: "4px 6px" }} value={Math.round(e.remise * 1000) / 10} onChange={ev => setGcRemise(ei, (parseFloat(ev.target.value) || 0) / 100)} />
                     </th>
                   ))}
+                  <th style={{ borderBottom: `1px solid ${C.border}` }} />
                 </tr>
                 <tr>
                   <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Réf</th>
                   <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Libellé</th>
                   {gcEnseignes.map((e, ei) => <th key={ei} style={{ padding: "5px 4px", textAlign: "center", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Qté</th>)}
+                  <th style={{ borderBottom: `1px solid ${C.border}` }} />
                 </tr>
               </thead>
               <tbody>
@@ -507,6 +520,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                           <input type="number" style={{ ...inputStyle, width: 60, textAlign: "center", color: "#b45309", padding: "4px 6px" }} value={e.qties[k] || ""} onChange={ev => setGcQty(ei, k, parseInt(ev.target.value) || 0)} placeholder="0" />
                         </td>
                       ))}
+                      <td style={{ borderBottom: `1px solid ${C.border}` }} />
                     </tr>
                   );
                 })}
@@ -516,6 +530,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                     const tot = articlesValides.reduce((s, a) => s + (e.qties[qtyKey(a, articlesValides)] || 0), 0);
                     return <td key={ei} style={{ padding: "5px 4px", textAlign: "center", fontWeight: 800, color: "#b45309" }}>{fmtNum(tot)}</td>;
                   })}
+                  <td />
                 </tr>
               </tbody>
             </table>
