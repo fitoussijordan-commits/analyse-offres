@@ -31,7 +31,7 @@ interface Props {
 
 function emptyArticle(): ArticleCampagne { return { ref: "" }; }
 function emptyPalier(n: number): PalierSaisi {
-  return { code: `REGE${n}`, label: n === 1 ? "Premium" : n === 2 ? "Standard" : n === 3 ? "Essentiel" : `Palier ${n}`, nbPacks: 0, qtyParPack: {} };
+  return { code: "", label: "", nbPacks: 0, qtyParPack: {} };
 }
 function emptyCampagne(): CampagneCreee {
   return { id: genId(), nom: "", dateDebut: "", dateFin: "", periodeDebut: "", periodeFin: "", articles: [emptyArticle()], paliers: [emptyPalier(1)] };
