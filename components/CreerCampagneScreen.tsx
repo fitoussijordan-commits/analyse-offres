@@ -93,8 +93,10 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   const setPalier = (pi: number, patch: Partial<PalierSaisi>) =>
     setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => i === pi ? { ...p, ...patch } : p) }));
 
-  // ── Grands Comptes (enseignes dynamiques, max 6 = limite du template Excel) ──
-  const GC_MAX = 6;
+  // ── Grands Comptes (enseignes dynamiques). Le template Excel ne supporte que 6 colonnes,
+  // donc seules les 6 premières sont exportées. L'UI permet d'en avoir jusqu'à 10.
+  const GC_EXCEL_MAX = 6; // colonnes disponibles dans le template
+  const GC_MAX = 10;      // limite UI
   // undefined → nouvelles campagnes → afficher les 6 défauts ; [] → l'utilisateur a tout retiré.
   const gcEnseignes: GcEnseigne[] = camp.gcEnseignes != null ? camp.gcEnseignes : GC_ENSEIGNES_DEFAUT;
   const ensureGc = (c: CampagneCreee): GcEnseigne[] => c.gcEnseignes != null ? c.gcEnseignes.map(e => ({ ...e, qties: { ...e.qties } })) : GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} }));
@@ -515,7 +517,10 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
           <div style={{ padding: "12px 16px", background: "#fff7ed", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: "#b45309", color: "#fff", borderRadius: 5, padding: "2px 8px" }}>GRANDS COMPTES</span>
             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités par enseigne (nom et remise éditables, sauvegardés)</span>
-            <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{gcEnseignes.length}/{GC_MAX}</span>
+            <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{gcEnseignes.length} enseigne{gcEnseignes.length > 1 ? "s" : ""}</span>
+            {gcEnseignes.length > GC_EXCEL_MAX && (
+              <span style={{ fontSize: 11, color: "#b45309", background: "#fef3c7", borderRadius: 4, padding: "1px 7px" }}>⚠ seules les {GC_EXCEL_MAX} premières sont exportées dans l'Excel</span>
+            )}
           </div>
           <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>

@@ -79,8 +79,8 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
   const [paliers, setPaliers] = useState<PalierEdit[]>([]);
   const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<SubTab>("offre");
-  // Grands Comptes : enseignes dynamiques (max 6 = limite du template Excel).
-  const GC_MAX = 6;
+  // Grands Comptes : enseignes dynamiques. Template Excel = 6 colonnes max, UI = 10 max.
+  const GC_MAX = 10;
   const [gcEnseignes, setGcEnseignes] = useState<GcEnseigne[]>(GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} })));
 
   useEffect(() => { void (async () => {
@@ -357,7 +357,10 @@ function GrandsComptesBloc({ produits, enseignes, gcMax, setGcQty, setGcNom, set
       <div style={{ padding: "12px 16px", background: "#fff7ed", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: "#b45309", color: "#fff", borderRadius: 5, padding: "2px 8px" }}>GRANDS COMPTES</span>
         <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités par enseigne (nom et remise éditables)</span>
-        <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{enseignes.length}/{gcMax}</span>
+        <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{enseignes.length} enseigne{enseignes.length > 1 ? "s" : ""}</span>
+        {enseignes.length > 6 && (
+          <span style={{ fontSize: 11, color: "#b45309", background: "#fef3c7", borderRadius: 4, padding: "1px 7px" }}>⚠ seules les 6 premières sont exportées dans l'Excel</span>
+        )}
       </div>
       <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
