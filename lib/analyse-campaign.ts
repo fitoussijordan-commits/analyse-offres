@@ -17,6 +17,9 @@ export interface OffreAnalyse {
   offre: { code: string; label: string };
   caTotal: number; qtyTotal: number;
   produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[];
+  // Qui a pris CETTE offre : ventilation par statut client (nb commandes / qté / CA).
+  // Renseigné après le rattachement des commandes aux partenaires (voir plus bas).
+  parStatut?: Record<string, { qty: number; ca: number; nbCommandes: number }>;
   error: string | null;
 }
 export interface CatchallResult { codeInterne: string; data: { caTotal: number; qtyTotal: number; produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[] } | null; }
@@ -245,11 +248,15 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   const results: OffreAnalyse[] = [];
 
   // 1. Offres (détail + lignes pour dédoublonnage)
+  //    On mémorise les ids de lignes de chaque offre pour pouvoir, plus bas (une fois les
+  //    partenaires et leurs statuts chargés), ventiler CHAQUE offre par statut client.
   const offerOrderIds = new Set<number>();
+  const lineIdsByOffre = new Map<OffreAnalyse, Set<number>>();
   for (const offre of offresCfg) {
     const { res, recs } = await analyseOffre(session, offre, filter);
     results.push(res);
     allRecs.push(...recs);
+    lineIdsByOffre.set(res, new Set(recs.map(r => r.id)));
     for (const d of res.debugOrders) offerOrderIds.add(d.id);
   }
 
@@ -364,6 +371,29 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   }
   const finalize = (m: Record<string, ClientStat & { orders: Set<number> }>): ClientStat[] =>
     Object.values(m).map(({ orders, ...rest }) => ({ ...rest, nbCommandes: orders.size })).sort((a, b) => b.ca - a.ca);
+
+  // Ventilation par statut client POUR CHAQUE OFFRE : qui a pris quelle MEA.
+  // C'est la base de la reco « % offres par typologie » propre à chaque palier.
+  {
+    const lineById = new Map<number, typeof lines[number]>();
+    for (const l of lines) lineById.set(l.id, l);
+    for (const [res, ids] of lineIdsByOffre) {
+      const acc: Record<string, { qty: number; ca: number; orders: Set<number> }> = {};
+      for (const id of ids) {
+        const l = lineById.get(id);
+        if (!l) continue; // ligne dédoublonnée ou rattachée à une note
+        const pid = orderPartner[l.orderId];
+        const stat = (pid && partnerStat[pid]) || NONE;
+        if (!acc[stat.name]) acc[stat.name] = { qty: 0, ca: 0, orders: new Set() };
+        acc[stat.name].qty += l.qty;
+        acc[stat.name].ca += l.subtotal;
+        acc[stat.name].orders.add(l.orderId);
+      }
+      const out: Record<string, { qty: number; ca: number; nbCommandes: number }> = {};
+      for (const [name, v] of Object.entries(acc)) out[name] = { qty: v.qty, ca: v.ca, nbCommandes: v.orders.size };
+      if (Object.keys(out).length) res.parStatut = out;
+    }
+  }
 
   // Les commandes notées sont orphelines (analyseNote les a déjà exclues des offres),
   // donc leur CA n'est jamais dans `lines`. On le rattache systématiquement au total

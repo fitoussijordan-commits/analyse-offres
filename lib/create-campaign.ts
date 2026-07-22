@@ -107,8 +107,34 @@ export function campagneCreeeToAnalyse(camp: CampagneCreee): CampagneAnalyseLike
 
 // Forme minimale d'une préco (lib/preco.ts) pour la conversion, sans dépendance circulaire.
 interface PrecoLigneLike { ref: string; name: string; productId: number; qtyParPack: number; conserve: boolean; }
-interface PrecoPalierLike { code: string; label: string; qtyPacks: number; produits: PrecoLigneLike[]; }
+interface PrecoPalierLike {
+  code: string; label: string; qtyPacks: number; produits: PrecoLigneLike[];
+  parStatut?: Record<string, { qty: number; ca: number; nbCommandes: number }>;
+}
 interface PrecoLike { nom: string; paliers: PrecoPalierLike[]; }
+
+/** Normalise un libellé de statut (casse/accents) pour le comparer aux TYPOLOGIES. */
+function normStatut(s: string): string {
+  return (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+}
+
+/**
+ * Convertit la ventilation par statut d'une offre N-1 en % d'offres par typologie
+ * (7 valeurs, ordre TYPOLOGIES). On se base sur le NOMBRE DE COMMANDES : la question
+ * métier est « quel statut a pris cette MEA », pas « qui a acheté le plus de volume ».
+ * Retourne undefined si aucune typologie connue n'est représentée.
+ */
+export function statutsToPctOffres(parStatut?: Record<string, { qty: number; ca: number; nbCommandes: number }>): number[] | undefined {
+  if (!parStatut) return undefined;
+  const parNorm: Record<string, number> = {};
+  for (const [name, v] of Object.entries(parStatut)) {
+    parNorm[normStatut(name)] = (parNorm[normStatut(name)] || 0) + (v.nbCommandes || 0);
+  }
+  const vals = TYPOLOGIES.map(t => parNorm[normStatut(t)] || 0);
+  const total = vals.reduce((s, n) => s + n, 0);
+  if (total <= 0) return undefined;
+  return vals.map(v => v / total);
+}
 
 /**
  * Convertit une préco N+1 (analyse de campagne) en campagne créée (à blanc), pour transférer
@@ -136,7 +162,11 @@ export function precoToCampagne(preco: PrecoLike): CampagneCreee {
       const ref = (p.ref || "").trim();
       if (ref) qtyParPack[ref] = p.qtyParPack || 0;
     }
-    return { code: pal.code, label: pal.label, nbPacks: pal.qtyPacks || 0, qtyParPack };
+    // Reco « % offres par typologie » issue des ventes N-1 de CETTE offre (qui l'a prise).
+    // Si l'offre n'a pas d'historique par statut, on laisse vide : l'analyse conso N-1
+    // recalculera, et à défaut le gabarit s'applique.
+    const pctOffresReco = statutsToPctOffres(pal.parStatut);
+    return { code: pal.code, label: pal.label, nbPacks: pal.qtyPacks || 0, qtyParPack, ...(pctOffresReco ? { pctOffresReco } : {}) };
   });
 
   return {
@@ -221,17 +251,17 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
       if (code) {
         try {
           const dist = await odoo.getStatutDistributionByOffer(session, code, camp.periodeDebut!, camp.periodeFin!);
-          console.log(`[pctOffres] palier "${code}" dist=`, JSON.stringify(dist));
           const qtyTypo = TYPOLOGIES.map(typo => dist[norm(typo)] || 0);
           const total = qtyTypo.reduce((s, n) => s + n, 0);
-          console.log(`[pctOffres] palier "${code}" total=${total} qtyTypo=`, qtyTypo);
           if (total > 0) {
             return { ...pal, pctOffresReco: qtyTypo.map(q => q / total) };
           }
-        } catch (e) { console.log(`[pctOffres] palier "${code}" ERREUR`, e); }
+        } catch { /* ignore : on retombe sur la reco transférée ou le global */ }
       }
+      // Reco déjà portée par le transfert depuis l'analyse (ventilation réelle de l'offre
+      // N-1) : on la conserve, elle est plus fiable que la distribution globale.
+      if (pal.pctOffresReco && pal.pctOffresReco.some(v => v > 0)) return pal;
       // Fallback : distribution globale si pas de code ou pas de données pour ce code.
-      console.log(`[pctOffres] palier "${code}" → fallback global`);
       return globalReco ? { ...pal, pctOffresReco: globalReco } : pal;
     }));
   }

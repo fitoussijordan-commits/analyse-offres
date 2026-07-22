@@ -15,6 +15,9 @@ export interface PrecoPalier {
   code: string; label: string;      // code offre + libellé
   caTotal: number; qtyPacks: number;
   produits: PrecoLigne[];           // composants du palier, triés par CA
+  // Qui a pris cette offre en N-1, par statut client. Transféré tel quel vers
+  // « Créer une campagne » pour servir de reco « % offres par typologie ».
+  parStatut?: Record<string, { qty: number; ca: number; nbCommandes: number }>;
 }
 
 export interface BesoinFournisseur {
@@ -49,7 +52,7 @@ export function buildPreco(result: CampaignResult, conservedIds: Record<string, 
           qtyParPack: nbPacks > 0 ? Math.round(p.qtyVendue / nbPacks) : 0,
           conserve: conserved.has(p.productId),
         }));
-      return { code: r.offre.code, label: r.offre.label, caTotal: r.caTotal, qtyPacks: r.qtyTotal, produits };
+      return { code: r.offre.code, label: r.offre.label, caTotal: r.caTotal, qtyPacks: r.qtyTotal, produits, parStatut: r.parStatut };
     });
 
   // Besoin fournisseur : agrégation par produit des quantités CONSERVÉES, tous paliers
