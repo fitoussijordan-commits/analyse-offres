@@ -457,7 +457,62 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                     {r.note && <span style={{ color: C.textMuted, fontSize: 11, marginLeft: 4 }}>— {r.note}</span>}
                   </div>
                 ))}
-                {!analysed && <div style={{ fontSize: 11, color: "#b45309", marginTop: 4 }}>⚠ Lance « Analyser conso N-1 » pour voir les % typologies et les consos réelles.</div>}
+
+                {/* Calcul détaillé article par article : part de conso → quota → arrondi retenu. */}
+                {analysed && (() => {
+                  const ventes = articlesValides.filter(a => (a.typProd || "Produit Vente") === "Produit Vente");
+                  if (!ventes.length) return null;
+                  const totalConso = ventes.reduce((s, a) => s + (a.consoN1 || 0), 0);
+                  if (!totalConso) return null;
+                  const cible = modeVent ? pal.nbProduitsPack! : 0;
+                  const lignes = ventes.map(a => {
+                    const conso = a.consoN1 || 0;
+                    const part = conso / totalConso;
+                    const quota = modeVent ? part * cible : conso / (totalP || 1);
+                    return { a, conso, part, quota, retenu: qtyParPack(a, pal, totalP, vent, articlesValides) };
+                  });
+                  const totalRetenu = lignes.reduce((s, l) => s + l.retenu, 0);
+                  return (
+                    <div style={{ marginTop: 8, borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>
+                      <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, marginBottom: 6 }}>
+                        Calcul par article {modeVent ? `— part de conso × ${cible} produits/offre` : `— conso ÷ ${fmtNum(totalP)} offres`}
+                      </div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5, fontVariantNumeric: "tabular-nums" }}>
+                        <thead>
+                          <tr>
+                            {["Réf", "Conso N-1", "Part", "Calcul", "Retenu"].map((h, hi) => (
+                              <th key={hi} style={{ padding: "3px 8px", fontSize: 10, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", textAlign: hi === 0 ? "left" : "right", borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {lignes.map((l, li) => (
+                            <tr key={li}>
+                              <td style={{ padding: "3px 8px", fontFamily: "ui-monospace, monospace", color: C.textSec }}>{l.a.ref}</td>
+                              <td style={{ padding: "3px 8px", textAlign: "right", color: C.textSec }}>{fmtNum(l.conso)}</td>
+                              <td style={{ padding: "3px 8px", textAlign: "right", color: C.textMuted }}>{(l.part * 100).toFixed(1)} %</td>
+                              <td style={{ padding: "3px 8px", textAlign: "right", fontFamily: "ui-monospace, monospace", color: C.textMuted }}>
+                                {modeVent ? `${(l.part * 100).toFixed(1)} % × ${cible} = ${l.quota.toFixed(2)}` : `${fmtNum(l.conso)} ÷ ${fmtNum(totalP)} = ${l.quota.toFixed(2)}`}
+                              </td>
+                              <td style={{ padding: "3px 8px", textAlign: "right", fontWeight: 600, color: C.text }}>{l.retenu}</td>
+                            </tr>
+                          ))}
+                          <tr>
+                            <td colSpan={3} style={{ padding: "4px 8px", borderTop: `1px solid ${C.border}`, color: C.textMuted, fontWeight: 600 }}>Total</td>
+                            <td style={{ padding: "4px 8px", textAlign: "right", borderTop: `1px solid ${C.border}`, color: C.textMuted }}>{fmtNum(totalConso)}</td>
+                            <td style={{ padding: "4px 8px", textAlign: "right", borderTop: `1px solid ${C.border}`, fontWeight: 700, color: modeVent && totalRetenu !== cible ? C.amber : C.green }}>{totalRetenu}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      {modeVent && (
+                        <div style={{ fontSize: 10.5, color: C.textMuted, marginTop: 5 }}>
+                          Les décimales ne sont pas arrondies indépendamment : on garde la partie entière de chaque quota, puis les unités restantes vont aux plus grands restes jusqu'à atteindre {cible}.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+                {!analysed && <div style={{ fontSize: 11, color: C.amber, marginTop: 4 }}>Lance « Analyser conso N-1 » pour voir les % typologies et le calcul par article.</div>}
               </div>
             );
           })()}
