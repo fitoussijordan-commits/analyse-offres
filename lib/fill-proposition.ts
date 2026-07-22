@@ -385,30 +385,76 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   const pal1 = paliers[0];
   const GC_PV_FIRST = 159, GC_PV_COUNT = 13, LOG_PV_FIRST = 185, LOG_PV_COUNT = 13;
   const GC_NOM_ROW = 152, GC_REMISE_ROW = 153;
-  // Les 6 colonnes GC de base sont figées dans le template (M/P/S/V/Y/AB).
-  // Les GC 7+ sont ajoutés dynamiquement après la colonne AD (col 30), même structure : 3 cols par GC.
+  // 6 colonnes GC fixes dans le template (M/P/S/V/Y/AB = cols 13/16/19/22/25/28).
   const GC_ENSEIGNE_COLS = [
-    { nom: 13, qte: 13, remise: 15 },  // BIOCOOP : M
-    { nom: 16, qte: 16, remise: 18 },  // Mlle Bio : P
-    { nom: 19, qte: 19, remise: 21 },  // Galeries Lafayette : S
-    { nom: 22, qte: 22, remise: 24 },  // Printemps : V
-    { nom: 25, qte: 25, remise: 27 },  // Place des tendances : Y
-    { nom: 28, qte: 28, remise: 30 },  // NewPharma : AB
+    { nom: 13, qte: 13, remise: 15 },
+    { nom: 16, qte: 16, remise: 18 },
+    { nom: 19, qte: 19, remise: 21 },
+    { nom: 22, qte: 22, remise: 24 },
+    { nom: 25, qte: 25, remise: 27 },
+    { nom: 28, qte: 28, remise: 30 },
   ];
-  // GC 7+ : colonnes dynamiques à partir de la col 31 (AE), 3 cols par enseigne
-  const gcExtras = (payload.gcEnseignes || []).slice(6);
-  const GC_EXTRA_COLS = gcExtras.map((_, i) => {
-    const base = 31 + i * 3;
-    return { nom: base, qte: base, remise: base + 2 };
-  });
-  const ALL_GC_COLS = [...GC_ENSEIGNE_COLS, ...GC_EXTRA_COLS];
+  // GC 7+ : cols dynamiques à partir de 31, 3 cols chacune (qté/CA/Marges).
+  // Le bloc "Grands Comptes Total" (col 32-34 dans le template) est décalé d'autant.
   const allGcEnseignes = payload.gcEnseignes || [];
+  const gcExtras = allGcEnseignes.slice(6);
+  const nbExtras = gcExtras.length;
+  const GC_EXTRA_COLS = gcExtras.map((_, i) => ({ nom: 31 + i * 3, qte: 31 + i * 3, remise: 31 + i * 3 + 2 }));
+  const ALL_GC_COLS = [...GC_ENSEIGNE_COLS, ...GC_EXTRA_COLS];
+  // Col du bloc Total GC (décalé si extras)
+  const GC_TOTAL_COL = 31 + nbExtras * 3; // col 31 si 0 extras, 34 si 1 extra, etc.
 
-  // En-têtes enseignes : nom (ligne 152) + remise (ligne 153) pour toutes.
+  // Décaler le bloc Total GC si nécessaire
+  if (nbExtras > 0) {
+    const TOTAL_ROWS = [149, 151, 152, 153, 154, 155, 157];
+    const GC_ROWS_DATA = Array.from({ length: GC_PV_COUNT }, (_, i) => GC_PV_FIRST + i);
+    // Lignes titre + synthèse + données
+    for (const row of [...TOTAL_ROWS, ...GC_ROWS_DATA]) {
+      // Lire les valeurs des colonnes 32, 33, 34 et les déplacer vers GC_TOTAL_COL+1, +2, +3
+      for (let srcCol = 32; srcCol <= 34; srcCol++) {
+        const src = ws.getCell(row, srcCol);
+        const dst = ws.getCell(row, GC_TOTAL_COL + (srcCol - 32) + 1);
+        dst.value = src.value;
+        dst.style = JSON.parse(JSON.stringify(src.style));
+        src.value = null;
+      }
+    }
+    // Mettre à jour la formule Total GC CA et Marges
+    const synRow = 157;
+    // Reconstruire les formules de synthèse Total GC
+    const caFormulaParts = ALL_GC_COLS.map(c => {
+      const caCol = ws.getColumn(c.qte + 1).letter;
+      return `${caCol}${synRow}`;
+    });
+    const margesFormulaParts = ALL_GC_COLS.map(c => {
+      const margesCol = ws.getColumn(c.qte + 2).letter;
+      return `${margesCol}${synRow}`;
+    });
+    ws.getCell(synRow, GC_TOTAL_COL + 2).value = { formula: caFormulaParts.join("+") };
+    ws.getCell(synRow, GC_TOTAL_COL + 3).value = { formula: margesFormulaParts.join("+") };
+    // Aussi mettre à jour la formule Qtité totale (col E) pour inclure les extras
+    const qteCols = ALL_GC_COLS.map(c => ws.getColumn(c.qte).letter);
+    for (let i = 0; i < GC_PV_COUNT; i++) {
+      const row = GC_PV_FIRST + i;
+      ws.getCell(row, 5).value = { formula: qteCols.map(l => `${l}${row}`).join("+") };
+    }
+  }
+
+  // En-têtes enseignes : nom (ligne 152) + "Remise" label + taux (ligne 153) pour toutes.
   ALL_GC_COLS.forEach((cols, idx) => {
     const ens = allGcEnseignes[idx];
     if (!ens) return;
     if (ens.nom) ws.getCell(GC_NOM_ROW, cols.nom).value = ens.nom;
+    if (idx >= 6) {
+      // Pour les extras : écrire aussi le label "Remise" et les en-têtes Qtités/CA/Marges
+      ws.getCell(GC_REMISE_ROW, cols.nom).value = "Remise";
+      ws.getCell(154, cols.qte).value = "Qtités";
+      ws.getCell(154, cols.qte + 1).value = "CA";
+      ws.getCell(154, cols.qte + 2).value = "Marges";
+      ws.getCell(155, cols.qte).value = "'#";
+      ws.getCell(155, cols.qte + 1).value = "'€";
+      ws.getCell(155, cols.qte + 2).value = "'€";
+    }
     if (typeof ens.remise === "number") ws.getCell(GC_REMISE_ROW, cols.remise).value = ens.remise;
   });
   // Clé GC : réf seule si unique dans le palier, sinon "ref#type" (doublons vendu/UG).
@@ -435,7 +481,7 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 8).value = venteGC ? { formula: vlookup(`A${row}`, 5) } : 0;
       ws.getCell(row, 10).value = venteGC ? { formula: vlookup(`A${row}`, 6) } : 0;
     }
-    // Grands Comptes : qté pour toutes les enseignes (6 fixes + extras dynamiques).
+    // Grands Comptes : qté + formules CA/Marges pour toutes les enseignes.
     const gk = gcKey(p);
     if (gk && allGcEnseignes.length) {
       ALL_GC_COLS.forEach((cols, idx) => {
@@ -446,6 +492,18 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
           const cell = ws.getCell(row, cols.qte);
           cell.value = q;
           cell.numFmt = "0";
+        }
+        // Pour les GC extras (7+), ajouter les formules CA et Marges comme les 6 fixes
+        if (idx >= 6) {
+          const qteCol = ws.getColumn(cols.qte).letter;
+          const remiseCell = `$${ws.getColumn(cols.remise).letter}$${GC_REMISE_ROW}`;
+          ws.getCell(row, cols.qte + 1).value = { formula: `${qteCol}${row}*H${row}*(1-I${row})*(1-${remiseCell})` };
+          ws.getCell(row, cols.qte + 2).value = { formula: `${ws.getColumn(cols.qte + 1).letter}${row}-(F${row}*${qteCol}${row})` };
+          // Synthèse SUM pour cette colonne extra
+          if (i === 0) {
+            ws.getCell(157, cols.qte + 1).value = { formula: `SUM(${ws.getColumn(cols.qte + 1).letter}${GC_PV_FIRST}:${ws.getColumn(cols.qte + 1).letter}${GC_PV_FIRST + GC_PV_COUNT - 1})` };
+            ws.getCell(157, cols.qte + 2).value = { formula: `SUM(${ws.getColumn(cols.qte + 2).letter}${GC_PV_FIRST}:${ws.getColumn(cols.qte + 2).letter}${GC_PV_FIRST + GC_PV_COUNT - 1})` };
+          }
         }
       });
     }
