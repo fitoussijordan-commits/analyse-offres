@@ -394,58 +394,95 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     { nom: 25, qte: 25, remise: 27 },
     { nom: 28, qte: 28, remise: 30 },
   ];
-  // GC 7+ : cols dynamiques à partir de 31, 3 cols chacune (qté/CA/Marges).
-  // Le bloc "Grands Comptes Total" (col 32-34 dans le template) est décalé d'autant.
+  // GC 7+ : colonnes insérées à la suite de NewPharma (col 31+), 3 colonnes chacune
+  // (Qtités/CA/Marges) avec les styles copiés de la colonne NewPharma. Le bloc
+  // "Grands Comptes Total" + "Poids Gratuités" (cols 31-34 du gabarit) est réécrit
+  // décalé d'autant vers la droite, formules ajustées.
   const allGcEnseignes = payload.gcEnseignes || [];
   const gcExtras = allGcEnseignes.slice(6);
   const nbExtras = gcExtras.length;
-  const GC_EXTRA_COLS = gcExtras.map((_, i) => ({ nom: 31 + i * 3, qte: 31 + i * 3, remise: 31 + i * 3 + 2 }));
+  const GC_EXTRA_COLS = gcExtras.map((_, i) => ({ nom: 31 + i * 3, qte: 31 + i * 3, remise: 33 + i * 3 }));
   const ALL_GC_COLS = [...GC_ENSEIGNE_COLS, ...GC_EXTRA_COLS];
-  // Col du bloc Total GC (décalé si extras)
-  const GC_TOTAL_COL = 31 + nbExtras * 3; // col 31 si 0 extras, 34 si 1 extra, etc.
+  const GC_ROW_TOP = 149, GC_ROW_LAST = 178, GC_SYN_ROW = 157;
+  const colL = (n: number): string => { let s = ""; while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = (n - 1 - r) / 26; } return s; };
+  const cloneStyle = (st: Partial<ExcelJS.Style>): Partial<ExcelJS.Style> => JSON.parse(JSON.stringify(st || {}));
 
-  // Décaler le bloc Total GC si nécessaire (écriture directe, pas de copie de shared formulas)
   if (nbExtras > 0) {
-    // Effacer l'ancienne position du bloc Total (cols 32-34)
-    for (const row of [149, 151, 154, 155, 157]) {
-      for (let col = 32; col <= 34; col++) ws.getCell(row, col).value = null;
+    const shift = nbExtras * 3;
+    // 1) Snapshot des styles du bloc Total du gabarit (cols 31-34 = spacer/titre/CA/Marges).
+    const totSnap: Record<string, Partial<ExcelJS.Style>> = {};
+    for (let r = 148; r <= 170; r++) for (let c = 31; c <= 34; c++) {
+      const cell = ws.getCell(r, c);
+      totSnap[`${r}:${c}`] = cloneStyle(cell.style);
+      cell.value = null;
+      cell.style = {} as ExcelJS.Style;
     }
-    // Écrire le nouveau bloc Total à la nouvelle position
-    const TC = GC_TOTAL_COL; // première col du bloc Total (ex: 34 si 1 extra)
-    ws.getCell(149, TC + 1).value = "Grands Comptes";
-    ws.getCell(151, TC + 1).value = "Total";
-    ws.getCell(154, TC + 1).value = "CA";
-    ws.getCell(154, TC + 2).value = "Marges";
-    ws.getCell(155, TC + 1).value = "'€";
-    ws.getCell(155, TC + 2).value = "'€";
-    // Formules Total CA/Marges = somme des CA/Marges de tous les GC
-    const caSum = ALL_GC_COLS.map(c => `${ws.getColumn(c.qte + 1).letter}157`).join("+");
-    const margesSum = ALL_GC_COLS.map(c => `${ws.getColumn(c.qte + 2).letter}157`).join("+");
-    ws.getCell(157, TC + 1).value = { formula: caSum };
-    ws.getCell(157, TC + 2).value = { formula: margesSum };
-    // Mettre à jour la formule Qtité totale (col E) pour inclure les extras
-    for (let i = 0; i < GC_PV_COUNT; i++) {
-      const row = GC_PV_FIRST + i;
-      const qteSum = ALL_GC_COLS.map(c => `${ws.getColumn(c.qte).letter}${row}`).join("+");
-      ws.getCell(row, 5).value = { formula: qteSum };
+    // 2) Styles des colonnes extra copiés de NewPharma (cols 28/29/30) + largeurs.
+    for (let i = 0; i < nbExtras; i++) {
+      const base = 31 + i * 3;
+      for (let k = 0; k < 3; k++) {
+        for (let r = GC_ROW_TOP; r <= GC_ROW_LAST; r++) {
+          ws.getCell(r, base + k).style = cloneStyle(ws.getCell(r, 28 + k).style) as ExcelJS.Style;
+        }
+        const w = ws.getColumn(28 + k).width;
+        if (w) ws.getColumn(base + k).width = w;
+      }
     }
+    // Bandeau catégorie (ligne 150) « Autre GC » fusionné sur toutes les colonnes extra.
+    ws.mergeCells(150, 31, 150, 30 + shift);
+    const cat = ws.getCell(150, 31);
+    cat.value = "Autre GC";
+    cat.style = cloneStyle(ws.getCell(150, 25).style) as ExcelJS.Style;
+    // 3) En-têtes + formules de chaque colonne extra (mêmes formules que les 6 fixes).
+    for (const c of GC_EXTRA_COLS) {
+      const qL = colL(c.qte), caL = colL(c.qte + 1), mgL = colL(c.qte + 2);
+      ws.getCell(GC_REMISE_ROW, c.qte).value = "Remise";
+      ws.getCell(154, c.qte).value = "Qtités"; ws.getCell(154, c.qte + 1).value = "CA"; ws.getCell(154, c.qte + 2).value = "Marges";
+      ws.getCell(155, c.qte).value = "'#"; ws.getCell(155, c.qte + 1).value = "'€"; ws.getCell(155, c.qte + 2).value = "'€";
+      ws.getCell(GC_SYN_ROW, c.qte).value = { formula: `SUM(${qL}${GC_PV_FIRST}:${qL}${GC_ROW_LAST})` };
+      ws.getCell(GC_SYN_ROW, c.qte + 1).value = { formula: `SUM(${caL}${GC_PV_FIRST}:${caL}${GC_ROW_LAST})` };
+      ws.getCell(GC_SYN_ROW, c.qte + 2).value = { formula: `SUM(${mgL}${GC_PV_FIRST}:${mgL}${GC_ROW_LAST})` };
+      for (let r = GC_PV_FIRST; r <= GC_ROW_LAST; r++) {
+        ws.getCell(r, c.qte + 1).value = { formula: `${qL}${r}*H${r}*(1-I${r})*(1-$${colL(c.remise)}$${GC_REMISE_ROW})` };
+        ws.getCell(r, c.qte + 2).value = { formula: `${caL}${r}-(F${r}*${qL}${r})` };
+      }
+    }
+    // 4) Col E (Qtités totale) : somme de toutes les colonnes Qtités. On remplace la formule
+    //    partagée du gabarit sur TOUTE la plage pour ne laisser aucun clone orphelin.
+    const qteLetters = ALL_GC_COLS.map(c => colL(c.qte));
+    for (let r = GC_PV_FIRST; r <= GC_ROW_LAST; r++) {
+      ws.getCell(r, 5).value = { formula: qteLetters.map(L => `${L}${r}`).join("+") };
+    }
+    // 5) Bloc "Grands Comptes Total" + "Poids Gratuités" réécrit à sa nouvelle position.
+    for (let r = 148; r <= 170; r++) for (let c = 31; c <= 34; c++) {
+      const st = totSnap[`${r}:${c}`];
+      if (st) ws.getCell(r, c + shift).style = st as ExcelJS.Style;
+    }
+    const T1 = 32 + shift, T2 = 33 + shift, T3 = 34 + shift;
+    const caTL = colL(T2), mgTL = colL(T3);
+    ws.getCell(149, T1).value = "Grands Comptes";
+    ws.getCell(151, T1).value = "Total";
+    ws.getCell(154, T2).value = "CA"; ws.getCell(154, T3).value = "Marges";
+    ws.getCell(155, T2).value = "'€"; ws.getCell(155, T3).value = "'€";
+    ws.getCell(GC_SYN_ROW, T2).value = { formula: ALL_GC_COLS.map(c => `${colL(c.qte + 1)}${GC_SYN_ROW}`).join("+") };
+    ws.getCell(GC_SYN_ROW, T3).value = { formula: ALL_GC_COLS.map(c => `${colL(c.qte + 2)}${GC_SYN_ROW}`).join("+") };
+    ws.getCell(161, T2).value = "Poids Gratuités achats :";
+    ws.getCell(161, T3).value = { formula: `SUM(${mgTL}163:${mgTL}166)` };
+    ["UG", "PLV", "Echantillon", "Testeur"].forEach((lbl, gi) => {
+      const r = 163 + gi;
+      ws.getCell(r, T2).value = lbl;
+      ws.getCell(r, T3).value = { formula: `SUMIF($D$159:$D$178,${caTL}${r},$G$159:$G$178)/$${caTL}$${GC_SYN_ROW}` };
+    });
+    // Largeurs des colonnes CA/Marges du Total (évite "###").
+    ws.getColumn(T2).width = 13;
+    ws.getColumn(T3).width = 13;
   }
 
-  // En-têtes enseignes : nom (ligne 152) + "Remise" label + taux (ligne 153) pour toutes.
+  // En-têtes enseignes : nom (ligne 152) + taux de remise (ligne 153) pour toutes.
   ALL_GC_COLS.forEach((cols, idx) => {
     const ens = allGcEnseignes[idx];
     if (!ens) return;
     if (ens.nom) ws.getCell(GC_NOM_ROW, cols.nom).value = ens.nom;
-    if (idx >= 6) {
-      // Pour les extras : écrire aussi le label "Remise" et les en-têtes Qtités/CA/Marges
-      ws.getCell(GC_REMISE_ROW, cols.nom).value = "Remise";
-      ws.getCell(154, cols.qte).value = "Qtités";
-      ws.getCell(154, cols.qte + 1).value = "CA";
-      ws.getCell(154, cols.qte + 2).value = "Marges";
-      ws.getCell(155, cols.qte).value = "'#";
-      ws.getCell(155, cols.qte + 1).value = "'€";
-      ws.getCell(155, cols.qte + 2).value = "'€";
-    }
     if (typeof ens.remise === "number") ws.getCell(GC_REMISE_ROW, cols.remise).value = ens.remise;
   });
   // Clé GC : réf seule si unique dans le palier, sinon "ref#type" (doublons vendu/UG).
@@ -472,7 +509,7 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 8).value = venteGC ? { formula: vlookup(`A${row}`, 5) } : 0;
       ws.getCell(row, 10).value = venteGC ? { formula: vlookup(`A${row}`, 6) } : 0;
     }
-    // Grands Comptes : qté + formules CA/Marges pour toutes les enseignes.
+    // Grands Comptes : qté pour toutes les enseignes (formules CA/Marges des extras déjà posées).
     const gk = gcKey(p);
     if (gk && allGcEnseignes.length) {
       ALL_GC_COLS.forEach((cols, idx) => {
@@ -483,18 +520,6 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
           const cell = ws.getCell(row, cols.qte);
           cell.value = q;
           cell.numFmt = "0";
-        }
-        // Pour les GC extras (7+), ajouter les formules CA et Marges comme les 6 fixes
-        if (idx >= 6) {
-          const qteCol = ws.getColumn(cols.qte).letter;
-          const remiseCell = `$${ws.getColumn(cols.remise).letter}$${GC_REMISE_ROW}`;
-          ws.getCell(row, cols.qte + 1).value = { formula: `${qteCol}${row}*H${row}*(1-I${row})*(1-${remiseCell})` };
-          ws.getCell(row, cols.qte + 2).value = { formula: `${ws.getColumn(cols.qte + 1).letter}${row}-(F${row}*${qteCol}${row})` };
-          // Synthèse SUM pour cette colonne extra
-          if (i === 0) {
-            ws.getCell(157, cols.qte + 1).value = { formula: `SUM(${ws.getColumn(cols.qte + 1).letter}${GC_PV_FIRST}:${ws.getColumn(cols.qte + 1).letter}${GC_PV_FIRST + GC_PV_COUNT - 1})` };
-            ws.getCell(157, cols.qte + 2).value = { formula: `SUM(${ws.getColumn(cols.qte + 2).letter}${GC_PV_FIRST}:${ws.getColumn(cols.qte + 2).letter}${GC_PV_FIRST + GC_PV_COUNT - 1})` };
-          }
         }
       });
     }
