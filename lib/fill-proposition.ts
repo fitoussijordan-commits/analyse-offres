@@ -467,102 +467,108 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
  * Les 6 premières sont dans la feuille Proposition ; les suivantes sont ici avec
  * ref, libellé, remise et qté par enseigne dans un tableau propre.
  */
-export function addGcExtraSheet(wb: ExcelJS.Workbook, payload: PropPayload, palierNom: string): void {
+export function addGcExtraSheet(wb: ExcelJS.Workbook, payload: PropPayload, _palierNom: string): void {
   const extras = (payload.gcEnseignes || []).slice(6);
   if (!extras.length) return;
 
-  const pal1 = payload.paliers[0];
-  if (!pal1?.produits?.length) return;
+  const paliers = (payload.paliers || []).filter(p => p.produits?.length);
+  if (!paliers.length) return;
 
-  // Clé composite (ref doublons).
-  const gcRefCount: Record<string, number> = {};
-  for (const pr of pal1.produits) { const r = (pr.ref || "").trim(); if (r) gcRefCount[r] = (gcRefCount[r] || 0) + 1; }
-  const gcKey = (pr: PropProduit) => {
-    const r = (pr.ref || "").trim();
-    return (r && gcRefCount[r] > 1) ? `${r}#${pr.typProd || "Produit Vente"}` : r;
-  };
+  // Un onglet par palier qui a des GC extras
+  for (const pal of paliers) {
+    const safeName = (pal.label || pal.code || "Palier").replace(/[[\]:*?/\\]/g, " ").trim().slice(0, 10);
+    const sheetName = `GC Extra — ${safeName}`.slice(0, 31);
 
-  const sheetName = `GC Extra${palierNom ? " — " + palierNom.slice(0, 15) : ""}`.slice(0, 31);
-  const ws = wb.addWorksheet(sheetName, { views: [{ showGridLines: false, state: "frozen", ySplit: 3 }] });
+    // Clé composite (ref doublons)
+    const gcRefCount: Record<string, number> = {};
+    for (const pr of pal.produits) { const r = (pr.ref || "").trim(); if (r) gcRefCount[r] = (gcRefCount[r] || 0) + 1; }
+    const gcKey = (pr: PropProduit) => {
+      const r = (pr.ref || "").trim();
+      return (r && gcRefCount[r] > 1) ? `${r}#${pr.typProd || "Produit Vente"}` : r;
+    };
 
-  // Titre
-  const nbCols = 2 + extras.length;
-  ws.mergeCells(1, 1, 1, nbCols);
-  const title = ws.getCell(1, 1);
-  title.value = `Grands Comptes supplémentaires${palierNom ? " — " + palierNom : ""}`;
-  title.font = { bold: true, size: 13, color: { argb: "FFFFFFFF" } };
-  title.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFB45309" } };
-  title.alignment = { horizontal: "center", vertical: "middle" };
-  ws.getRow(1).height = 28;
+    const ws = wb.addWorksheet(sheetName, { views: [{ showGridLines: false, state: "frozen", ySplit: 3 }] });
 
-  // Ligne remise
-  ws.getCell(2, 1).value = "Remise %";
-  ws.getCell(2, 1).font = { bold: true, color: { argb: "FF64748B" }, size: 10 };
-  ws.mergeCells(2, 1, 2, 2);
-  extras.forEach((ens, i) => {
-    const c = ws.getCell(2, 3 + i);
-    c.value = typeof ens.remise === "number" ? ens.remise : 0;
-    c.numFmt = "0.0%";
-    c.font = { bold: true, color: { argb: "FFB45309" }, size: 10 };
-    c.alignment = { horizontal: "center" };
-  });
+    // Titre
+    const nbCols = 2 + extras.length;
+    ws.mergeCells(1, 1, 1, nbCols);
+    const title = ws.getCell(1, 1);
+    title.value = `Grands Comptes supplémentaires — ${pal.label || pal.code || ""}`;
+    title.font = { bold: true, size: 13, color: { argb: "FFFFFFFF" } };
+    title.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFB45309" } };
+    title.alignment = { horizontal: "center", vertical: "middle" };
+    ws.getRow(1).height = 28;
 
-  // Ligne en-têtes colonnes
-  const hdr = ws.getRow(3);
-  hdr.height = 20;
-  const headers = ["Réf", "Libellé", ...extras.map(e => e.nom || "—")];
-  headers.forEach((h, i) => {
-    const c = hdr.getCell(i + 1);
-    c.value = h;
-    c.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
-    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1A1A2E" } };
-    c.alignment = { horizontal: i < 2 ? "left" : "center", vertical: "middle" };
-    c.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
-  });
-
-  // Lignes produits
-  pal1.produits.forEach((p, ri) => {
-    const row = ws.getRow(4 + ri);
-    row.height = 18;
-    const gk = gcKey(p);
-    const bg = ri % 2 === 0 ? "FFFFFFFF" : "FFFFF7ED";
-    const refCell = row.getCell(1);
-    refCell.value = p.ref || "";
-    refCell.font = { name: "Courier New", size: 10 };
-    refCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + bg.slice(2) } };
-    const nameCell = row.getCell(2);
-    nameCell.value = p.name || "";
-    nameCell.font = { size: 10 };
-    nameCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + bg.slice(2) } };
+    // Ligne remise
+    ws.getCell(2, 1).value = "Remise %";
+    ws.getCell(2, 1).font = { bold: true, color: { argb: "FF64748B" }, size: 10 };
+    ws.mergeCells(2, 1, 2, 2);
     extras.forEach((ens, i) => {
-      const c = row.getCell(3 + i);
-      const q = ens.qties[gk] ?? 0;
-      c.value = q || null;
-      c.numFmt = q ? "0" : "";
+      const c = ws.getCell(2, 3 + i);
+      c.value = typeof ens.remise === "number" ? ens.remise : 0;
+      c.numFmt = "0.0%";
+      c.font = { bold: true, color: { argb: "FFB45309" }, size: 10 };
       c.alignment = { horizontal: "center" };
-      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + bg.slice(2) } };
-      c.font = { bold: q > 0, color: { argb: q > 0 ? "FFB45309" : "FF94A3B8" }, size: 10 };
     });
-  });
 
-  // Ligne total
-  const totRow = ws.getRow(4 + pal1.produits.length);
-  totRow.height = 20;
-  const t1 = totRow.getCell(1); t1.value = "TOTAL"; t1.font = { bold: true, color: { argb: "FFB45309" } };
-  ws.mergeCells(4 + pal1.produits.length, 1, 4 + pal1.produits.length, 2);
-  extras.forEach((ens, i) => {
-    const tot = pal1.produits.reduce((s, p) => s + (ens.qties[gcKey(p)] || 0), 0);
-    const c = totRow.getCell(3 + i);
-    c.value = tot || null;
-    c.font = { bold: true, color: { argb: "FFB45309" }, size: 10 };
-    c.alignment = { horizontal: "center" };
-    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF7ED" } };
-  });
+    // En-têtes colonnes
+    const hdr = ws.getRow(3);
+    hdr.height = 20;
+    const headers = ["Réf", "Libellé", ...extras.map(e => e.nom || "—")];
+    headers.forEach((h, i) => {
+      const c = hdr.getCell(i + 1);
+      c.value = h;
+      c.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1A1A2E" } };
+      c.alignment = { horizontal: i < 2 ? "left" : "center", vertical: "middle" };
+      c.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+    });
 
-  // Largeurs colonnes
-  ws.getColumn(1).width = 14;
-  ws.getColumn(2).width = 38;
-  for (let i = 0; i < extras.length; i++) ws.getColumn(3 + i).width = 12;
+    // Lignes produits
+    pal.produits.forEach((p, ri) => {
+      const row = ws.getRow(4 + ri);
+      row.height = 18;
+      const gk = gcKey(p);
+      const bg = ri % 2 === 0 ? "FFFFFF" : "FFF7ED";
+      const refCell = row.getCell(1);
+      refCell.value = p.ref || "";
+      refCell.font = { name: "Courier New", size: 10 };
+      refCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + bg } };
+      const nameCell = row.getCell(2);
+      nameCell.value = p.name || "";
+      nameCell.font = { size: 10 };
+      nameCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + bg } };
+      extras.forEach((ens, i) => {
+        const c = row.getCell(3 + i);
+        const q = ens.qties[gk] ?? 0;
+        c.value = q || null;
+        c.numFmt = q ? "0" : "";
+        c.alignment = { horizontal: "center" };
+        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + bg } };
+        c.font = { bold: q > 0, color: { argb: q > 0 ? "FFB45309" : "FF94A3B8" }, size: 10 };
+      });
+    });
+
+    // Ligne total
+    const totIdx = 4 + pal.produits.length;
+    const totRow = ws.getRow(totIdx);
+    totRow.height = 20;
+    const t1 = totRow.getCell(1); t1.value = "TOTAL"; t1.font = { bold: true, color: { argb: "FFB45309" } };
+    ws.mergeCells(totIdx, 1, totIdx, 2);
+    extras.forEach((ens, i) => {
+      const tot = pal.produits.reduce((s, p) => s + (ens.qties[gcKey(p)] || 0), 0);
+      const c = totRow.getCell(3 + i);
+      c.value = tot || null;
+      c.font = { bold: true, color: { argb: "FFB45309" }, size: 10 };
+      c.alignment = { horizontal: "center" };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF7ED" } };
+    });
+
+    // Largeurs colonnes
+    ws.getColumn(1).width = 14;
+    ws.getColumn(2).width = 38;
+    for (let i = 0; i < extras.length; i++) ws.getColumn(3 + i).width = 14;
+  }
 }
 
 // Remplit une feuille Proposition. mapRefs = réfs présentes dans le Mapping partagé (pour que
