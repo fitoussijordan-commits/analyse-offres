@@ -255,20 +255,40 @@ function estVenteArticle(a: ArticleCampagne): boolean {
  * vaut exactement `nbTotal` grâce à la répartition du reste (méthode du plus grand reste).
  * Les articles sans conso ne reçoivent rien. Les UG/Testeurs/PLV sont exclus.
  */
-export function ventilerPack(articles: ArticleCampagne[], nbTotal: number): Record<string, number> {
+export function ventilerPack(articles: ArticleCampagne[], nbTotal: number, pal?: PalierSaisi): Record<string, number> {
   const out: Record<string, number> = {};
   if (!nbTotal || nbTotal <= 0) return out;
-  const arts = articles.filter(a => a.ref.trim() && estVenteArticle(a) && (a.consoN1 || 0) > 0);
-  const somme = arts.reduce((s, a) => s + (a.consoN1 || 0), 0);
-  if (somme <= 0) return out;
-  // Part brute (flottante) puis arrondi entier + distribution du reste.
-  const bruts = arts.map(a => ({ ref: a.ref.trim(), exact: (a.consoN1 || 0) / somme * nbTotal }));
+  const ventes = articles.filter(a => a.ref.trim() && estVenteArticle(a));
+
+  // 1) Les quantités saisies à la main sont figées : elles consomment une part de la cible.
+  //    Le reste de la cible est réparti entre les seuls articles laissés en auto.
+  let figees = 0;
+  const auto: ArticleCampagne[] = [];
+  for (const a of ventes) {
+    const manual = pal ? pal.qtyParPack[qtyKeyLib(a, articles)] : undefined;
+    if (manual != null && manual > 0) { out[a.ref.trim()] = manual; figees += manual; }
+    else auto.push(a);
+  }
+
+  // Saisies manuelles ≥ cible : rien à répartir, les articles auto passent à 0 (l'UI
+  // affichera l'écart pour que l'utilisateur corrige, sans qu'on invente des quantités).
+  const restant = nbTotal - figees;
+  if (restant <= 0) { for (const a of auto) out[a.ref.trim()] = 0; return out; }
+  if (!auto.length) return out;
+
+  // 2) Répartition au prorata de la conso N-1 sur les articles restants.
+  //    Si aucun n'a de conso, on répartit à parts égales pour atteindre quand même la cible.
+  const somme = auto.reduce((s, a) => s + (a.consoN1 || 0), 0);
+  const bruts = auto.map(a => ({
+    ref: a.ref.trim(),
+    exact: somme > 0 ? (a.consoN1 || 0) / somme * restant : restant / auto.length,
+  }));
   let attribue = 0;
-  for (const b of bruts) { const base = Math.floor(b.exact); out[b.ref] = base; attribue += base; }
-  // Répartir les unités restantes aux plus grands restes fractionnaires.
-  let reste = nbTotal - attribue;
+  for (const b of bruts) { const base = Math.floor(b.exact); out[b.ref] = (out[b.ref] || 0) + base; attribue += base; }
+  // Unités restantes aux plus grands restes fractionnaires (somme exacte = cible).
+  let reste = restant - attribue;
   const parReste = [...bruts].sort((a, b) => (b.exact - Math.floor(b.exact)) - (a.exact - Math.floor(a.exact)));
-  for (let i = 0; i < parReste.length && reste > 0; i++) { out[parReste[i].ref] += 1; reste--; }
+  for (let i = 0; reste > 0 && parReste.length; i = (i + 1) % parReste.length) { out[parReste[i].ref] += 1; reste--; }
   return out;
 }
 
@@ -299,13 +319,14 @@ export function qtyKeyLib(art: ArticleCampagne, articles?: ArticleCampagne[]): s
 export function qtyParPack(art: ArticleCampagne, pal: PalierSaisi, totalP?: number, ventilation?: Record<string, number>, articles?: ArticleCampagne[]): number {
   const key = qtyKeyLib(art, articles);
   const manual = pal.qtyParPack[key];
-  if (manual != null && manual > 0) return manual;
-  // Mode "N produits/pack" : si une ventilation est fournie (palier avec nbProduitsPack défini),
-  // la reco de l'article vient de cette ventilation au prorata conso N-1.
-  if (ventilation && ventilation[art.ref] != null) {
-    const v = ventilation[art.ref];
-    return v > 0 ? v : (manual ?? 0);
+  // Mode "N produits/pack" : la ventilation fait déjà autorité — elle intègre les quantités
+  // saisies à la main et ne répartit au prorata que le solde de la cible. On la lit donc
+  // AVANT la saisie manuelle, sinon le total dépasserait la cible.
+  if (ventilation) {
+    const v = ventilation[art.ref.trim()];
+    if (v != null) return v; // 0 inclus : la ventilation fait autorité en mode cible
   }
+  if (manual != null && manual > 0) return manual;
   const denom = (totalP != null && totalP > 0) ? totalP : (pal.nbPacks || 0);
   const reco = denom > 0 ? Math.round((art.consoN1 || 0) / denom) : 0;
   // Si pas de reco possible (pas de conso), on respecte une éventuelle saisie 0.
@@ -314,7 +335,7 @@ export function qtyParPack(art: ArticleCampagne, pal: PalierSaisi, totalP?: numb
 
 /** Ventilation à utiliser pour un palier : sa map si nbProduitsPack>0, sinon undefined. */
 export function ventilationPalier(articles: ArticleCampagne[], pal: PalierSaisi): Record<string, number> | undefined {
-  return (pal.nbProduitsPack && pal.nbProduitsPack > 0) ? ventilerPack(articles, pal.nbProduitsPack) : undefined;
+  return (pal.nbProduitsPack && pal.nbProduitsPack > 0) ? ventilerPack(articles, pal.nbProduitsPack, pal) : undefined;
 }
 
 export interface ExportPayload {
