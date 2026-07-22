@@ -221,14 +221,17 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
       if (code) {
         try {
           const dist = await odoo.getStatutDistributionByOffer(session, code, camp.periodeDebut!, camp.periodeFin!);
+          console.log(`[pctOffres] palier "${code}" dist=`, JSON.stringify(dist));
           const qtyTypo = TYPOLOGIES.map(typo => dist[norm(typo)] || 0);
           const total = qtyTypo.reduce((s, n) => s + n, 0);
+          console.log(`[pctOffres] palier "${code}" total=${total} qtyTypo=`, qtyTypo);
           if (total > 0) {
             return { ...pal, pctOffresReco: qtyTypo.map(q => q / total) };
           }
-        } catch { /* ignore, fallback ci-dessous */ }
+        } catch (e) { console.log(`[pctOffres] palier "${code}" ERREUR`, e); }
       }
       // Fallback : distribution globale si pas de code ou pas de données pour ce code.
+      console.log(`[pctOffres] palier "${code}" → fallback global`);
       return globalReco ? { ...pal, pctOffresReco: globalReco } : pal;
     }));
   }
