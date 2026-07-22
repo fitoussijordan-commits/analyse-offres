@@ -28,12 +28,13 @@ function NavItem({ icon, label, active, locked, onClick }: { icon: React.ReactNo
     <button
       onClick={locked ? undefined : onClick}
       style={{
-        width: "100%", padding: "9px 12px", display: "flex", alignItems: "center", gap: 10,
-        background: active ? D.sidebarActive : "transparent",
-        border: "none", borderRadius: 8, cursor: locked ? "default" : "pointer",
-        color: active ? D.sidebarTextActive : locked ? "#475569" : D.sidebarText,
-        fontSize: 13, fontWeight: active ? 600 : 400, fontFamily: "inherit",
-        marginBottom: 2, textAlign: "left" as const, opacity: locked ? 0.5 : 1,
+        width: "100%", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10,
+        background: active ? "#262933" : "transparent",
+        border: "none", borderLeft: active ? "2px solid #7c88e0" : "2px solid transparent",
+        borderRadius: "0 6px 6px 0", cursor: locked ? "default" : "pointer",
+        color: active ? "#e7e9f2" : locked ? "#475569" : D.sidebarText,
+        fontSize: 12.5, fontWeight: active ? 600 : 400, fontFamily: "inherit",
+        marginBottom: 1, textAlign: "left" as const, opacity: locked ? 0.5 : 1,
       }}
     >
       <span style={{ flexShrink: 0, opacity: 0.85 }}>{icon}</span>
@@ -240,18 +241,21 @@ export default function Home() {
       {/* Sidebar */}
       <aside style={{ width: 220, background: D.sidebar, display: "flex", flexDirection: "column" as const, flexShrink: 0, zIndex: 10 }}>
         {/* Logo */}
-        <div style={{ padding: "20px 16px 16px", borderBottom: "1px solid #262933" }}>
-          <button onClick={() => setView("hub")} style={{ display: "flex", alignItems: "center", gap: 10, background: "transparent", border: "none", cursor: "pointer", padding: 0, width: "100%" }}>
-            <div style={{ width: 34, height: 34, background: D.accent, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <div style={{ padding: "18px 16px 14px", borderBottom: "1px solid #262933" }}>
+          <button onClick={() => setView("hub")} style={{ display: "flex", alignItems: "center", gap: 10, background: "transparent", border: "none", cursor: "pointer", padding: 0, width: "100%", textAlign: "left" as const }}>
+            <div style={{ width: 28, height: 28, background: D.accent, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
             </div>
-            <span style={{ fontSize: 17, fontWeight: 800, color: "#fff", letterSpacing: "-0.02em" }}>ANALYSE</span>
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#f2f2f4", letterSpacing: "0.03em" }}>ANALYSE</div>
+              <div style={{ fontSize: 10, color: "#565b6b", marginTop: 1 }}>Gestion campagnes</div>
+            </div>
           </button>
         </div>
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: "12px 8px", overflowY: "auto" as const }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: "#3a3d47", textTransform: "uppercase" as const, letterSpacing: "0.08em", padding: "0 8px 8px" }}>Outils</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#565b6b", textTransform: "uppercase" as const, letterSpacing: "0.08em", padding: "0 8px 8px" }}>Outils</div>
           <NavItem
             icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>}
             label="Analyse des Campagnes" active={view === "analyse"} onClick={() => setView("analyse")}

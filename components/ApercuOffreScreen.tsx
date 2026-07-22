@@ -194,7 +194,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
           {saved.map(s => <option key={s.id} value={s.id}>{s.nom || "(sans nom)"}</option>)}
         </select>
         <button onClick={validerPourAnalyse} style={{ padding: "8px 16px", background: C.teal, border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit" }}>✓ Valider → suivre la progression</button>
-        <button onClick={exporter} disabled={exporting} style={{ padding: "8px 16px", background: C.blue, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter Excel"}</button>
+        <button onClick={exporter} disabled={exporting} style={{ padding: "8px 16px", background: C.blue, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "Exporter Excel"}</button>
         <button onClick={exporterAnnuel} disabled={exportingAnnuel} title="Toutes les campagnes : 1 onglet par campagne + synthèse logistique cumulée + synthèse CA annuelle" style={{ padding: "8px 16px", background: C.blueDark, border: "none", borderRadius: 8, cursor: exportingAnnuel ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingAnnuel ? 0.6 : 1 }}>{exportingAnnuel ? "Export…" : "📚 Export annuel (toutes campagnes)"}</button>
       </div>
 

@@ -40,7 +40,8 @@ const inputStyle: React.CSSProperties = {
   padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 13,
   fontFamily: "inherit", color: C.text, background: C.white, outline: "none",
 };
-const labelStyle: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4, display: "block" };
+const labelStyle: React.CSSProperties = { fontSize: 10.5, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5, display: "block" };
+const btnGhost: React.CSSProperties = { padding: "7px 13px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 7, cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: C.textSec, fontFamily: "inherit" };
 
 export default function CreerCampagneScreen({ session, onToast, initialDraft, onDraftConsumed }: Props) {
   const [camp, setCamp] = useState<CampagneCreee>(emptyCampagne);
@@ -211,19 +212,38 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   return (
     <div style={{ flex: 1, height: "100%", overflowY: "auto", padding: 24 }}>
     <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Créer une campagne</h1>
-        <span style={{ fontSize: 13, color: C.textMuted }}>Mêmes articles dans tous les paliers ; seules les quantités changent.</span>
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: "13px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 220 }}>
+          <h1 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: 0, letterSpacing: "-0.01em" }}>{camp.nom?.trim() || "Créer une campagne"}</h1>
+          <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 3 }}>
+            {camp.periodeDebut && camp.periodeFin ? `Période N-1 : ${camp.periodeDebut} → ${camp.periodeFin}` : "Période N-1 non définie"}
+            {` · ${articlesValides.length} article${articlesValides.length > 1 ? "s" : ""} · ${camp.paliers.length} palier${camp.paliers.length > 1 ? "s" : ""}`}
+          </div>
+        </div>
         <div style={{ flex: 1 }} />
-        <button onClick={reinitialiserRecos} title="Efface les quantités saisies pour laisser la reco automatique (conso ÷ total packs)" style={{ padding: "7px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>↻ Réinitialiser les recos</button>
-        <button onClick={() => setShowCorbeille(v => !v)} style={{ padding: "7px 14px", background: showCorbeille ? C.bg : C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>🗑 Corbeille{corbeille.length ? ` (${corbeille.length})` : ""}</button>
-        <button onClick={nouvelle} style={{ padding: "7px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>+ Nouvelle</button>
+        <button onClick={reinitialiserRecos} title="Efface les quantités saisies pour laisser la reco automatique (conso ÷ total packs)" style={btnGhost}>Réinitialiser les recos</button>
+        <button onClick={() => setShowCorbeille(v => !v)} style={{ ...btnGhost, background: showCorbeille ? C.bg : C.white }}>Corbeille{corbeille.length ? ` (${corbeille.length})` : ""}</button>
+        <button onClick={nouvelle} style={btnGhost}>+ Nouvelle</button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 1, background: C.border, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+        {[
+          { l: "Articles", v: String(articlesValides.length) },
+          { l: "Paliers", v: String(camp.paliers.length) },
+          { l: "Packs cible", v: fmtNum(totalP) },
+          { l: "Conso N-1 totale", v: analysed ? fmtNum(articlesValides.reduce((s, a) => s + (a.consoN1 || 0), 0)) : "—" },
+        ].map((k, i) => (
+          <div key={i} style={{ background: C.white, padding: "10px 16px" }}>
+            <div style={{ fontSize: 10, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 }}>{k.l}</div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: C.text, fontVariantNumeric: "tabular-nums", marginTop: 2 }}>{k.v}</div>
+          </div>
+        ))}
       </div>
 
       {showCorbeille && (
         <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 16px", boxShadow: C.shadow }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>🗑 Corbeille</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Corbeille</span>
             <span style={{ fontSize: 12, color: C.textMuted }}>Restaure une campagne ou supprime-la définitivement.</span>
           </div>
           {corbeille.length === 0 ? (
@@ -234,7 +254,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 8px", fontSize: 12 }}>
                   <span style={{ fontWeight: 600, color: C.text }}>{s.nom || "(sans nom)"}</span>
                   <span style={{ fontSize: 10, color: C.textMuted, background: C.white, borderRadius: 4, padding: "1px 5px" }}>{yearOf(s)}</span>
-                  <button onClick={() => restaurer(s.id)} title="Restaurer" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.teal, fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>↩ Restaurer</button>
+                  <button onClick={() => restaurer(s.id)} title="Restaurer" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.teal, fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>Restaurer</button>
                   <button onClick={() => supprimerDefinitif(s)} title="Supprimer définitivement" style={{ border: "none", background: "transparent", cursor: "pointer", color: "#c0392b", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>Supprimer définitivement</button>
                 </div>
               ))}
@@ -253,7 +273,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             </select>
             <span style={{ fontSize: 12, color: C.textMuted }}>Coche celles à inclure dans l'export annuel.</span>
             <div style={{ flex: 1 }} />
-            <button onClick={exporterMulti} disabled={exportingMulti || selected.size === 0} style={{ padding: "7px 14px", background: selected.size ? C.teal : C.border, border: "none", borderRadius: 8, cursor: exportingMulti || !selected.size ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingMulti ? 0.6 : 1 }}>{exportingMulti ? "Export…" : `⬇ Exporter sélection (${selected.size}) + synthèse logistique`}</button>
+            <button onClick={exporterMulti} disabled={exportingMulti || selected.size === 0} style={{ padding: "7px 14px", background: selected.size ? C.teal : C.border, border: "none", borderRadius: 8, cursor: exportingMulti || !selected.size ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingMulti ? 0.6 : 1 }}>{exportingMulti ? "Export…" : `Exporter sélection (${selected.size}) + synthèse logistique`}</button>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {savedFiltered.map(s => (
@@ -355,9 +375,10 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
 
       {/* Paliers : nb packs + qté/pack par article */}
       {camp.paliers.map((pal, pi) => (
-        <div key={pi} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
-          <div style={{ padding: "12px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <input style={{ ...inputStyle, width: 90, fontWeight: 700 }} value={pal.code} onChange={e => setPalier(pi, { code: e.target.value })} placeholder="Code" />
+        <div key={pi} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+          <div style={{ padding: "10px 16px", background: C.white, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text, flexShrink: 0 }}>Palier {pi + 1}</span>
+            <input style={{ ...inputStyle, width: 90, fontFamily: "ui-monospace, monospace", fontSize: 12, color: C.blueDark, background: C.blueSoft, border: `1px solid ${C.blueSoft}` }} value={pal.code} onChange={e => setPalier(pi, { code: e.target.value })} placeholder="Code" />
             <input style={{ ...inputStyle, width: 150 }} value={pal.label} onChange={e => setPalier(pi, { label: e.target.value })} placeholder="Libellé" />
             <span style={{ fontSize: 12, color: C.textMuted }}>Nb offres cible</span>
             <input type="number" style={{ ...inputStyle, width: 90 }} value={pal.nbPacks || ""} onChange={e => setPalier(pi, { nbPacks: parseInt(e.target.value) || 0 })} placeholder="0" />
@@ -378,9 +399,9 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             <button
               onClick={() => setOpenInfoPalier(openInfoPalier === pi ? null : pi)}
               title="Voir le détail des calculs de ce palier"
-              style={{ padding: "3px 8px", background: openInfoPalier === pi ? C.teal : "transparent", border: `1px solid ${openInfoPalier === pi ? C.teal : C.border}`, borderRadius: 6, cursor: "pointer", color: openInfoPalier === pi ? "#fff" : C.textMuted, fontSize: 13, fontWeight: 700, fontFamily: "inherit" }}
-            >ℹ</button>
-            {camp.paliers.length > 1 && <button onClick={() => removePalier(pi)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.red, fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>Supprimer le palier</button>}
+              style={{ padding: "4px 10px", background: openInfoPalier === pi ? C.blueSoft : "transparent", border: `1px solid ${openInfoPalier === pi ? C.blue : C.border}`, borderRadius: 6, cursor: "pointer", color: openInfoPalier === pi ? C.blueDark : C.textMuted, fontSize: 11.5, fontWeight: 600, fontFamily: "inherit" }}
+            >Détail calcul</button>
+            {camp.paliers.length > 1 && <button onClick={() => removePalier(pi)} style={{ padding: "4px 10px", border: `1px solid ${C.border}`, background: "transparent", borderRadius: 6, cursor: "pointer", color: C.red, fontSize: 11.5, fontWeight: 600, fontFamily: "inherit" }}>Supprimer</button>}
           </div>
           {openInfoPalier === pi && (() => {
             const vent = ventilationPalier(articlesValides, pal);
@@ -405,8 +426,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
               rows.push({ label: "% offres par typo", value: pal.pctOffresReco.map((v, i) => v > 0 ? `${TYPOS[i]} ${Math.round(v * 100)}%` : null).filter(Boolean).join("  ·  "), note: "Calculé sur les ventes N-1 analysées (répartition réelle des commandes par statut client)" });
             }
             return (
-              <div style={{ margin: "0 16px 0", background: "#f8fafc", border: `1px solid ${C.teal}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: C.teal, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Détail des calculs — {pal.label || pal.code}</div>
+              <div style={{ margin: "0 16px 0", background: C.bg, border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: C.blueDark, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Détail des calculs — {pal.label || pal.code}</div>
                 {rows.map((r, ri) => (
                   <div key={ri} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 12 }}>
                     <span style={{ minWidth: 170, color: C.textMuted, fontWeight: 600, flexShrink: 0 }}>{r.label}</span>
@@ -572,10 +593,10 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
 
       {/* Barre d'action */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", position: "sticky", bottom: -24, background: C.bg, padding: "14px 24px", margin: "0 -24px -24px", borderTop: `1px solid ${C.border}`, zIndex: 5 }}>
-        <button onClick={analyser} disabled={analysing} style={{ padding: "9px 18px", background: C.teal, border: "none", borderRadius: 8, cursor: analysing ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: analysing ? 0.6 : 1 }}>{analysing ? "Analyse…" : "📊 Analyser conso N-1 (Odoo)"}</button>
-        <button onClick={sauvegarder} disabled={saving} style={{ padding: "9px 18px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: saving ? "default" : "pointer", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", opacity: saving ? 0.6 : 1 }}>{saving ? "…" : "💾 Sauvegarder"}</button>
+        <button onClick={analyser} disabled={analysing} style={{ padding: "9px 16px", background: C.white, border: `1px solid ${C.blue}`, borderRadius: 7, cursor: analysing ? "default" : "pointer", fontSize: 12.5, fontWeight: 600, color: C.blueDark, fontFamily: "inherit", opacity: analysing ? 0.6 : 1 }}>{analysing ? "Analyse…" : "Analyser conso N-1"}</button>
+        <button onClick={sauvegarder} disabled={saving} style={{ ...btnGhost, padding: "9px 16px", opacity: saving ? 0.6 : 1, cursor: saving ? "default" : "pointer" }}>{saving ? "…" : "Sauvegarder"}</button>
         <div style={{ flex: 1 }} />
-        <button onClick={exporter} disabled={exporting} style={{ padding: "9px 18px", background: C.blue, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "⬇ Exporter template Proposition"}</button>
+        <button onClick={exporter} disabled={exporting} style={{ padding: "9px 18px", background: C.blue, border: "none", borderRadius: 7, cursor: exporting ? "default" : "pointer", fontSize: 12.5, fontWeight: 600, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "Exporter la proposition"}</button>
       </div>
     </div>
     </div>
