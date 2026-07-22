@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import path from "path";
-import { fillPropositionWorkbook, addGcExtraSheet, PROP_SHEET, PropPayload } from "@/lib/fill-proposition";
+import { fillPropositionWorkbook, PROP_SHEET, PropPayload } from "@/lib/fill-proposition";
 import { writeSyntheseLogistiqueSheet, SyntheseLogistique } from "@/lib/logistique";
 import { writeSyntheseDetailleeSheet } from "@/lib/synthese-detaillee";
 
@@ -24,7 +24,6 @@ export async function POST(req: NextRequest) {
     if (!ws) return NextResponse.json({ error: `Onglet "${PROP_SHEET}" introuvable dans le gabarit` }, { status: 500 });
 
     fillPropositionWorkbook(wb, payload);
-    addGcExtraSheet(wb, payload, payload.nom || "");
 
     // Onglet "Synthèse détaillée" (CA/marge par offre + par statut).
     if (paliers.length) writeSyntheseDetailleeSheet(wb, paliers);
