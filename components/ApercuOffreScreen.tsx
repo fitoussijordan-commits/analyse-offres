@@ -5,7 +5,7 @@ import { loadCampagnesCreees, upsertCampagne } from "@/lib/campaigns";
 import { CampagneCreee, GcEnseigne, GC_ENSEIGNES_DEFAUT, qtyParPack, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
-  CalcPalier, calcPalier, calcSynthese, calcBesoinParRef,
+  CalcPalier, calcPalier, calcSynthese, calcBesoinParRef, detailPalier,
 } from "@/lib/calc-offre";
 import { buildSyntheseLogistique } from "@/lib/logistique";
 
@@ -241,10 +241,12 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
 
 // ── Onglet OFFRE ──────────────────────────────────────────────────────────────
 function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, besoin }: any) {
+  const [openDetail, setOpenDetail] = useState<number | null>(null);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {paliers.map((pal: PalierEdit, pi: number) => {
         const r = calcPalier(calcPaliers[pi]);
+        const d = detailPalier(calcPaliers[pi]);
         return (
           <div key={pi} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
             <div style={{ padding: "12px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -256,9 +258,86 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
               <input type="number" step="0.1" style={{ ...input, width: 60 }} value={Math.round(pal.remiseAdd * 1000) / 10} onChange={e => setPalier(pi, { remiseAdd: (parseFloat(e.target.value) || 0) / 100 })} />
               <span style={{ fontSize: 12, color: C.textMuted }}>%</span>
               <div style={{ flex: 1 }} />
-              <span style={{ fontSize: 13, fontWeight: 800, color: C.blue }}>CA {fmtEur(r.caTotal)}</span>
-              <span style={{ fontSize: 13, fontWeight: 800, color: C.teal }}>Marge {fmtEur(r.margeTotal)} ({fmtPct(r.margePct)})</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.blue }}>CA {fmtEur(r.caTotal)}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.green }}>Marge {fmtEur(r.margeTotal)} ({fmtPct(r.margePct)})</span>
+              <button onClick={() => setOpenDetail(openDetail === pi ? null : pi)}
+                style={{ padding: "4px 10px", background: openDetail === pi ? C.blueSoft : "transparent", border: `1px solid ${openDetail === pi ? C.blue : C.border}`, borderRadius: 6, cursor: "pointer", color: openDetail === pi ? C.blueDark : C.textMuted, fontSize: 11.5, fontWeight: 600, fontFamily: "inherit" }}>
+                Détail calcul
+              </button>
             </div>
+
+            {openDetail === pi && (
+              <div style={{ background: C.bg, borderBottom: `1px solid ${C.border}`, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: C.blueDark, textTransform: "uppercase", letterSpacing: "0.06em" }}>Détail des calculs — {pal.label || pal.code}</div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+                  {[
+                    { l: "CA par produit", v: "qté/offre × tarif × (1 − remise add.) × nb offres typo × (1 − remise typo)", mono: true },
+                    { l: "Marge par produit", v: "CA − (qté/offre × coût × nb offres typo)", mono: true },
+                    { l: "Nb offres typo", v: `% offres × ${fmtNum(pal.nbPacks)} offres du palier`, mono: true },
+                  ].map((x, i) => (
+                    <div key={i} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+                      <span style={{ minWidth: 130, color: C.textMuted, fontWeight: 600, flexShrink: 0 }}>{x.l}</span>
+                      <span style={{ color: C.text, fontFamily: "ui-monospace, monospace", fontSize: 11.5 }}>{x.v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
+                  {[
+                    { l: "Remise moy. pondérée", v: fmtPct(d.remiseMoyenne), n: "par nb d'offres de chaque typo" },
+                    { l: "Coût d'achat total", v: fmtEur(d.coutTotal) },
+                    { l: "CA / offre", v: fmtEur(d.caParOffre) },
+                    { l: "Marge / offre", v: fmtEur(d.margeParOffre) },
+                    { l: "Coef. multiplicateur", v: d.coutTotal > 0 ? (d.caTotal / d.coutTotal).toFixed(2) + " ×" : "—", n: "CA ÷ coût" },
+                  ].map((k, i) => (
+                    <div key={i} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 7, padding: "7px 10px" }}>
+                      <div style={{ fontSize: 9.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>{k.l}</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontVariantNumeric: "tabular-nums", marginTop: 1 }}>{k.v}</div>
+                      {k.n && <div style={{ fontSize: 9.5, color: C.textMuted, marginTop: 1 }}>{k.n}</div>}
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5, fontVariantNumeric: "tabular-nums" }}>
+                    <thead>
+                      <tr>
+                        {["Réf", "Qté/offre", "Unités", "Tarif", "Prix net moy.", "Coût", "CA", "Marge", "Marge %", "Part CA"].map((h, hi) => (
+                          <th key={hi} style={{ padding: "4px 8px", fontSize: 9.5, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", textAlign: hi === 0 ? "left" : "right", borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {d.produits.filter(p => p.qtyParPack > 0).map((p, li) => (
+                        <tr key={li} style={{ background: li % 2 ? C.white : "transparent" }}>
+                          <td style={{ padding: "3px 8px", fontFamily: "ui-monospace, monospace", color: C.textSec, whiteSpace: "nowrap" }}>{p.ref}</td>
+                          <td style={{ padding: "3px 8px", textAlign: "right", fontWeight: 600 }}>{p.qtyParPack}</td>
+                          <td style={{ padding: "3px 8px", textAlign: "right", color: C.textMuted }}>{fmtNum(p.unitesTotal)}</td>
+                          <td style={{ padding: "3px 8px", textAlign: "right", color: C.textMuted }}>{fmtPrix(p.listPrice)}</td>
+                          <td style={{ padding: "3px 8px", textAlign: "right", color: C.textSec }}>{fmtPrix(p.prixNetMoyen)}</td>
+                          <td style={{ padding: "3px 8px", textAlign: "right", color: C.textMuted }}>{fmtPrix(p.standardPrice)}</td>
+                          <td style={{ padding: "3px 8px", textAlign: "right", color: C.blueDark, fontWeight: 600 }}>{fmtEur(p.ca)}</td>
+                          <td style={{ padding: "3px 8px", textAlign: "right", color: p.marge >= 0 ? C.green : C.red, fontWeight: 600 }}>{fmtEur(p.marge)}</td>
+                          <td style={{ padding: "3px 8px", textAlign: "right", color: p.margePct >= 0.3 ? C.green : C.amber }}>{fmtPct(p.margePct)}</td>
+                          <td style={{ padding: "3px 8px", textAlign: "right", color: C.textMuted }}>{fmtPct(p.partCa)}</td>
+                        </tr>
+                      ))}
+                      <tr>
+                        <td colSpan={6} style={{ padding: "5px 8px", borderTop: `1px solid ${C.borderDark}`, color: C.textMuted, fontWeight: 600 }}>Total palier</td>
+                        <td style={{ padding: "5px 8px", textAlign: "right", borderTop: `1px solid ${C.borderDark}`, color: C.blueDark, fontWeight: 700 }}>{fmtEur(d.caTotal)}</td>
+                        <td style={{ padding: "5px 8px", textAlign: "right", borderTop: `1px solid ${C.borderDark}`, color: C.green, fontWeight: 700 }}>{fmtEur(d.margeTotal)}</td>
+                        <td style={{ padding: "5px 8px", textAlign: "right", borderTop: `1px solid ${C.borderDark}`, color: C.green, fontWeight: 700 }}>{fmtPct(d.margePct)}</td>
+                        <td style={{ padding: "5px 8px", borderTop: `1px solid ${C.borderDark}` }} />
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize: 10.5, color: C.textMuted }}>
+                  « Prix net moy. » = tarif × (1 − remise add. {fmtPct(pal.remiseAdd)}) × (1 − remise moy. {fmtPct(d.remiseMoyenne)}). « Unités » = qté/offre × {fmtNum(d.nbOffresTotal)} offres réparties.
+                </div>
+              </div>
+            )}
             <div style={{ padding: "8px 16px 0", display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 12, color: C.textMuted, whiteSpace: "nowrap" }}>Descriptif</span>
               <input style={{ ...input, flex: 1, textAlign: "left", width: "auto" }} value={pal.descriptif ?? ""} onChange={e => setPalier(pi, { descriptif: e.target.value })} placeholder="Texte retranscrit dans l'Excel à côté du nom du palier" />

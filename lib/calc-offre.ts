@@ -62,6 +62,74 @@ export function calcPalier(pal: CalcPalier): PalierResult {
   return { parTypo, caTotal, margeTotal, margePct: caTotal > 0 ? margeTotal / caTotal : 0, coutTotal };
 }
 
+// ── Décomposition (audit) ────────────────────────────────────────────────────
+// Détaille, produit par produit, d'où vient le CA / la marge d'un palier. Sert au
+// panneau « Détail des calculs » : les valeurs affichées viennent des mêmes formules
+// que calcPalier(), il n'y a donc aucun risque de divergence entre écran et export.
+export interface DetailProduit {
+  ref: string; name: string;
+  qtyParPack: number;      // E
+  listPrice: number;       // H  tarif revendeur
+  standardPrice: number;   // F  coût
+  remiseAdd: number;       // I
+  prixNetMoyen: number;    // H × (1−I) × (1−remise moyenne pondérée)
+  unitesTotal: number;     // E × Σ nbOffres (toutes typologies)
+  ca: number;              // Σ typologies
+  cout: number;            // Σ typologies
+  marge: number;           // ca − cout
+  margePct: number;
+  partCa: number;          // poids dans le CA du palier
+}
+export interface DetailPalier {
+  produits: DetailProduit[];
+  remiseMoyenne: number;   // Σ (%offres × remise typo) — remise moyenne pondérée
+  nbOffresTotal: number;   // Σ nbOffres typologies (= Σ%  × nbPacks)
+  caTotal: number; coutTotal: number; margeTotal: number; margePct: number;
+  caParOffre: number; margeParOffre: number;
+}
+
+/** Décompose le CA/marge d'un palier produit par produit (mêmes formules que calcPalier). */
+export function detailPalier(pal: CalcPalier): DetailPalier {
+  const pcts = pal.pcts && pal.pcts.length === 7 ? pal.pcts : DEFAULT_PCTS;
+  const remises = pal.remises && pal.remises.length === 7 ? pal.remises : DEFAULT_REMISES;
+  const nbOffres = pcts.map(p => p * (pal.nbPacks || 0));
+  const nbOffresTotal = nbOffres.reduce((s, n) => s + n, 0);
+  // Remise moyenne pondérée par le nombre d'offres de chaque typologie.
+  const remiseMoyenne = nbOffresTotal > 0
+    ? remises.reduce((s, r, t) => s + r * nbOffres[t], 0) / nbOffresTotal
+    : 0;
+
+  const produits: DetailProduit[] = pal.produits.map(p => {
+    const E = p.qtyParPack || 0, H = p.listPrice || 0, F = p.standardPrice || 0;
+    const I = p.remiseAdd != null ? p.remiseAdd : (pal.remiseAdd != null ? pal.remiseAdd : REMISE_ADD_DEFAUT);
+    let ca = 0, cout = 0;
+    for (let t = 0; t < 7; t++) {
+      ca += E * H * (1 - I) * nbOffres[t] * (1 - remises[t]);
+      cout += E * F * nbOffres[t];
+    }
+    return {
+      ref: p.ref, name: p.name,
+      qtyParPack: E, listPrice: H, standardPrice: F, remiseAdd: I,
+      prixNetMoyen: H * (1 - I) * (1 - remiseMoyenne),
+      unitesTotal: E * nbOffresTotal,
+      ca, cout, marge: ca - cout, margePct: ca > 0 ? (ca - cout) / ca : 0,
+      partCa: 0,
+    };
+  });
+  const caTotal = produits.reduce((s, p) => s + p.ca, 0);
+  const coutTotal = produits.reduce((s, p) => s + p.cout, 0);
+  for (const p of produits) p.partCa = caTotal > 0 ? p.ca / caTotal : 0;
+  const margeTotal = caTotal - coutTotal;
+  const nb = pal.nbPacks || 0;
+  return {
+    produits, remiseMoyenne, nbOffresTotal,
+    caTotal, coutTotal, margeTotal,
+    margePct: caTotal > 0 ? margeTotal / caTotal : 0,
+    caParOffre: nb > 0 ? caTotal / nb : 0,
+    margeParOffre: nb > 0 ? margeTotal / nb : 0,
+  };
+}
+
 export interface SyntheseGlobale { caTotal: number; margeTotal: number; margePct: number; nbPacks: number; }
 
 /** Synthèse de toute la campagne (somme des paliers). */
