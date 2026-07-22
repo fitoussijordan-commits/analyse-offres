@@ -3,18 +3,7 @@ import { useState, useEffect, useMemo, useRef } from "react"
 import * as sb from "@/lib/supabase-planning"
 
 // ── Couleurs (cohérentes avec le reste de l'app) ──────────────────────────────
-const C = {
-  bg: "#f8fafc", white: "#ffffff", text: "#1a1a2e", textSec: "#374151",
-  textMuted: "#6b7280", border: "#e5e7eb",
-  blue: "#3b82f6", blueSoft: "#eff6ff",
-  green: "#22c55e", greenSoft: "#f0fdf4",
-  red: "#ef4444", redSoft: "#fef2f2",
-  orange: "#f97316", orangeSoft: "#fff7ed",
-  purple: "#7c3aed", purpleSoft: "#f5f3ff",
-  teal: "#0d9488", tealSoft: "#f0fdfa",
-  shadow: "0 1px 4px rgba(0,0,0,0.07)",
-  shadowMd: "0 4px 16px rgba(0,0,0,0.12)",
-}
+import { C } from "@/lib/theme";
 
 const MONTH_SHORT = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc']
 const MONTH_FR    = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']

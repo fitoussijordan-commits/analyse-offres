@@ -4,17 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import * as odoo from "@/lib/odoo";
 import { supabase } from "@/lib/supabase";
 
-const C = {
-  bg: "#f1f5f9", surface: "#ffffff",
-  text: "#0f172a", textSec: "#334155", textMuted: "#64748b",
-  border: "#e2e8f0", borderDark: "#cbd5e1",
-  blue: "#3b82f6", blueSoft: "#eff6ff",
-  green: "#10b981", greenSoft: "#ecfdf5", greenDark: "#065f46",
-  amber: "#f59e0b", amberSoft: "#fffbeb",
-  red: "#ef4444", redSoft: "#fef2f2",
-  purple: "#8b5cf6", purpleSoft: "#f5f3ff",
-  slate: "#475569",
-};
+import { C } from "@/lib/theme";
 
 interface ComposantKit { ref: string; nom?: string; qtyParKit: number; dateArrivage?: string; }
 type ProjetStatus = "planning" | "en_attente" | "stock_ok" | "reserve" | "envoye";

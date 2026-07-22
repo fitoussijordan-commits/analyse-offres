@@ -2,15 +2,7 @@
 // components/CampagneCharts.tsx — Graphiques SVG maison (sans dépendance) pour l'analyse de campagne
 import React from "react";
 
-const C = {
-  white: "#ffffff", text: "#0f172a", textSec: "#334155", textMuted: "#64748b",
-  border: "#e2e8f0", bg: "#f1f5f9",
-  blue: "#3b82f6", green: "#10b981", amber: "#f59e0b", red: "#ef4444",
-  purple: "#8b5cf6", teal: "#0d9488", shadow: "0 1px 3px rgba(0,0,0,0.06)",
-};
-
-// Palette de roulement pour les séries
-const PALETTE = ["#0d9488", "#3b82f6", "#8b5cf6", "#f59e0b", "#10b981", "#ef4444", "#0ea5e9", "#ec4899", "#14b8a6", "#6366f1"];
+import { C, PALETTE } from "@/lib/theme";
 
 const fmtEur = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
 const fmtEurShort = (n: number) => {

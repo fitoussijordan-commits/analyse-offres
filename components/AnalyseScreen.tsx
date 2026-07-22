@@ -4,19 +4,7 @@ import * as odoo from "@/lib/odoo";
 import { supabase } from "@/lib/supabase";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
-const C = {
-  bg: "#f1f5f9", white: "#ffffff",
-  text: "#0f172a", textSec: "#334155", textMuted: "#64748b",
-  border: "#e2e8f0", borderFocus: "#3b82f6",
-  blue: "#3b82f6", blueDark: "#1d4ed8", blueSoft: "#eff6ff",
-  green: "#10b981", greenSoft: "#ecfdf5",
-  amber: "#f59e0b", amberSoft: "#fffbeb",
-  red: "#ef4444", redSoft: "#fef2f2",
-  purple: "#8b5cf6", purpleSoft: "#f5f3ff",
-  teal: "#0d9488", tealSoft: "#f0fdfa",
-  slate: "#475569",
-  shadow: "0 1px 3px rgba(0,0,0,0.06)", shadowMd: "0 4px 16px rgba(0,0,0,0.10)",
-};
+import { C } from "@/lib/theme";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Offre { id: string; code: string; label: string; produits: string[]; codeInterne?: string; }

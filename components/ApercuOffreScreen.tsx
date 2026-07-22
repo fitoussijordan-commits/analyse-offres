@@ -9,17 +9,7 @@ import {
 } from "@/lib/calc-offre";
 import { buildSyntheseLogistique } from "@/lib/logistique";
 
-const C = {
-  bg: "#f1f5f9", white: "#ffffff",
-  text: "#0f172a", textSec: "#334155", textMuted: "#64748b",
-  border: "#e2e8f0",
-  blue: "#3b82f6", blueDark: "#1d4ed8", blueSoft: "#eff6ff",
-  green: "#10b981", greenSoft: "#ecfdf5",
-  amber: "#f59e0b", amberSoft: "#fffbeb",
-  red: "#ef4444",
-  teal: "#0d9488", tealSoft: "#f0fdfa",
-  shadow: "0 1px 3px rgba(0,0,0,0.06)",
-};
+import { C } from "@/lib/theme";
 const fmtEur = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
 const fmtNum = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n || 0));
 const fmtPct = (n: number) => `${(Math.round((n || 0) * 1000) / 10).toFixed(1)} %`;
