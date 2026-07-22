@@ -385,15 +385,15 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   const pal1 = paliers[0];
   const GC_PV_FIRST = 159, GC_PV_COUNT = 13, LOG_PV_FIRST = 185, LOG_PV_COUNT = 13;
   const GC_NOM_ROW = 152, GC_REMISE_ROW = 153;
-  // 6 enseignes GC : colonne du nom (=col qté), colonne de la remise. Ordre = template.
-  const GC_ENSEIGNE_COLS = [
-    { nom: 13, qte: 13, remise: 15 },  // BIOCOOP : nom/qté M, remise O
-    { nom: 16, qte: 16, remise: 18 },  // Mlle Bio : P / R
-    { nom: 19, qte: 19, remise: 21 },  // Galeries Lafayette : S / U
-    { nom: 22, qte: 22, remise: 24 },  // Printemps : V / X
-    { nom: 25, qte: 25, remise: 27 },  // Place des tendances : Y / AA
-    { nom: 28, qte: 28, remise: 30 },  // NewPharma : AB / AD
-  ];
+  // Colonnes GC : les 6 premières sont figées dans le template (M/P/S/V/Y/AB).
+  // Au-delà, on continue le même pas de 3 colonnes (AE, AH, AK…).
+  const GC_COL_START = 13; // colonne M
+  const GC_COL_STEP  = 3;  // chaque enseigne : qté, CA, Marges (puis remise = qté+2)
+  const gcCount = payload.gcEnseignes?.length ?? 0;
+  const GC_ENSEIGNE_COLS = Array.from({ length: Math.max(gcCount, 6) }, (_, idx) => {
+    const qte = GC_COL_START + idx * GC_COL_STEP;
+    return { nom: qte, qte, remise: qte + 2 };
+  });
   // En-têtes enseignes : nom (ligne 152) + remise (ligne 153), si fournis.
   if (payload.gcEnseignes) {
     GC_ENSEIGNE_COLS.forEach((cols, idx) => {
@@ -427,27 +427,26 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 8).value = venteGC ? { formula: vlookup(`A${row}`, 5) } : 0;
       ws.getCell(row, 10).value = venteGC ? { formula: vlookup(`A${row}`, 6) } : 0;
     }
-    // Grands Comptes multi-enseignes : chaque enseigne a sa colonne qté (M/P/S/V/Y/AB) sur cette
-    // ligne article, et sa remise (ligne 117). Clé composite pour distinguer doublons vendu/UG.
+    // Grands Comptes : qté par enseigne sur chaque ligne article.
     const gk = gcKey(p);
     if (gk && payload.gcEnseignes) {
-      GC_ENSEIGNE_COLS.forEach((cols, idx) => {
-        const ens = payload.gcEnseignes![idx];
-        if (!ens) return;
+      payload.gcEnseignes.forEach((ens, idx) => {
+        const cols = GC_ENSEIGNE_COLS[idx];
+        if (!cols) return;
         const q = ens.qties[gk];
         if (q != null) {
           const cell = ws.getCell(row, cols.qte);
           cell.value = q;
-          cell.numFmt = "0";   // BUG template : ces cellules étaient en 0% → forcer format nombre.
+          cell.numFmt = "0";
         }
       });
     }
   }
-  // Élargir les colonnes CA/Marges des 6 enseignes GC pour éviter les "########".
-  // (colonnes CA = qte+1, Marges = qte+2 pour chaque enseigne)
+  // Élargir toutes les colonnes qté/CA/Marges de chaque enseigne pour éviter "########".
   for (const cols of GC_ENSEIGNE_COLS) {
-    ws.getColumn(cols.qte + 1).width = 13;   // CA
-    ws.getColumn(cols.qte + 2).width = 13;   // Marges
+    ws.getColumn(cols.qte).width = 10;     // Qté
+    ws.getColumn(cols.qte + 1).width = 13; // CA
+    ws.getColumn(cols.qte + 2).width = 13; // Marges
   }
   // Besoins logistiques (palier 1) : code + libellé en VLOOKUP sur toutes les lignes.
   for (let i = 0; i < LOG_PV_COUNT; i++) {

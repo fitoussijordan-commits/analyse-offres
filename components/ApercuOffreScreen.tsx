@@ -358,9 +358,6 @@ function GrandsComptesBloc({ produits, enseignes, gcMax, setGcQty, setGcNom, set
         <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: "#b45309", color: "#fff", borderRadius: 5, padding: "2px 8px" }}>GRANDS COMPTES</span>
         <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités par enseigne (nom et remise éditables)</span>
         <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{enseignes.length} enseigne{enseignes.length > 1 ? "s" : ""}</span>
-        {enseignes.length > 6 && (
-          <span style={{ fontSize: 11, color: "#b45309", background: "#fef3c7", borderRadius: 4, padding: "1px 7px" }}>⚠ seules les 6 premières sont exportées dans l'Excel</span>
-        )}
       </div>
       <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
