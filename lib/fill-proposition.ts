@@ -385,16 +385,18 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   const pal1 = paliers[0];
   const GC_PV_FIRST = 159, GC_PV_COUNT = 13, LOG_PV_FIRST = 185, LOG_PV_COUNT = 13;
   const GC_NOM_ROW = 152, GC_REMISE_ROW = 153;
-  // Colonnes GC : les 6 premières sont figées dans le template (M/P/S/V/Y/AB).
-  // Au-delà, on continue le même pas de 3 colonnes (AE, AH, AK…).
-  const GC_COL_START = 13; // colonne M
-  const GC_COL_STEP  = 3;  // chaque enseigne : qté, CA, Marges (puis remise = qté+2)
-  const gcCount = payload.gcEnseignes?.length ?? 0;
-  const GC_ENSEIGNE_COLS = Array.from({ length: Math.max(gcCount, 6) }, (_, idx) => {
-    const qte = GC_COL_START + idx * GC_COL_STEP;
-    return { nom: qte, qte, remise: qte + 2 };
-  });
-  // En-têtes enseignes : nom (ligne 152) + remise (ligne 153), si fournis.
+  // Les 6 colonnes GC sont figées dans le template (M/P/S/V/Y/AB). Au-delà, le template
+  // a déjà du contenu → on écrit seulement les 6 premières dans la feuille principale,
+  // les enseignes supplémentaires vont dans un onglet dédié (voir addGcExtraSheet).
+  const GC_ENSEIGNE_COLS = [
+    { nom: 13, qte: 13, remise: 15 },  // BIOCOOP : M / O
+    { nom: 16, qte: 16, remise: 18 },  // Mlle Bio : P / R
+    { nom: 19, qte: 19, remise: 21 },  // Galeries Lafayette : S / U
+    { nom: 22, qte: 22, remise: 24 },  // Printemps : V / X
+    { nom: 25, qte: 25, remise: 27 },  // Place des tendances : Y / AA
+    { nom: 28, qte: 28, remise: 30 },  // NewPharma : AB / AD
+  ];
+  // En-têtes enseignes (6 premiers) : nom (ligne 152) + remise (ligne 153).
   if (payload.gcEnseignes) {
     GC_ENSEIGNE_COLS.forEach((cols, idx) => {
       const ens = payload.gcEnseignes![idx];
@@ -427,12 +429,12 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 8).value = venteGC ? { formula: vlookup(`A${row}`, 5) } : 0;
       ws.getCell(row, 10).value = venteGC ? { formula: vlookup(`A${row}`, 6) } : 0;
     }
-    // Grands Comptes : qté par enseigne sur chaque ligne article.
+    // Grands Comptes : qté pour les 6 premières enseignes uniquement (colonnes du template).
     const gk = gcKey(p);
     if (gk && payload.gcEnseignes) {
-      payload.gcEnseignes.forEach((ens, idx) => {
-        const cols = GC_ENSEIGNE_COLS[idx];
-        if (!cols) return;
+      GC_ENSEIGNE_COLS.forEach((cols, idx) => {
+        const ens = payload.gcEnseignes![idx];
+        if (!ens) return;
         const q = ens.qties[gk];
         if (q != null) {
           const cell = ws.getCell(row, cols.qte);
@@ -442,11 +444,10 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       });
     }
   }
-  // Élargir toutes les colonnes qté/CA/Marges de chaque enseigne pour éviter "########".
+  // Élargir les colonnes CA/Marges des 6 enseignes GC pour éviter "########".
   for (const cols of GC_ENSEIGNE_COLS) {
-    ws.getColumn(cols.qte).width = 10;     // Qté
-    ws.getColumn(cols.qte + 1).width = 13; // CA
-    ws.getColumn(cols.qte + 2).width = 13; // Marges
+    ws.getColumn(cols.qte + 1).width = 13;
+    ws.getColumn(cols.qte + 2).width = 13;
   }
   // Besoins logistiques (palier 1) : code + libellé en VLOOKUP sur toutes les lignes.
   for (let i = 0; i < LOG_PV_COUNT; i++) {
@@ -459,6 +460,109 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   // Vider PLV/Testeurs fixes du gabarit (positions du template vierge : GC 172-178, log 192-197).
   for (const row of [172, 173, 174, 175, 176, 177, 178]) for (const c of [1, 2, 4, 6, 8, 10]) ws.getCell(row, c).value = null;
   for (const row of [192, 193, 194, 195, 196, 197]) for (const c of [1, 2, 4]) ws.getCell(row, c).value = null;
+}
+
+/**
+ * Ajoute un onglet "GC Supplémentaires" si la campagne a plus de 6 enseignes GC.
+ * Les 6 premières sont dans la feuille Proposition ; les suivantes sont ici avec
+ * ref, libellé, remise et qté par enseigne dans un tableau propre.
+ */
+export function addGcExtraSheet(wb: ExcelJS.Workbook, payload: PropPayload, palierNom: string): void {
+  const extras = (payload.gcEnseignes || []).slice(6);
+  if (!extras.length) return;
+
+  const pal1 = payload.paliers[0];
+  if (!pal1?.produits?.length) return;
+
+  // Clé composite (ref doublons).
+  const gcRefCount: Record<string, number> = {};
+  for (const pr of pal1.produits) { const r = (pr.ref || "").trim(); if (r) gcRefCount[r] = (gcRefCount[r] || 0) + 1; }
+  const gcKey = (pr: PropProduit) => {
+    const r = (pr.ref || "").trim();
+    return (r && gcRefCount[r] > 1) ? `${r}#${pr.typProd || "Produit Vente"}` : r;
+  };
+
+  const sheetName = `GC Extra${palierNom ? " — " + palierNom.slice(0, 15) : ""}`.slice(0, 31);
+  const ws = wb.addWorksheet(sheetName, { views: [{ showGridLines: false, state: "frozen", ySplit: 3 }] });
+
+  // Titre
+  const nbCols = 2 + extras.length;
+  ws.mergeCells(1, 1, 1, nbCols);
+  const title = ws.getCell(1, 1);
+  title.value = `Grands Comptes supplémentaires${palierNom ? " — " + palierNom : ""}`;
+  title.font = { bold: true, size: 13, color: { argb: "FFFFFFFF" } };
+  title.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFB45309" } };
+  title.alignment = { horizontal: "center", vertical: "middle" };
+  ws.getRow(1).height = 28;
+
+  // Ligne remise
+  ws.getCell(2, 1).value = "Remise %";
+  ws.getCell(2, 1).font = { bold: true, color: { argb: "FF64748B" }, size: 10 };
+  ws.mergeCells(2, 1, 2, 2);
+  extras.forEach((ens, i) => {
+    const c = ws.getCell(2, 3 + i);
+    c.value = typeof ens.remise === "number" ? ens.remise : 0;
+    c.numFmt = "0.0%";
+    c.font = { bold: true, color: { argb: "FFB45309" }, size: 10 };
+    c.alignment = { horizontal: "center" };
+  });
+
+  // Ligne en-têtes colonnes
+  const hdr = ws.getRow(3);
+  hdr.height = 20;
+  const headers = ["Réf", "Libellé", ...extras.map(e => e.nom || "—")];
+  headers.forEach((h, i) => {
+    const c = hdr.getCell(i + 1);
+    c.value = h;
+    c.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1A1A2E" } };
+    c.alignment = { horizontal: i < 2 ? "left" : "center", vertical: "middle" };
+    c.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+  });
+
+  // Lignes produits
+  pal1.produits.forEach((p, ri) => {
+    const row = ws.getRow(4 + ri);
+    row.height = 18;
+    const gk = gcKey(p);
+    const bg = ri % 2 === 0 ? "FFFFFFFF" : "FFFFF7ED";
+    const refCell = row.getCell(1);
+    refCell.value = p.ref || "";
+    refCell.font = { name: "Courier New", size: 10 };
+    refCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + bg.slice(2) } };
+    const nameCell = row.getCell(2);
+    nameCell.value = p.name || "";
+    nameCell.font = { size: 10 };
+    nameCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + bg.slice(2) } };
+    extras.forEach((ens, i) => {
+      const c = row.getCell(3 + i);
+      const q = ens.qties[gk] ?? 0;
+      c.value = q || null;
+      c.numFmt = q ? "0" : "";
+      c.alignment = { horizontal: "center" };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + bg.slice(2) } };
+      c.font = { bold: q > 0, color: { argb: q > 0 ? "FFB45309" : "FF94A3B8" }, size: 10 };
+    });
+  });
+
+  // Ligne total
+  const totRow = ws.getRow(4 + pal1.produits.length);
+  totRow.height = 20;
+  const t1 = totRow.getCell(1); t1.value = "TOTAL"; t1.font = { bold: true, color: { argb: "FFB45309" } };
+  ws.mergeCells(4 + pal1.produits.length, 1, 4 + pal1.produits.length, 2);
+  extras.forEach((ens, i) => {
+    const tot = pal1.produits.reduce((s, p) => s + (ens.qties[gcKey(p)] || 0), 0);
+    const c = totRow.getCell(3 + i);
+    c.value = tot || null;
+    c.font = { bold: true, color: { argb: "FFB45309" }, size: 10 };
+    c.alignment = { horizontal: "center" };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF7ED" } };
+  });
+
+  // Largeurs colonnes
+  ws.getColumn(1).width = 14;
+  ws.getColumn(2).width = 38;
+  for (let i = 0; i < extras.length; i++) ws.getColumn(3 + i).width = 12;
 }
 
 // Remplit une feuille Proposition. mapRefs = réfs présentes dans le Mapping partagé (pour que
