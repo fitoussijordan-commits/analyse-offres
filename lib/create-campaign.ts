@@ -192,28 +192,45 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
     } as ArticleCampagne;
   });
 
-  // Reco % offres par typologie = répartition des QUANTITÉS vendues N-1 par statut client,
-  // calculée sur les ARTICLES de la campagne. On ne compte QUE les 7 typologies exactes :
-  // les statuts hors-liste (GC Concept Store, Siège…) et l'inconnu sont IGNORÉS, et le % de
-  // chaque typologie est rapporté au total des seules 7 typologies (donc Σ des 7 = 100%).
+  // Reco % offres par typologie : calculée PAR PALIER depuis son code offre N-1.
+  // On interroge getStatutDistributionByOffer(code) pour chaque palier qui a un code,
+  // ce qui donne la vraie répartition des commandes de CE palier par statut client.
+  // Si un palier n'a pas de code ou renvoie 0 résultats, on tombe en fallback sur la
+  // distribution globale (quantités N-1 tous articles confondus).
   const norm = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
   let paliers = camp.paliers;
   if (camp.periodeDebut && camp.periodeFin && refs.length) {
-    // Quantités par statut (tous articles de la campagne confondus).
-    const vent = await odoo.getQtyByStatut(session, refs, camp.periodeDebut, camp.periodeFin);
-    const qtyParStatut: Record<string, number> = {};
-    for (const v of Object.values(vent)) {
-      for (const [statut, q] of Object.entries(v.parStatut)) {
-        qtyParStatut[norm(statut)] = (qtyParStatut[norm(statut)] || 0) + q;
+    // --- Fallback global : quantités par statut sur tous les articles ---
+    let globalReco: number[] | undefined;
+    try {
+      const vent = await odoo.getQtyByStatut(session, refs, camp.periodeDebut, camp.periodeFin);
+      const qtyParStatut: Record<string, number> = {};
+      for (const v of Object.values(vent)) {
+        for (const [statut, q] of Object.entries(v.parStatut)) {
+          qtyParStatut[norm(statut)] = (qtyParStatut[norm(statut)] || 0) + q;
+        }
       }
-    }
-    // Quantité de chaque typologie = match EXACT (nom normalisé identique) uniquement.
-    const qtyTypo = TYPOLOGIES.map(typo => qtyParStatut[norm(typo)] || 0);
-    const totalTypo = qtyTypo.reduce((s, n) => s + n, 0);
-    if (totalTypo > 0) {
-      const reco = qtyTypo.map(q => q / totalTypo);
-      paliers = camp.paliers.map(pal => ({ ...pal, pctOffresReco: reco }));
-    }
+      const qtyTypo = TYPOLOGIES.map(typo => qtyParStatut[norm(typo)] || 0);
+      const totalTypo = qtyTypo.reduce((s, n) => s + n, 0);
+      if (totalTypo > 0) globalReco = qtyTypo.map(q => q / totalTypo);
+    } catch { /* ignore, on utilisera undefined */ }
+
+    // --- Par palier : distribution propre au code offre ---
+    paliers = await Promise.all(camp.paliers.map(async pal => {
+      const code = (pal.code || "").trim();
+      if (code) {
+        try {
+          const dist = await odoo.getStatutDistributionByOffer(session, code, camp.periodeDebut!, camp.periodeFin!);
+          const qtyTypo = TYPOLOGIES.map(typo => dist[norm(typo)] || 0);
+          const total = qtyTypo.reduce((s, n) => s + n, 0);
+          if (total > 0) {
+            return { ...pal, pctOffresReco: qtyTypo.map(q => q / total) };
+          }
+        } catch { /* ignore, fallback ci-dessous */ }
+      }
+      // Fallback : distribution globale si pas de code ou pas de données pour ce code.
+      return globalReco ? { ...pal, pctOffresReco: globalReco } : pal;
+    }));
   }
 
   return { ...camp, articles, paliers };
