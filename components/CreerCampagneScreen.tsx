@@ -230,8 +230,12 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         {[
           { l: "Articles", v: String(articlesValides.length) },
           { l: "Paliers", v: String(camp.paliers.length) },
-          { l: "Packs cible", v: fmtNum(totalP) },
-          { l: "Conso N-1 totale", v: analysed ? fmtNum(articlesValides.reduce((s, a) => s + (a.consoN1 || 0), 0)) : "—" },
+          { l: "Offres cible", v: fmtNum(totalP) },
+          { l: "Produits / offre", v: camp.paliers.map(p => {
+              const v = ventilationPalier(articlesValides, p);
+              return articlesValides.filter(a => (a.typProd || "Produit Vente") === "Produit Vente")
+                .reduce((s, a) => s + qtyParPack(a, p, totalP, v, articlesValides), 0);
+            }).join(" · ") || "—" },
         ].map((k, i) => (
           <div key={i} style={{ background: C.white, padding: "10px 16px" }}>
             <div style={{ fontSize: 10, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 }}>{k.l}</div>
@@ -382,8 +386,26 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             <input style={{ ...inputStyle, width: 150 }} value={pal.label} onChange={e => setPalier(pi, { label: e.target.value })} placeholder="Libellé" />
             <span style={{ fontSize: 12, color: C.textMuted }}>Nb offres cible</span>
             <input type="number" style={{ ...inputStyle, width: 90 }} value={pal.nbPacks || ""} onChange={e => setPalier(pi, { nbPacks: parseInt(e.target.value) || 0 })} placeholder="0" />
-            <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 6 }} title="Nombre total de produits (Produit Vente) par offre. La reco répartit ce total entre les articles au prorata des ventes N-1. Laisse vide pour la reco automatique.">Produits/offre</span>
+            <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 6 }} title="Cible de produits (Produit Vente) par offre. La reco répartit ce total au prorata des ventes N-1. Laisse vide pour la reco automatique.">Produits/offre</span>
             <input type="number" style={{ ...inputStyle, width: 80 }} value={pal.nbProduitsPack || ""} onChange={e => setPalier(pi, { nbProduitsPack: e.target.value === "" ? undefined : (parseInt(e.target.value) || 0) })} placeholder="auto" />
+            {(() => {
+              // Total réel des qtés/offre (Produit Vente) — recalculé à chaque saisie.
+              const ventH = ventilationPalier(articlesValides, pal);
+              const total = articlesValides
+                .filter(a => (a.typProd || "Produit Vente") === "Produit Vente")
+                .reduce((s, a) => s + qtyParPack(a, pal, totalP, ventH, articlesValides), 0);
+              const cible = pal.nbProduitsPack || 0;
+              const ecart = cible > 0 ? total - cible : 0;
+              const ok = cible > 0 && ecart === 0;
+              const col = cible === 0 ? C.textSec : ok ? C.green : C.amber;
+              const bgc = cible === 0 ? C.bg : ok ? C.greenSoft : C.amberSoft;
+              return (
+                <span title={cible > 0 ? `Somme des qtés/offre saisies vs cible ${cible}` : "Somme des qtés/offre (mode reco automatique)"}
+                  style={{ fontSize: 12, fontWeight: 600, color: col, background: bgc, border: `1px solid ${cible === 0 ? C.border : col + "55"}`, borderRadius: 6, padding: "5px 9px", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                  = {fmtNum(total)}{cible > 0 && ecart !== 0 ? ` (${ecart > 0 ? "+" : ""}${ecart})` : ""}
+                </span>
+              );
+            })()}
             <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: C.textSec, cursor: "pointer", marginLeft: 6 }}>
               <input type="checkbox" checked={!!pal.remiseStandard} onChange={e => setPalier(pi, { remiseStandard: e.target.checked })} style={{ cursor: "pointer" }} />
               Remise statut unique
@@ -496,21 +518,18 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 </tbody>
               </table>
             )}
-            {/* Alerte écart : mode N produits/pack → total réparti vs cible saisie. */}
+            {/* Écart cible : détail sous le tableau quand la répartition ne tombe pas juste. */}
             {pal.nbProduitsPack && pal.nbProduitsPack > 0 && (() => {
               const vent = ventilationPalier(articlesValides, pal);
               const totalReparti = articlesValides
                 .filter(a => (a.typProd || "Produit Vente") === "Produit Vente")
                 .reduce((s, a) => s + qtyParPack(a, pal, totalP, vent, articlesValides), 0);
-              const cible = pal.nbProduitsPack;
-              const ecart = totalReparti - cible;
-              const ok = ecart === 0;
+              const ecart = totalReparti - pal.nbProduitsPack;
+              if (ecart === 0) return null;
               return (
                 <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 7, fontSize: 12, fontWeight: 600,
-                  background: ok ? C.tealSoft : "#fef3c7", color: ok ? C.teal : "#b45309", display: "inline-block" }}>
-                  {ok
-                    ? `✓ ${totalReparti} produits/offre répartis (= cible ${cible})`
-                    : `⚠ ${totalReparti} produits/offre répartis vs cible ${cible} (écart ${ecart > 0 ? "+" : ""}${ecart}) — ajuste les quantités`}
+                  background: C.amberSoft, color: C.amber, border: `1px solid ${C.amber}33`, display: "inline-block" }}>
+                  {totalReparti} produits/offre répartis vs cible {pal.nbProduitsPack} (écart {ecart > 0 ? "+" : ""}{ecart}) — ajuste les quantités
                 </div>
               );
             })()}
