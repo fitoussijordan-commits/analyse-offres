@@ -404,39 +404,30 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   // Col du bloc Total GC (décalé si extras)
   const GC_TOTAL_COL = 31 + nbExtras * 3; // col 31 si 0 extras, 34 si 1 extra, etc.
 
-  // Décaler le bloc Total GC si nécessaire
+  // Décaler le bloc Total GC si nécessaire (écriture directe, pas de copie de shared formulas)
   if (nbExtras > 0) {
-    const TOTAL_ROWS = [149, 151, 152, 153, 154, 155, 157];
-    const GC_ROWS_DATA = Array.from({ length: GC_PV_COUNT }, (_, i) => GC_PV_FIRST + i);
-    // Lignes titre + synthèse + données
-    for (const row of [...TOTAL_ROWS, ...GC_ROWS_DATA]) {
-      // Lire les valeurs des colonnes 32, 33, 34 et les déplacer vers GC_TOTAL_COL+1, +2, +3
-      for (let srcCol = 32; srcCol <= 34; srcCol++) {
-        const src = ws.getCell(row, srcCol);
-        const dst = ws.getCell(row, GC_TOTAL_COL + (srcCol - 32) + 1);
-        dst.value = src.value;
-        dst.style = JSON.parse(JSON.stringify(src.style));
-        src.value = null;
-      }
+    // Effacer l'ancienne position du bloc Total (cols 32-34)
+    for (const row of [149, 151, 154, 155, 157]) {
+      for (let col = 32; col <= 34; col++) ws.getCell(row, col).value = null;
     }
-    // Mettre à jour la formule Total GC CA et Marges
-    const synRow = 157;
-    // Reconstruire les formules de synthèse Total GC
-    const caFormulaParts = ALL_GC_COLS.map(c => {
-      const caCol = ws.getColumn(c.qte + 1).letter;
-      return `${caCol}${synRow}`;
-    });
-    const margesFormulaParts = ALL_GC_COLS.map(c => {
-      const margesCol = ws.getColumn(c.qte + 2).letter;
-      return `${margesCol}${synRow}`;
-    });
-    ws.getCell(synRow, GC_TOTAL_COL + 2).value = { formula: caFormulaParts.join("+") };
-    ws.getCell(synRow, GC_TOTAL_COL + 3).value = { formula: margesFormulaParts.join("+") };
-    // Aussi mettre à jour la formule Qtité totale (col E) pour inclure les extras
-    const qteCols = ALL_GC_COLS.map(c => ws.getColumn(c.qte).letter);
+    // Écrire le nouveau bloc Total à la nouvelle position
+    const TC = GC_TOTAL_COL; // première col du bloc Total (ex: 34 si 1 extra)
+    ws.getCell(149, TC + 1).value = "Grands Comptes";
+    ws.getCell(151, TC + 1).value = "Total";
+    ws.getCell(154, TC + 1).value = "CA";
+    ws.getCell(154, TC + 2).value = "Marges";
+    ws.getCell(155, TC + 1).value = "'€";
+    ws.getCell(155, TC + 2).value = "'€";
+    // Formules Total CA/Marges = somme des CA/Marges de tous les GC
+    const caSum = ALL_GC_COLS.map(c => `${ws.getColumn(c.qte + 1).letter}157`).join("+");
+    const margesSum = ALL_GC_COLS.map(c => `${ws.getColumn(c.qte + 2).letter}157`).join("+");
+    ws.getCell(157, TC + 1).value = { formula: caSum };
+    ws.getCell(157, TC + 2).value = { formula: margesSum };
+    // Mettre à jour la formule Qtité totale (col E) pour inclure les extras
     for (let i = 0; i < GC_PV_COUNT; i++) {
       const row = GC_PV_FIRST + i;
-      ws.getCell(row, 5).value = { formula: qteCols.map(l => `${l}${row}`).join("+") };
+      const qteSum = ALL_GC_COLS.map(c => `${ws.getColumn(c.qte).letter}${row}`).join("+");
+      ws.getCell(row, 5).value = { formula: qteSum };
     }
   }
 
