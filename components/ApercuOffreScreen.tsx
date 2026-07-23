@@ -5,7 +5,7 @@ import { loadCampagnesCreees, upsertCampagne } from "@/lib/campaigns";
 import { CampagneCreee, GcEnseigne, GC_ENSEIGNES_DEFAUT, qtyParPack, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
-  CalcPalier, calcPalier, calcSynthese, calcBesoinParRef, detailPalier,
+  CalcPalier, calcPalier, calcSynthese, calcBesoinParRef, detailPalier, calcGrandsComptes,
 } from "@/lib/calc-offre";
 import { buildSyntheseLogistique } from "@/lib/logistique";
 
@@ -101,6 +101,22 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
   })), [paliers]);
   const synthese = useMemo(() => calcSynthese(calcPaliers), [calcPaliers]);
   const besoin = useMemo(() => calcBesoinParRef(calcPaliers), [calcPaliers]);
+
+  // CA / marge Grands Comptes (clé article : réf seule si unique, sinon réf#type).
+  const gc = useMemo(() => {
+    const pal1 = paliers[0];
+    if (!pal1) return calcGrandsComptes([], []);
+    const count: Record<string, number> = {};
+    for (const p of pal1.produits) { const r = (p.ref || "").trim(); if (r) count[r] = (count[r] || 0) + 1; }
+    const keyOf = (p: any) => { const r = (p.ref || "").trim(); return (r && count[r] > 1) ? `${r}#${p.typProd || "Produit Vente"}` : r; };
+    const info = pal1.produits.map(p => ({
+      key: keyOf(p),
+      listPrice: (p.typProd || "Produit Vente") === "Produit Vente" ? (p.listPrice || 0) : 0,
+      standardPrice: p.standardPrice || 0,
+      remiseAdd: pal1.remiseAdd || 0,
+    }));
+    return calcGrandsComptes(gcEnseignes.map(e => ({ nom: e.nom, remise: e.remise, qties: e.qties })), info);
+  }, [paliers, gcEnseignes]);
 
   // Besoin logistique par mois (réutilise la logique testée, avec les qtés éditées + dates campagne).
   const logistique = useMemo(() => {
@@ -211,10 +227,22 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
 
       {/* KPI synthèse globale */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <Kpi label="CA total campagne" value={fmtEur(synthese.caTotal)} color={C.blue} />
-        <Kpi label="Marge totale" value={fmtEur(synthese.margeTotal)} color={C.teal} />
-        <Kpi label="Marge %" value={fmtPct(synthese.margePct)} color={C.green} />
-        <Kpi label="Nb offres (tous paliers)" value={fmtNum(synthese.nbPacks)} color={C.amber} />
+        {gc.caTotal > 0 ? (
+          <>
+            <Kpi label="CA Retail + Institut" value={fmtEur(synthese.caTotal)} color={C.teal} />
+            <Kpi label="CA Grands Comptes" value={fmtEur(gc.caTotal)} color={C.blue} />
+            <Kpi label="CA total (RI + GC)" value={fmtEur(synthese.caTotal + gc.caTotal)} color={C.blueDark} />
+            <Kpi label="Marge totale (RI + GC)" value={fmtEur(synthese.margeTotal + gc.margeTotal)} color={C.green} />
+            <Kpi label="Marge % globale" value={fmtPct((synthese.caTotal + gc.caTotal) > 0 ? (synthese.margeTotal + gc.margeTotal) / (synthese.caTotal + gc.caTotal) : 0)} color={C.green} />
+          </>
+        ) : (
+          <>
+            <Kpi label="CA total campagne" value={fmtEur(synthese.caTotal)} color={C.blue} />
+            <Kpi label="Marge totale" value={fmtEur(synthese.margeTotal)} color={C.teal} />
+            <Kpi label="Marge %" value={fmtPct(synthese.margePct)} color={C.green} />
+            <Kpi label="Nb offres (tous paliers)" value={fmtNum(synthese.nbPacks)} color={C.amber} />
+          </>
+        )}
       </div>
 
       {/* Sous-onglets */}
@@ -229,7 +257,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
         <GrandsComptesBloc produits={paliers[0]?.produits || []} enseignes={gcEnseignes} gcMax={GC_MAX} setGcQty={setGcQty} setGcNom={setGcNom} setGcRemise={setGcRemise} addGc={addGc} removeGc={removeGc} />
       </>}
       {tab === "logistique" && <LogistiqueTab log={logistique} />}
-      {tab === "synthese" && <SyntheseTab paliers={paliers} calcPaliers={calcPaliers} />}
+      {tab === "synthese" && <SyntheseTab paliers={paliers} calcPaliers={calcPaliers} gc={gc} />}
 
       <div style={{ fontSize: 12, color: C.textMuted, fontStyle: "italic", paddingBottom: 20 }}>
         Aperçu en lecture/édition — les modifications ne sont pas sauvegardées. Utilise « Exporter Excel » pour récupérer le fichier avec tes valeurs.
@@ -533,7 +561,7 @@ function LogistiqueTab({ log }: { log: any }) {
 }
 
 // ── Onglet SYNTHÈSE DÉTAILLÉE (CA/Marge par offre + par statut) ──────────────
-function SyntheseTab({ paliers, calcPaliers }: { paliers: PalierEdit[]; calcPaliers: CalcPalier[] }) {
+function SyntheseTab({ paliers, calcPaliers, gc }: { paliers: PalierEdit[]; calcPaliers: CalcPalier[]; gc: ReturnType<typeof calcGrandsComptes> }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* CA/Marge par offre */}
@@ -554,9 +582,56 @@ function SyntheseTab({ paliers, calcPaliers }: { paliers: PalierEdit[]; calcPali
                 </tr>
               );
             })}
+            {(() => {
+              const caRI = calcPaliers.reduce((s, c) => s + calcPalier(c).caTotal, 0);
+              const mgRI = calcPaliers.reduce((s, c) => s + calcPalier(c).margeTotal, 0);
+              const nbTot = paliers.reduce((s, p) => s + (p.nbPacks || 0), 0);
+              const totRow = (label: string, nb: string, ca: number, mg: number, color: string, bg: string, top = false) => (
+                <tr style={{ background: bg }}>
+                  <td style={{ padding: "8px 14px", fontWeight: 800, color, borderTop: top ? `2px solid ${C.borderDark}` : undefined }}>{label}</td>
+                  <td style={{ padding: "8px 14px", textAlign: "right", color, fontWeight: 700, borderTop: top ? `2px solid ${C.borderDark}` : undefined }}>{nb}</td>
+                  <td style={{ padding: "8px 14px", textAlign: "right", fontWeight: 800, color, borderTop: top ? `2px solid ${C.borderDark}` : undefined }}>{fmtEur(ca)}</td>
+                  <td style={{ padding: "8px 14px", textAlign: "right", fontWeight: 800, color, borderTop: top ? `2px solid ${C.borderDark}` : undefined }}>{fmtEur(mg)}</td>
+                  <td style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700, color, borderTop: top ? `2px solid ${C.borderDark}` : undefined }}>{fmtPct(ca > 0 ? mg / ca : 0)}</td>
+                </tr>
+              );
+              return <>
+                {totRow("Total Retail + Institut", fmtNum(nbTot), caRI, mgRI, C.teal, C.tealSoft, true)}
+                {gc.caTotal > 0 && totRow("Total Grands Comptes", "—", gc.caTotal, gc.margeTotal, C.blueDark, C.blueSoft)}
+                {gc.caTotal > 0 && totRow("Total général (RI + GC)", "—", caRI + gc.caTotal, mgRI + gc.margeTotal, C.text, C.bg)}
+              </>;
+            })()}
           </tbody>
         </table>
       </div>
+
+      {/* Détail Grands Comptes par enseigne */}
+      {gc.parEnseigne.some(e => e.ca > 0) && (
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+          <div style={{ padding: "10px 16px", background: C.blueSoft, borderBottom: `1px solid ${C.border}`, fontSize: 13, fontWeight: 800, color: C.blueDark }}>Grands Comptes par enseigne</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr>{["Enseigne", "Qté", "CA", "Marge €", "Marge %"].map((h, i) => <th key={i} style={{ padding: "8px 14px", textAlign: i >= 1 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {gc.parEnseigne.filter(e => e.ca > 0).map((e, i) => (
+                <tr key={i}>
+                  <td style={{ padding: "7px 14px", fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>{e.nom}</td>
+                  <td style={{ padding: "7px 14px", textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtNum(e.qty)}</td>
+                  <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 600, color: C.blue, borderBottom: `1px solid ${C.border}` }}>{fmtEur(e.ca)}</td>
+                  <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 600, color: C.green, borderBottom: `1px solid ${C.border}` }}>{fmtEur(e.marge)}</td>
+                  <td style={{ padding: "7px 14px", textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtPct(e.ca > 0 ? e.marge / e.ca : 0)}</td>
+                </tr>
+              ))}
+              <tr style={{ background: C.blueSoft }}>
+                <td style={{ padding: "8px 14px", fontWeight: 800, color: C.blueDark }}>Total GC</td>
+                <td style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700, color: C.blueDark }}>{fmtNum(gc.qtyTotal)}</td>
+                <td style={{ padding: "8px 14px", textAlign: "right", fontWeight: 800, color: C.blueDark }}>{fmtEur(gc.caTotal)}</td>
+                <td style={{ padding: "8px 14px", textAlign: "right", fontWeight: 800, color: C.blueDark }}>{fmtEur(gc.margeTotal)}</td>
+                <td style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700, color: C.blueDark }}>{fmtPct(gc.margePct)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Ventilation par statut (typologie) : nb offres, CA, marge — agrégés tous paliers */}
       <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: C.shadow }}>

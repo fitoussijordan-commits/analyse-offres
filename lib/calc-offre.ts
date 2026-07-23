@@ -130,6 +130,48 @@ export function detailPalier(pal: CalcPalier): DetailPalier {
   };
 }
 
+// ── Grands Comptes ────────────────────────────────────────────────────────────
+// Les GC sont vendus hors mécanique d'offres : chaque enseigne a une remise propre et
+// des quantités par article (qté totale livrée, pas « par offre »). CA / marge suivent
+// la même logique que le template Excel : CA = qté × tarif × (1−remiseAdd) × (1−remiseGC).
+export interface GcEnseigneCalc {
+  nom: string;
+  remise: number;                      // remise enseigne (ex. 0.25)
+  qties: Record<string, number>;       // clé article (réf ou réf#type) -> qté
+}
+export interface GcProduitInfo {
+  key: string;                         // même clé que dans qties
+  listPrice: number;                   // tarif revendeur (H)
+  standardPrice: number;               // coût (F)
+  remiseAdd: number;                   // remise additionnelle (I) du palier de référence
+}
+export interface GcResult {
+  caTotal: number; margeTotal: number; margePct: number; coutTotal: number; qtyTotal: number;
+  parEnseigne: { nom: string; ca: number; marge: number; qty: number }[];
+}
+
+/** CA / marge des Grands Comptes, à partir des enseignes et du pricing par article. */
+export function calcGrandsComptes(enseignes: GcEnseigneCalc[], produits: GcProduitInfo[]): GcResult {
+  const infoByKey: Record<string, GcProduitInfo> = {};
+  for (const p of produits) infoByKey[p.key] = p;
+  let caTotal = 0, coutTotal = 0, qtyTotal = 0;
+  const parEnseigne = (enseignes || []).map(ens => {
+    let ca = 0, cout = 0, qty = 0;
+    for (const [key, q] of Object.entries(ens.qties || {})) {
+      const info = infoByKey[key];
+      if (!info || !q) continue;
+      const H = info.listPrice || 0, F = info.standardPrice || 0, I = info.remiseAdd || 0;
+      ca += q * H * (1 - I) * (1 - (ens.remise || 0));
+      cout += q * F;
+      qty += q;
+    }
+    caTotal += ca; coutTotal += cout; qtyTotal += qty;
+    return { nom: ens.nom, ca, marge: ca - cout, qty };
+  });
+  const margeTotal = caTotal - coutTotal;
+  return { caTotal, margeTotal, margePct: caTotal > 0 ? margeTotal / caTotal : 0, coutTotal, qtyTotal, parEnseigne };
+}
+
 export interface SyntheseGlobale { caTotal: number; margeTotal: number; margePct: number; nbPacks: number; }
 
 /** Synthèse de toute la campagne (somme des paliers). */

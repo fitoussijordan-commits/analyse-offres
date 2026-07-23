@@ -3,8 +3,26 @@
 // ventilation CA/marge/nb offres par statut client (typologie), agrégée sur tous les paliers.
 
 import type ExcelJS from "exceljs";
-import { calcPalier, CalcPalier, TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT } from "@/lib/calc-offre";
-import type { PropPalier } from "@/lib/fill-proposition";
+import { calcPalier, CalcPalier, TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT, calcGrandsComptes, GcEnseigneCalc, GcProduitInfo } from "@/lib/calc-offre";
+import type { PropPalier, GcEnseignePayload, PropProduit } from "@/lib/fill-proposition";
+
+/** Pricing par article pour le calcul GC : la clé suit la même logique que fill-proposition
+ *  (réf seule si unique dans le palier de référence, sinon réf#type). Le palier 1 sert de
+ *  référence de pricing (mêmes articles/prix dans tous les paliers). */
+function gcProduitsInfo(paliers: PropPalier[]): GcProduitInfo[] {
+  const pal1 = paliers[0];
+  if (!pal1?.produits?.length) return [];
+  const count: Record<string, number> = {};
+  for (const p of pal1.produits) { const r = (p.ref || "").trim(); if (r) count[r] = (count[r] || 0) + 1; }
+  const keyOf = (p: PropProduit) => { const r = (p.ref || "").trim(); return (r && count[r] > 1) ? `${r}#${p.typProd || "Produit Vente"}` : r; };
+  const remiseAdd = pal1.remiseAddTaux != null ? pal1.remiseAddTaux : REMISE_ADD_DEFAUT;
+  return pal1.produits.map(p => ({
+    key: keyOf(p),
+    listPrice: (p.typProd || "Produit Vente") === "Produit Vente" ? (p.listPrice || 0) : 0,
+    standardPrice: p.standardPrice || 0,
+    remiseAdd,
+  }));
+}
 
 const FMT_EUR = '#,##0 "€";[Red]-#,##0 "€"';
 const FMT_PCT = "0.0%";
@@ -28,7 +46,7 @@ function toCalc(p: PropPalier): CalcPalier {
 }
 
 /** Écrit l'onglet "Synthèse détaillée" dans le classeur. */
-export function writeSyntheseDetailleeSheet(wb: ExcelJS.Workbook, paliers: PropPalier[]) {
+export function writeSyntheseDetailleeSheet(wb: ExcelJS.Workbook, paliers: PropPalier[], gcEnseignes?: GcEnseignePayload[]) {
   // Supprime un onglet existant du même nom (idempotent).
   const existant = wb.getWorksheet("Synthèse détaillée");
   if (existant) wb.removeWorksheet(existant.id);
@@ -61,17 +79,53 @@ export function writeSyntheseDetailleeSheet(wb: ExcelJS.Workbook, paliers: PropP
     if (i % 2 === 1) for (let c = 1; c <= 5; c++) ws.getCell(row, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: SOFT } };
     row += 1;
   }
-  // Ligne total
+  // Totaux : Retail + Institut (offres), Grands Comptes, puis total général.
   {
-    const caTot = calcs.reduce((s, c) => s + calcPalier(c).caTotal, 0);
-    const mgTot = calcs.reduce((s, c) => s + calcPalier(c).margeTotal, 0);
+    const caRI = calcs.reduce((s, c) => s + calcPalier(c).caTotal, 0);
+    const mgRI = calcs.reduce((s, c) => s + calcPalier(c).margeTotal, 0);
     const nbTot = paliers.reduce((s, p) => s + (p.qtyPacks || 0), 0);
-    ws.getCell(row, 1).value = "TOTAL"; bold(ws.getCell(row, 1), TEAL);
-    ws.getCell(row, 2).value = nbTot;
-    const ca = ws.getCell(row, 3); ca.value = caTot; ca.numFmt = FMT_EUR; bold(ca, TEAL);
-    const mg = ws.getCell(row, 4); mg.value = mgTot; mg.numFmt = FMT_EUR; bold(mg, TEAL);
-    const mp = ws.getCell(row, 5); mp.value = caTot > 0 ? mgTot / caTot : 0; mp.numFmt = FMT_PCT; bold(mp, TEAL);
-    row += 2;
+    // CA / marge GC (0 si aucune enseigne saisie).
+    const gc = calcGrandsComptes(
+      (gcEnseignes || []).map(e => ({ nom: e.nom, remise: e.remise, qties: e.qties } as GcEnseigneCalc)),
+      gcProduitsInfo(paliers),
+    );
+
+    const writeTot = (label: string, nb: number | "", ca: number, mg: number, color: string) => {
+      ws.getCell(row, 1).value = label; bold(ws.getCell(row, 1), color);
+      if (nb !== "") ws.getCell(row, 2).value = nb;
+      const c3 = ws.getCell(row, 3); c3.value = ca; c3.numFmt = FMT_EUR; bold(c3, color);
+      const c4 = ws.getCell(row, 4); c4.value = mg; c4.numFmt = FMT_EUR; bold(c4, color);
+      const c5 = ws.getCell(row, 5); c5.value = ca > 0 ? mg / ca : 0; c5.numFmt = FMT_PCT; bold(c5, color);
+      row += 1;
+    };
+    writeTot("TOTAL Retail + Institut", nbTot, caRI, mgRI, TEAL);
+    if (gc.caTotal > 0) {
+      writeTot("TOTAL Grands Comptes", "", gc.caTotal, gc.margeTotal, BLUE);
+      writeTot("TOTAL GÉNÉRAL (RI + GC)", "", caRI + gc.caTotal, mgRI + gc.margeTotal, DARK);
+    }
+    row += 1;
+
+    // Détail par enseigne GC (si des quantités ont été saisies).
+    if (gc.parEnseigne.some(e => e.ca > 0)) {
+      const tg = ws.getCell(row, 1); tg.value = "Détail Grands Comptes par enseigne"; bold(tg, BLUE, 13); row += 1;
+      ["Enseigne", "Qté", "CA", "Marge €", "Marge %"].forEach((h, i) => {
+        const c = ws.getCell(row, i + 1); c.value = h;
+        c.font = { bold: true, color: { argb: WHITE } };
+        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BLUE } };
+        c.alignment = { horizontal: i === 0 ? "left" : "right" };
+      });
+      row += 1;
+      gc.parEnseigne.filter(e => e.ca > 0).forEach((e, i) => {
+        ws.getCell(row, 1).value = e.nom;
+        ws.getCell(row, 2).value = Math.round(e.qty);
+        const c3 = ws.getCell(row, 3); c3.value = e.ca; c3.numFmt = FMT_EUR;
+        const c4 = ws.getCell(row, 4); c4.value = e.marge; c4.numFmt = FMT_EUR;
+        const c5 = ws.getCell(row, 5); c5.value = e.ca > 0 ? e.marge / e.ca : 0; c5.numFmt = FMT_PCT;
+        if (i % 2 === 1) for (let c = 1; c <= 5; c++) ws.getCell(row, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: SOFT } };
+        row += 1;
+      });
+      row += 1;
+    }
   }
 
   // ── Tableau 2 : Ventilation par statut client (tous paliers) ──

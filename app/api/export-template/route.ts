@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     fillPropositionWorkbook(wb, payload);
 
     // Onglet "Synthèse détaillée" (CA/marge par offre + par statut).
-    if (paliers.length) writeSyntheseDetailleeSheet(wb, paliers);
+    if (paliers.length) writeSyntheseDetailleeSheet(wb, paliers, payload.gcEnseignes);
 
     // Onglet "Synthèse logistique" (réf × mois) si la campagne fournit ses besoins.
     if (payload.logistique && payload.logistique.lignes?.length) {
