@@ -243,6 +243,52 @@ export async function getAllProducts(session: OdooSession): Promise<ProductPrici
   return out;
 }
 
+/** Recherche dynamique de produits par code OU libellé (pour l'autocomplete « ajouter un
+ *  article »). Renvoie au plus `limit` produits ayant un default_code, triés par pertinence
+ *  (les codes exacts d'abord). La requête est un OU sur default_code / name / barcode. */
+export async function searchProductsByQuery(session: OdooSession, query: string, limit = 20): Promise<ProductPricing[]> {
+  const q = (query || "").trim();
+  if (q.length < 2) return [];
+  const domain: any[] = [
+    ["default_code", "!=", false],
+    "|", "|",
+    ["default_code", "ilike", q],
+    ["name", "ilike", q],
+    ["barcode", "ilike", q],
+  ];
+  const prods = await searchRead(
+    session, "product.product", domain,
+    ["id", "default_code", "name", "barcode", "standard_price", "list_price", "x_ppc"],
+    limit, "default_code"
+  );
+  const out: ProductPricing[] = [];
+  for (const p of (prods || []) as any[]) {
+    if (!p.default_code) continue;
+    out.push({
+      productId: p.id,
+      ref: p.default_code,
+      name: p.name || "",
+      barcode: p.barcode || "",
+      standardPrice: typeof p.standard_price === "number" ? p.standard_price : 0,
+      listPrice: typeof p.list_price === "number" ? p.list_price : 0,
+      ppc: typeof p.x_ppc === "number" ? p.x_ppc : 0,
+    });
+  }
+  // Tri pertinence : code qui commence par la requête > code qui contient > reste.
+  const ql = q.toLowerCase();
+  return out.sort((a, b) => {
+    const score = (p: ProductPricing) => {
+      const c = p.ref.toLowerCase(), n = p.name.toLowerCase();
+      if (c === ql) return 0;
+      if (c.startsWith(ql)) return 1;
+      if (n.startsWith(ql)) return 2;
+      if (c.includes(ql)) return 3;
+      return 4;
+    };
+    return score(a) - score(b) || a.ref.localeCompare(b.ref);
+  });
+}
+
 /** Résout des codes article (default_code) → { ref: { id, name } } via Odoo. */
 export async function searchProductsByRefs(session: OdooSession, refs: string[]): Promise<Record<string, { id: number; name: string }>> {
   const out: Record<string, { id: number; name: string }> = {};
@@ -331,6 +377,66 @@ export async function getConsumption(session: OdooSession, refs: string[], dateF
     out[entry.ref].qty += (typeof m.product_qty === "number" ? m.product_qty : 0);
   }
   return out;
+}
+
+// ── Sondage conso d'un article (hors campagne) ───────────────────────────────
+export interface ConsoSondage {
+  ref: string; productId: number; name: string; found: boolean;
+  qtyTotal: number;                        // total livré sur la période
+  parMois: { mois: string; qty: number }[]; // "YYYY-MM" -> qté, trié chronologiquement
+  parStatut: { statut: string; qty: number }[]; // ventilation par statut client (nb commandes non pertinent ici)
+}
+
+/**
+ * Sonde la consommation d'UN article sur une période, sans l'ajouter à la campagne.
+ * Sert à jauger le volume d'un produit similaire (ex. « trousse rituel apaisant » N-1
+ * pour dimensionner « trousse rituel mélisse » N+1). Renvoie le total livré, la
+ * répartition par mois (saisonnalité) et par statut client.
+ */
+export async function getConsoSondage(session: OdooSession, ref: string, dateFrom: string, dateTo: string): Promise<ConsoSondage | null> {
+  const code = (ref || "").trim();
+  if (!code || !dateFrom || !dateTo) return null;
+
+  const prods = await searchRead(session, "product.product", [["default_code", "=ilike", code]], ["id", "default_code", "name"], 1);
+  const prod = (prods && prods[0]) as any;
+  if (!prod) return { ref: code, productId: 0, name: "", found: false, qtyTotal: 0, parMois: [], parStatut: [] };
+
+  const pid = prod.id;
+  // Mouvements de stock livrés (même source que getConsumption), avec la date pour ventiler par mois.
+  const moves = await searchRead(
+    session, "stock.move",
+    [
+      ["product_id", "=", pid],
+      ["state", "=", "done"],
+      ["location_dest_id.usage", "=", "customer"],
+      ["date", ">=", `${dateFrom} 00:00:00`],
+      ["date", "<=", `${dateTo} 23:59:59`],
+    ],
+    ["product_qty", "date"], 0
+  );
+  const moisMap: Record<string, number> = {};
+  let qtyTotal = 0;
+  for (const m of (moves || []) as any[]) {
+    const q = typeof m.product_qty === "number" ? m.product_qty : 0;
+    qtyTotal += q;
+    const mois = (m.date || "").slice(0, 7); // "YYYY-MM"
+    if (mois) moisMap[mois] = (moisMap[mois] || 0) + q;
+  }
+  const parMois = Object.entries(moisMap).map(([mois, qty]) => ({ mois, qty })).sort((a, b) => a.mois.localeCompare(b.mois));
+
+  // Ventilation par statut client (via les lignes de vente, qui portent le partenaire).
+  const parStatut: { statut: string; qty: number }[] = [];
+  try {
+    const vent = await getQtyByStatut(session, [code], dateFrom, dateTo);
+    const v = vent[code];
+    if (v) {
+      const rows = Object.entries(v.parStatut).map(([statut, qty]) => ({ statut, qty }));
+      if (v.qtyInconnu > 0) rows.push({ statut: "— Non renseigné —", qty: v.qtyInconnu });
+      parStatut.push(...rows.sort((a, b) => b.qty - a.qty));
+    }
+  } catch { /* la conso reste utile même sans ventilation statut */ }
+
+  return { ref: prod.default_code || code, productId: pid, name: prod.name || "", found: true, qtyTotal, parMois, parStatut };
 }
 
 // ── Diagnostic : ventilation des QUANTITÉS vendues par statut client ──────────

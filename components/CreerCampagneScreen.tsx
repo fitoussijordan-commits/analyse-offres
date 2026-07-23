@@ -81,6 +81,75 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   const addArticle = () => setCamp(c => ({ ...c, articles: [...c.articles, emptyArticle()] }));
   const removeArticle = (ai: number) => setCamp(c => ({ ...c, articles: c.articles.filter((_, i) => i !== ai) }));
 
+  // ── Recherche dynamique d'articles (Odoo) ────────────────────────────────────
+  const [rechQ, setRechQ] = useState("");
+  const [rechResults, setRechResults] = useState<odoo.ProductPricing[]>([]);
+  const [rechLoading, setRechLoading] = useState(false);
+  const [rechOpen, setRechOpen] = useState(false);
+  useEffect(() => {
+    const q = rechQ.trim();
+    if (q.length < 2) { setRechResults([]); setRechLoading(false); return; }
+    setRechLoading(true);
+    const id = setTimeout(async () => {
+      try {
+        const res = await odoo.searchProductsByQuery(session, q, 20);
+        setRechResults(res); setRechOpen(true);
+      } catch { setRechResults([]); }
+      finally { setRechLoading(false); }
+    }, 280); // debounce : on n'interroge Odoo qu'après une pause de frappe
+    return () => clearTimeout(id);
+  }, [rechQ, session]);
+
+  // ── Sondage conso (article hors campagne) ────────────────────────────────────
+  const [sondQ, setSondQ] = useState("");
+  const [sondFrom, setSondFrom] = useState("");
+  const [sondTo, setSondTo] = useState("");
+  const [sondLoading, setSondLoading] = useState(false);
+  const [sondResult, setSondResult] = useState<odoo.ConsoSondage | null>(null);
+  const [sondPick, setSondPick] = useState<odoo.ProductPricing[]>([]);
+  const [sondOpen, setSondOpen] = useState(false);
+  // Autocomplete pour choisir la réf à sonder (même mécanique que la recherche articles).
+  useEffect(() => {
+    const q = sondQ.trim();
+    if (q.length < 2) { setSondPick([]); return; }
+    const id = setTimeout(async () => {
+      try { setSondPick(await odoo.searchProductsByQuery(session, q, 12)); setSondOpen(true); }
+      catch { setSondPick([]); }
+    }, 280);
+    return () => clearTimeout(id);
+  }, [sondQ, session]);
+
+  const lancerSondage = async (ref: string) => {
+    const code = ref.trim();
+    if (!code) return;
+    if (!sondFrom || !sondTo) { onToast("Renseigne la période du sondage (début et fin)", "error"); return; }
+    setSondLoading(true); setSondResult(null); setSondOpen(false);
+    try {
+      const res = await odoo.getConsoSondage(session, code, sondFrom, sondTo);
+      if (!res || !res.found) { onToast(`Article « ${code} » introuvable dans Odoo`, "info"); setSondResult(res); }
+      else setSondResult(res);
+    } catch (e: any) { onToast("Erreur sondage : " + e.message, "error"); }
+    finally { setSondLoading(false); }
+  };
+
+  const ajouterDepuisRecherche = (p: odoo.ProductPricing) => {
+    setCamp(c => {
+      if (c.articles.some(a => a.ref.trim() === p.ref)) return c; // déjà présent
+      const art: ArticleCampagne = {
+        ref: p.ref, productId: p.productId, name: p.name, barcode: p.barcode,
+        standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc, found: true,
+      };
+      // Remplit la 1ère ligne vide, sinon ajoute à la fin.
+      const emptyIdx = c.articles.findIndex(a => !a.ref.trim());
+      const articles = emptyIdx >= 0
+        ? c.articles.map((a, i) => i === emptyIdx ? art : a)
+        : [...c.articles, art];
+      return { ...c, articles };
+    });
+    setRechQ(""); setRechResults([]); setRechOpen(false);
+    onToast(`${p.ref} — ${p.name} ajouté`, "success");
+  };
+
   const setPalier = (pi: number, patch: Partial<PalierSaisi>) =>
     setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => i === pi ? { ...p, ...patch } : p) }));
 
@@ -315,9 +384,135 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         </div>
       </div>
 
+      {/* Statistiques consommations des articles (sondage hors campagne) */}
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18, boxShadow: C.shadow }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 3 }}>Statistiques consommations des articles</div>
+        <div style={{ fontSize: 11.5, color: C.textMuted, marginBottom: 12 }}>Consulte la conso d'un article de référence (produit similaire, année précédente…) sans l'ajouter à la campagne — pour dimensionner tes quantités.</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ position: "relative", flex: 1, minWidth: 240 }}>
+            <label style={labelStyle}>Article à sonder</label>
+            <input
+              value={sondQ}
+              onChange={e => setSondQ(e.target.value)}
+              onFocus={() => { if (sondPick.length) setSondOpen(true); }}
+              onBlur={() => setTimeout(() => setSondOpen(false), 150)}
+              onKeyDown={e => { if (e.key === "Enter") lancerSondage(sondQ); }}
+              placeholder="Code ou libellé (ex. trousse rituel apaisant)"
+              style={{ ...inputStyle, width: "100%" }}
+            />
+            {sondOpen && sondPick.length > 0 && (
+              <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: C.shadowMd, zIndex: 20, maxHeight: 280, overflowY: "auto" }}>
+                {sondPick.map(p => (
+                  <button key={p.productId}
+                    onMouseDown={e => { e.preventDefault(); setSondQ(p.ref); lancerSondage(p.ref); }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${C.bg}`, cursor: "pointer", fontFamily: "inherit" }}
+                    onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = C.blueSoft}
+                    onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
+                    <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, color: C.blueDark, minWidth: 78, flexShrink: 0 }}>{p.ref}</span>
+                    <span style={{ fontSize: 12.5, color: C.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div><label style={labelStyle}>Début</label><input type="date" style={{ ...inputStyle, width: 150 }} value={sondFrom} onChange={e => setSondFrom(e.target.value)} /></div>
+          <div><label style={labelStyle}>Fin</label><input type="date" style={{ ...inputStyle, width: 150 }} value={sondTo} onChange={e => setSondTo(e.target.value)} /></div>
+          {camp.periodeDebut && camp.periodeFin && (sondFrom !== camp.periodeDebut || sondTo !== camp.periodeFin) && (
+            <button onClick={() => { setSondFrom(camp.periodeDebut); setSondTo(camp.periodeFin); }} style={{ ...btnGhost, padding: "7px 11px" }} title="Reprendre la période N-1 de la campagne">Période N-1</button>
+          )}
+          <button onClick={() => lancerSondage(sondQ)} disabled={sondLoading} style={{ padding: "9px 16px", background: C.white, border: `1px solid ${C.blue}`, borderRadius: 7, cursor: sondLoading ? "default" : "pointer", fontSize: 12.5, fontWeight: 600, color: C.blueDark, fontFamily: "inherit", opacity: sondLoading ? 0.6 : 1 }}>{sondLoading ? "Recherche…" : "Voir la conso"}</button>
+        </div>
+
+        {sondResult && sondResult.found && (() => {
+          const maxMois = Math.max(1, ...sondResult.parMois.map(m => m.qty));
+          const moisLbl = (m: string) => { const [y, mo] = m.split("-"); return ["", "Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"][parseInt(mo)] + " " + y.slice(2); };
+          return (
+            <div style={{ marginTop: 14, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+                <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, color: C.blueDark }}>{sondResult.ref}</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{sondResult.name}</span>
+                <div style={{ flex: 1 }} />
+                <span style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Total livré</span>
+                <span style={{ fontSize: 20, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{fmtNum(sondResult.qtyTotal)}</span>
+              </div>
+
+              {sondResult.parMois.length > 0 && (
+                <div style={{ marginBottom: sondResult.parStatut.length ? 12 : 0 }}>
+                  <div style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600, marginBottom: 6 }}>Par mois</div>
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 90 }}>
+                    {sondResult.parMois.map(m => (
+                      <div key={m.mois} style={{ flex: 1, minWidth: 26, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }} title={`${m.mois} : ${fmtNum(m.qty)}`}>
+                        <span style={{ fontSize: 10, color: C.textSec, fontVariantNumeric: "tabular-nums" }}>{fmtNum(m.qty)}</span>
+                        <div style={{ width: "100%", height: Math.max(3, (m.qty / maxMois) * 60), background: C.blue, borderRadius: "3px 3px 0 0" }} />
+                        <span style={{ fontSize: 9.5, color: C.textMuted, whiteSpace: "nowrap" }}>{moisLbl(m.mois)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {sondResult.parStatut.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600, marginBottom: 6 }}>Par statut client</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {sondResult.parStatut.map(s => (
+                      <span key={s.statut} style={{ fontSize: 11.5, background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 9px", color: C.textSec, fontVariantNumeric: "tabular-nums" }}>
+                        {s.statut} <b style={{ color: C.text }}>{fmtNum(s.qty)}</b> ({Math.round(s.qty / sondResult.qtyTotal * 100)}%)
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        {sondResult && !sondResult.found && (
+          <div style={{ marginTop: 12, fontSize: 12, color: C.amber }}>Article introuvable dans Odoo pour ce code.</div>
+        )}
+      </div>
+
       {/* Articles de la campagne (communs à tous les paliers) */}
       <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18, boxShadow: C.shadow }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Articles de la campagne</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Articles de la campagne</div>
+          <div style={{ position: "relative", flex: 1, minWidth: 260, maxWidth: 460 }}>
+            <input
+              value={rechQ}
+              onChange={e => setRechQ(e.target.value)}
+              onFocus={() => { if (rechResults.length) setRechOpen(true); }}
+              onBlur={() => setTimeout(() => setRechOpen(false), 150)}
+              placeholder="Rechercher un article par code ou libellé…"
+              style={{ ...inputStyle, width: "100%", paddingLeft: 32 }}
+            />
+            <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: C.textMuted, fontSize: 13, pointerEvents: "none" }}>⌕</span>
+            {rechLoading && <span style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", color: C.textMuted, fontSize: 11 }}>…</span>}
+            {rechOpen && rechQ.trim().length >= 2 && (
+              <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: C.shadowMd, zIndex: 20, maxHeight: 320, overflowY: "auto" }}>
+                {rechResults.length === 0 && !rechLoading && (
+                  <div style={{ padding: "10px 12px", fontSize: 12, color: C.textMuted }}>Aucun article trouvé pour « {rechQ.trim()} ».</div>
+                )}
+                {rechResults.map(p => {
+                  const deja = camp.articles.some(a => a.ref.trim() === p.ref);
+                  return (
+                    <button
+                      key={p.productId}
+                      onMouseDown={e => { e.preventDefault(); if (!deja) ajouterDepuisRecherche(p); }}
+                      disabled={deja}
+                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${C.bg}`, cursor: deja ? "default" : "pointer", fontFamily: "inherit", opacity: deja ? 0.5 : 1 }}
+                      onMouseEnter={e => { if (!deja) (e.currentTarget as HTMLButtonElement).style.background = C.blueSoft; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+                    >
+                      <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, color: C.blueDark, minWidth: 78, flexShrink: 0 }}>{p.ref}</span>
+                      <span style={{ fontSize: 12.5, color: C.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                      {p.listPrice > 0 && <span style={{ fontSize: 11, color: C.textMuted, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{p.listPrice.toFixed(2)} €</span>}
+                      <span style={{ fontSize: 11, color: deja ? C.green : C.blue, flexShrink: 0, fontWeight: 600 }}>{deja ? "✓ ajouté" : "+ ajouter"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
