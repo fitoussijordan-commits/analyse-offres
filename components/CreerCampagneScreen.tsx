@@ -43,13 +43,14 @@ const inputStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = { fontSize: 10.5, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5, display: "block" };
 const btnGhost: React.CSSProperties = { padding: "7px 13px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 7, cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: C.textSec, fontFamily: "inherit" };
 
-// Champ « Désignation » avec autocomplete Odoo : on tape un libellé, on choisit un produit
-// et code/EAN/prix se remplissent. La frappe libre reste possible (réf inconnue d'Odoo).
-function LibelleAutocomplete({ session, value, onType, onPick }: {
+// Champ avec autocomplete Odoo (utilisé sur Code ET Désignation) : on tape, on choisit un
+// produit et code/EAN/prix se remplissent. La frappe libre reste possible (réf inconnue d'Odoo).
+function ArticleAutocomplete({ session, value, onType, onPick, width, mono, placeholder }: {
   session: odoo.OdooSession;
   value: string;
-  onType: (name: string) => void;                       // saisie libre (marque manuel)
+  onType: (v: string) => void;                          // saisie libre (marque manuel)
   onPick: (p: odoo.ProductPricing) => void;             // sélection dans la liste
+  width: number; mono?: boolean; placeholder: string;
 }) {
   const [res, setRes] = useState<odoo.ProductPricing[]>([]);
   const [open, setOpen] = useState(false);
@@ -72,12 +73,12 @@ function LibelleAutocomplete({ session, value, onType, onPick }: {
   return (
     <div style={{ position: "relative" }}>
       <input
-        style={{ ...inputStyle, width: 200, padding: "5px 6px" }}
+        style={{ ...inputStyle, width, padding: "5px 6px", ...(mono ? { fontFamily: "monospace" } : {}) }}
         value={value}
         onChange={e => { onType(e.target.value); setQ(e.target.value); }}
         onFocus={() => { if (res.length) setOpen(true); }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
-        placeholder="Désignation"
+        placeholder={placeholder}
       />
       {loading && <span style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", color: C.textMuted, fontSize: 11 }}>…</span>}
       {open && res.length > 0 && (
@@ -629,12 +630,23 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
               return (
               <tr key={ai} style={{ background: inconnue ? C.amberSoft : "transparent" }}>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
-                  <input style={{ ...inputStyle, width: 110, fontFamily: "monospace", padding: "5px 6px" }} value={a.ref} onChange={e => setArticle(ai, { ref: e.target.value, name: undefined, found: undefined, manuel: undefined })} placeholder="Code" />
+                  <ArticleAutocomplete
+                    session={session}
+                    value={a.ref}
+                    width={110} mono placeholder="Code"
+                    onType={ref => setArticle(ai, { ref, name: undefined, found: undefined, manuel: undefined })}
+                    onPick={p => setArticle(ai, {
+                      ref: p.ref, productId: p.productId, name: p.name, barcode: p.barcode,
+                      standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc,
+                      found: true, manuel: false,
+                    })}
+                  />
                 </td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
-                  <LibelleAutocomplete
+                  <ArticleAutocomplete
                     session={session}
                     value={a.name ?? ""}
+                    width={200} placeholder="Désignation"
                     onType={name => setArticle(ai, { manuel: true, name })}
                     onPick={p => setArticle(ai, {
                       ref: p.ref, productId: p.productId, name: p.name, barcode: p.barcode,
