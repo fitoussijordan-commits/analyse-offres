@@ -493,19 +493,33 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 )}
                 {rechResults.map(p => {
                   const deja = camp.articles.some(a => a.ref.trim() === p.ref);
+                  // Extrait de description montré si le terme y figure sans être dans le code/nom.
+                  const ql = rechQ.trim().toLowerCase();
+                  const desc = (p.description || "").replace(/\s+/g, " ").trim();
+                  const matchDesc = ql.length >= 2 && desc.toLowerCase().includes(ql)
+                    && !p.ref.toLowerCase().includes(ql) && !p.name.toLowerCase().includes(ql);
+                  let extrait = "";
+                  if (matchDesc) {
+                    const i = desc.toLowerCase().indexOf(ql);
+                    const start = Math.max(0, i - 25);
+                    extrait = (start > 0 ? "…" : "") + desc.slice(start, i + ql.length + 45).trim() + "…";
+                  }
                   return (
                     <button
                       key={p.productId}
                       onMouseDown={e => { e.preventDefault(); if (!deja) ajouterDepuisRecherche(p); }}
                       disabled={deja}
-                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${C.bg}`, cursor: deja ? "default" : "pointer", fontFamily: "inherit", opacity: deja ? 0.5 : 1 }}
+                      style={{ display: "flex", flexDirection: "column", gap: 2, width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${C.bg}`, cursor: deja ? "default" : "pointer", fontFamily: "inherit", opacity: deja ? 0.5 : 1 }}
                       onMouseEnter={e => { if (!deja) (e.currentTarget as HTMLButtonElement).style.background = C.blueSoft; }}
                       onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
                     >
-                      <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, color: C.blueDark, minWidth: 78, flexShrink: 0 }}>{p.ref}</span>
-                      <span style={{ fontSize: 12.5, color: C.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-                      {p.listPrice > 0 && <span style={{ fontSize: 11, color: C.textMuted, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{p.listPrice.toFixed(2)} €</span>}
-                      <span style={{ fontSize: 11, color: deja ? C.green : C.blue, flexShrink: 0, fontWeight: 600 }}>{deja ? "✓ ajouté" : "+ ajouter"}</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
+                        <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, color: C.blueDark, minWidth: 78, flexShrink: 0 }}>{p.ref}</span>
+                        <span style={{ fontSize: 12.5, color: C.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                        {p.listPrice > 0 && <span style={{ fontSize: 11, color: C.textMuted, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{p.listPrice.toFixed(2)} €</span>}
+                        <span style={{ fontSize: 11, color: deja ? C.green : C.blue, flexShrink: 0, fontWeight: 600 }}>{deja ? "✓ ajouté" : "+ ajouter"}</span>
+                      </span>
+                      {extrait && <span style={{ fontSize: 10.5, color: C.textMuted, paddingLeft: 88, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>{extrait}</span>}
                     </button>
                   );
                 })}

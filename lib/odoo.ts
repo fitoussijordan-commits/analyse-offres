@@ -84,6 +84,7 @@ export interface ProductPricing {
   standardPrice: number;  // coût achat unitaire
   listPrice: number;      // tarif revendeur unitaire
   ppc: number;            // PPC
+  description?: string;   // description commerciale (description_sale), pour l'aperçu recherche
 }
 
 /**
@@ -245,20 +246,25 @@ export async function getAllProducts(session: OdooSession): Promise<ProductPrici
 
 /** Recherche dynamique de produits par code OU libellé (pour l'autocomplete « ajouter un
  *  article »). Renvoie au plus `limit` produits ayant un default_code, triés par pertinence
- *  (les codes exacts d'abord). La requête est un OU sur default_code / name / barcode. */
+ *  (les codes exacts d'abord). La requête est un OU sur default_code / name / barcode /
+ *  descriptions (commerciale + description produit). */
 export async function searchProductsByQuery(session: OdooSession, query: string, limit = 20): Promise<ProductPricing[]> {
   const q = (query || "").trim();
   if (q.length < 2) return [];
+  // OU à 5 branches : 4 opérateurs "|" pour 5 critères (default_code, name, barcode,
+  // description commerciale, description produit).
   const domain: any[] = [
     ["default_code", "!=", false],
-    "|", "|",
+    "|", "|", "|", "|",
     ["default_code", "ilike", q],
     ["name", "ilike", q],
     ["barcode", "ilike", q],
+    ["description_sale", "ilike", q],
+    ["description", "ilike", q],
   ];
   const prods = await searchRead(
     session, "product.product", domain,
-    ["id", "default_code", "name", "barcode", "standard_price", "list_price", "x_ppc"],
+    ["id", "default_code", "name", "barcode", "standard_price", "list_price", "x_ppc", "description_sale"],
     limit, "default_code"
   );
   const out: ProductPricing[] = [];
@@ -272,18 +278,21 @@ export async function searchProductsByQuery(session: OdooSession, query: string,
       standardPrice: typeof p.standard_price === "number" ? p.standard_price : 0,
       listPrice: typeof p.list_price === "number" ? p.list_price : 0,
       ppc: typeof p.x_ppc === "number" ? p.x_ppc : 0,
+      description: typeof p.description_sale === "string" ? p.description_sale : "",
     });
   }
-  // Tri pertinence : code qui commence par la requête > code qui contient > reste.
+  // Tri pertinence : code exact > code au début > nom au début > code/nom contient >
+  // match uniquement dans la description (le moins prioritaire).
   const ql = q.toLowerCase();
   return out.sort((a, b) => {
     const score = (p: ProductPricing) => {
-      const c = p.ref.toLowerCase(), n = p.name.toLowerCase();
+      const c = p.ref.toLowerCase(), n = p.name.toLowerCase(), d = (p.description || "").toLowerCase();
       if (c === ql) return 0;
       if (c.startsWith(ql)) return 1;
       if (n.startsWith(ql)) return 2;
-      if (c.includes(ql)) return 3;
-      return 4;
+      if (c.includes(ql) || n.includes(ql)) return 3;
+      if (d.includes(ql)) return 4; // trouvé seulement dans la description
+      return 5;
     };
     return score(a) - score(b) || a.ref.localeCompare(b.ref);
   });
