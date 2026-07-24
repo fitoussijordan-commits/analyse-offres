@@ -409,10 +409,15 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
             <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
-                  <tr>{["Réf", "Produit", "EAN", "Qté/offre", "Coût", "Tarif", "PPC"].map((h, i) => <th key={i} style={{ padding: "5px 8px", textAlign: i >= 3 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{h}</th>)}</tr>
+                  <tr>{["Réf", "Produit", "EAN", "Qté/offre", "Coût", "Tarif", "PPC", "PPC remisé", "Montant BRI €"].map((h, i) => <th key={i} style={{ padding: "5px 8px", textAlign: i >= 3 ? "right" : "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
-                  {pal.produits.map((p: any, ri: number) => (
+                  {pal.produits.map((p: any, ri: number) => {
+                    // PPC remisé = PPC × (1 − remise add.) ; Montant BRI = PPC − PPC remisé
+                    // (l'économie client). Formules identiques aux colonnes K et L du template.
+                    const ppcRem = (p.ppc || 0) * (1 - (pal.remiseAdd || 0));
+                    const bri = (p.ppc || 0) - ppcRem;
+                    return (
                     <tr key={ri}>
                       <td style={{ padding: "4px 8px", fontFamily: "monospace", borderBottom: `1px solid ${C.border}` }}>{p.ref}</td>
                       <td style={{ padding: "4px 8px", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{p.name}</td>
@@ -423,8 +428,11 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
                       <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.standardPrice)}</td>
                       <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.listPrice)}</td>
                       <td style={{ padding: "4px 8px", textAlign: "right", color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{fmtPrix(p.ppc)}</td>
+                      <td style={{ padding: "4px 8px", textAlign: "right", color: C.text, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>{p.ppc ? fmtPrix(ppcRem) : "—"}</td>
+                      <td style={{ padding: "4px 8px", textAlign: "right", color: bri > 0 ? C.green : C.textMuted, borderBottom: `1px solid ${C.border}` }}>{p.ppc ? fmtPrix(bri) : "—"}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
