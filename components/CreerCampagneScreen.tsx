@@ -43,6 +43,61 @@ const inputStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = { fontSize: 10.5, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5, display: "block" };
 const btnGhost: React.CSSProperties = { padding: "7px 13px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 7, cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: C.textSec, fontFamily: "inherit" };
 
+// Champ « Désignation » avec autocomplete Odoo : on tape un libellé, on choisit un produit
+// et code/EAN/prix se remplissent. La frappe libre reste possible (réf inconnue d'Odoo).
+function LibelleAutocomplete({ session, value, onType, onPick }: {
+  session: odoo.OdooSession;
+  value: string;
+  onType: (name: string) => void;                       // saisie libre (marque manuel)
+  onPick: (p: odoo.ProductPricing) => void;             // sélection dans la liste
+}) {
+  const [res, setRes] = useState<odoo.ProductPricing[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState<string | null>(null); // null = pas de recherche en cours (frappe non initiée)
+
+  useEffect(() => {
+    if (q == null) return;
+    const term = q.trim();
+    if (term.length < 2) { setRes([]); setLoading(false); return; }
+    setLoading(true);
+    const id = setTimeout(async () => {
+      try { setRes(await odoo.searchProductsByQuery(session, term, 12)); setOpen(true); }
+      catch { setRes([]); }
+      finally { setLoading(false); }
+    }, 280);
+    return () => clearTimeout(id);
+  }, [q, session]);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        style={{ ...inputStyle, width: 200, padding: "5px 6px" }}
+        value={value}
+        onChange={e => { onType(e.target.value); setQ(e.target.value); }}
+        onFocus={() => { if (res.length) setOpen(true); }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder="Désignation"
+      />
+      {loading && <span style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", color: C.textMuted, fontSize: 11 }}>…</span>}
+      {open && res.length > 0 && (
+        <div style={{ position: "absolute", top: "calc(100% + 3px)", left: 0, minWidth: 320, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: C.shadowMd, zIndex: 30, maxHeight: 280, overflowY: "auto" }}>
+          {res.map(p => (
+            <button key={p.productId}
+              onMouseDown={e => { e.preventDefault(); onPick(p); setOpen(false); setQ(null); }}
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "7px 11px", background: "transparent", border: "none", borderBottom: `1px solid ${C.bg}`, cursor: "pointer", fontFamily: "inherit" }}
+              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = C.blueSoft}
+              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
+              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, color: C.blueDark, minWidth: 74, flexShrink: 0 }}>{p.ref}</span>
+              <span style={{ fontSize: 12.5, color: C.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CreerCampagneScreen({ session, onToast, initialDraft, onDraftConsumed }: Props) {
   const [camp, setCamp] = useState<CampagneCreee>(emptyCampagne);
   const [saved, setSaved] = useState<CampagneCreee[]>([]);
@@ -173,11 +228,19 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   const addPalier = () => setCamp(c => ({ ...c, paliers: [...c.paliers, emptyPalier(c.paliers.length + 1)] }));
   const removePalier = (pi: number) => setCamp(c => ({ ...c, paliers: c.paliers.filter((_, i) => i !== pi) }));
 
-  const analyser = async () => {
-    if (!camp.periodeDebut || !camp.periodeFin) { onToast("Renseigne la période N-1 (début et fin)", "error"); return; }
+  const analyser = async (src?: CampagneCreee, silencieuxSiVide = false) => {
+    const cible = src || camp;
+    if (!cible.periodeDebut || !cible.periodeFin) {
+      if (!silencieuxSiVide) onToast("Renseigne la période N-1 (début et fin)", "error");
+      return;
+    }
+    if (!cible.articles.some(a => a.ref.trim())) {
+      if (!silencieuxSiVide) onToast("Ajoute au moins un article avant d'analyser", "error");
+      return;
+    }
     setAnalysing(true);
     try {
-      const enriched = await analyseCampagneCreee(session, camp);
+      const enriched = await analyseCampagneCreee(session, cible);
       setCamp(enriched); setAnalysed(true);
       const nbFound = enriched.articles.filter(a => a.found).length;
       const nbTotal = enriched.articles.filter(a => a.ref.trim()).length;
@@ -207,7 +270,17 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
     finally { setSaving(false); }
   };
 
-  const charger = (c: CampagneCreee) => { setCamp(c); setAnalysed(false); onToast(`Campagne « ${c.nom} » chargée`, "info"); };
+  const charger = (c: CampagneCreee) => {
+    setCamp(c); setAnalysed(false);
+    // Auto-analyse à l'ouverture si la campagne a déjà tout ce qu'il faut (période N-1 + articles),
+    // pour arriver directement avec les données. Silencieux si les prérequis manquent.
+    if (c.periodeDebut && c.periodeFin && c.articles.some(a => a.ref.trim())) {
+      onToast(`Campagne « ${c.nom} » — analyse conso N-1 en cours…`, "info");
+      void analyser(c, true);
+    } else {
+      onToast(`Campagne « ${c.nom} » chargée`, "info");
+    }
+  };
   const supprimer = async (id: string) => { try { await deleteCampagneCreee(id); await reload(); onToast("Déplacée dans la corbeille", "success"); } catch (e: any) { onToast(e.message, "error"); } };
   const restaurer = async (id: string) => { try { await restoreCampagneCreee(id); await reload(); onToast("Campagne restaurée", "success"); } catch (e: any) { onToast(e.message, "error"); } };
   const supprimerDefinitif = async (c: CampagneCreee) => {
@@ -559,7 +632,16 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                   <input style={{ ...inputStyle, width: 110, fontFamily: "monospace", padding: "5px 6px" }} value={a.ref} onChange={e => setArticle(ai, { ref: e.target.value, name: undefined, found: undefined, manuel: undefined })} placeholder="Code" />
                 </td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
-                  <input style={{ ...inputStyle, width: 200, padding: "5px 6px" }} value={a.name ?? ""} onChange={e => setArticle(ai, { manuel: true, name: e.target.value })} placeholder="Désignation" />
+                  <LibelleAutocomplete
+                    session={session}
+                    value={a.name ?? ""}
+                    onType={name => setArticle(ai, { manuel: true, name })}
+                    onPick={p => setArticle(ai, {
+                      ref: p.ref, productId: p.productId, name: p.name, barcode: p.barcode,
+                      standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc,
+                      found: true, manuel: false,
+                    })}
+                  />
                 </td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
                   <select style={{ ...inputStyle, width: 130, padding: "5px 6px" }} value={a.typProd ?? "Produit Vente"} onChange={e => {
@@ -883,7 +965,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
 
       {/* Barre d'action */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", position: "sticky", bottom: -24, background: C.bg, padding: "14px 24px", margin: "0 -24px -24px", borderTop: `1px solid ${C.border}`, zIndex: 5 }}>
-        <button onClick={analyser} disabled={analysing} style={{ padding: "9px 16px", background: C.white, border: `1px solid ${C.blue}`, borderRadius: 7, cursor: analysing ? "default" : "pointer", fontSize: 12.5, fontWeight: 600, color: C.blueDark, fontFamily: "inherit", opacity: analysing ? 0.6 : 1 }}>{analysing ? "Analyse…" : "Analyser conso N-1"}</button>
+        <button onClick={() => analyser()} disabled={analysing} style={{ padding: "9px 16px", background: C.white, border: `1px solid ${C.blue}`, borderRadius: 7, cursor: analysing ? "default" : "pointer", fontSize: 12.5, fontWeight: 600, color: C.blueDark, fontFamily: "inherit", opacity: analysing ? 0.6 : 1 }}>{analysing ? "Analyse…" : "Analyser conso N-1"}</button>
         <button onClick={sauvegarder} disabled={saving} style={{ ...btnGhost, padding: "9px 16px", opacity: saving ? 0.6 : 1, cursor: saving ? "default" : "pointer" }}>{saving ? "…" : "Sauvegarder"}</button>
         <div style={{ flex: 1 }} />
         <button onClick={exporter} disabled={exporting} style={{ padding: "9px 18px", background: C.blue, border: "none", borderRadius: 7, cursor: exporting ? "default" : "pointer", fontSize: 12.5, fontWeight: 600, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "Exporter la proposition"}</button>
