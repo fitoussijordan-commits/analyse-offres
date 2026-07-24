@@ -254,7 +254,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
 
       {tab === "offre" && <>
         <OffreTab paliers={paliers} calcPaliers={calcPaliers} setPalier={setPalier} setPct={setPct} setRemise={setRemise} setQty={setQty} besoin={besoin} />
-        <GrandsComptesBloc produits={paliers[0]?.produits || []} enseignes={gcEnseignes} gcMax={GC_MAX} setGcQty={setGcQty} setGcNom={setGcNom} setGcRemise={setGcRemise} addGc={addGc} removeGc={removeGc} />
+        <GrandsComptesBloc produits={paliers[0]?.produits || []} remiseAdd={paliers[0]?.remiseAdd || 0} enseignes={gcEnseignes} gcMax={GC_MAX} setGcQty={setGcQty} setGcNom={setGcNom} setGcRemise={setGcRemise} addGc={addGc} removeGc={removeGc} />
       </>}
       {tab === "logistique" && <LogistiqueTab log={logistique} />}
       {tab === "synthese" && <SyntheseTab paliers={paliers} calcPaliers={calcPaliers} gc={gc} />}
@@ -444,8 +444,8 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
 }
 
 // ── Bloc GRANDS COMPTES : mêmes articles × enseignes dynamiques (max 6, limite template) ──
-function GrandsComptesBloc({ produits, enseignes, gcMax, setGcQty, setGcNom, setGcRemise, addGc, removeGc }: {
-  produits: any[]; enseignes: GcEnseigne[]; gcMax: number;
+function GrandsComptesBloc({ produits, remiseAdd, enseignes, gcMax, setGcQty, setGcNom, setGcRemise, addGc, removeGc }: {
+  produits: any[]; remiseAdd: number; enseignes: GcEnseigne[]; gcMax: number;
   setGcQty: (ei: number, key: string, v: number) => void;
   setGcNom: (ei: number, nom: string) => void;
   setGcRemise: (ei: number, remise: number) => void;
@@ -457,13 +457,65 @@ function GrandsComptesBloc({ produits, enseignes, gcMax, setGcQty, setGcNom, set
   const refCount: Record<string, number> = {};
   for (const p of produits) { const r = (p.ref || "").trim(); if (r) refCount[r] = (refCount[r] || 0) + 1; }
   const keyOf = (p: any) => { const r = (p.ref || "").trim(); return (r && refCount[r] > 1) ? `${r}#${p.typProd || "Produit Vente"}` : r; };
+
+  // CA / marge par enseigne (même moteur que la synthèse et l'Excel). remiseAdd = celle
+  // du palier de référence, passée en prop.
+  const gcInfo = produits.map((p: any) => ({
+    key: keyOf(p),
+    listPrice: (p.typProd || "Produit Vente") === "Produit Vente" ? (p.listPrice || 0) : 0,
+    standardPrice: p.standardPrice || 0,
+    remiseAdd,
+  }));
+  const gcCalc = calcGrandsComptes(enseignes.map(e => ({ nom: e.nom, remise: e.remise, qties: e.qties })), gcInfo);
+
   return (
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
       <div style={{ padding: "12px 16px", background: "#fff7ed", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: "#b45309", color: "#fff", borderRadius: 5, padding: "2px 8px" }}>GRANDS COMPTES</span>
         <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités par enseigne (nom et remise éditables)</span>
         <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{enseignes.length} enseigne{enseignes.length > 1 ? "s" : ""}</span>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.blue }}>CA {fmtEur(gcCalc.caTotal)}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.green }}>Marge {fmtEur(gcCalc.margeTotal)} ({fmtPct(gcCalc.margePct)})</span>
       </div>
+
+      {/* Bandeau CA / Marge par enseigne (comme les paliers, mais ventilé par enseigne). */}
+      {gcCalc.caTotal > 0 && (
+        <div style={{ padding: "8px 16px", overflowX: "auto", borderBottom: `1px solid ${C.border}`, background: "#fffdf9" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "4px 8px", color: C.textMuted, borderBottom: `1px solid ${C.border}` }} />
+                {gcCalc.parEnseigne.map((e, ei) => <th key={ei} style={{ padding: "4px 8px", color: C.textSec, fontWeight: 700, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap", textAlign: "center" }}>{e.nom}</th>)}
+                <th style={{ padding: "4px 8px", color: C.text, fontWeight: 800, borderBottom: `1px solid ${C.border}`, textAlign: "center" }}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ padding: "4px 8px", color: C.textMuted, fontWeight: 600 }}>Remise</td>
+                {gcCalc.parEnseigne.map((e, ei) => <td key={ei} style={{ padding: "4px 8px", textAlign: "center", color: C.textSec }}>{fmtPct(enseignes[ei]?.remise || 0)}</td>)}
+                <td />
+              </tr>
+              <tr>
+                <td style={{ padding: "4px 8px", color: C.textMuted, fontWeight: 600 }}>Qté</td>
+                {gcCalc.parEnseigne.map((e, ei) => <td key={ei} style={{ padding: "4px 8px", textAlign: "center", color: C.textSec }}>{fmtNum(e.qty)}</td>)}
+                <td style={{ padding: "4px 8px", textAlign: "center", fontWeight: 700, color: C.textSec }}>{fmtNum(gcCalc.qtyTotal)}</td>
+              </tr>
+              <tr style={{ background: C.blueSoft }}>
+                <td style={{ padding: "4px 8px", color: C.blueDark, fontWeight: 700 }}>CA</td>
+                {gcCalc.parEnseigne.map((e, ei) => <td key={ei} style={{ padding: "4px 8px", textAlign: "center", fontWeight: 600, color: C.text, whiteSpace: "nowrap" }}>{fmtEur(e.ca)}</td>)}
+                <td style={{ padding: "4px 8px", textAlign: "center", fontWeight: 800, color: C.blueDark, whiteSpace: "nowrap" }}>{fmtEur(gcCalc.caTotal)}</td>
+              </tr>
+              <tr style={{ background: C.tealSoft }}>
+                <td style={{ padding: "4px 8px", color: C.teal, fontWeight: 700 }}>Marge</td>
+                {gcCalc.parEnseigne.map((e, ei) => <td key={ei} style={{ padding: "4px 8px", textAlign: "center", fontWeight: 600, color: e.marge >= 0 ? C.text : C.red, whiteSpace: "nowrap" }}>{fmtEur(e.marge)}</td>)}
+                <td style={{ padding: "4px 8px", textAlign: "center", fontWeight: 800, color: C.teal, whiteSpace: "nowrap" }}>{fmtEur(gcCalc.margeTotal)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
