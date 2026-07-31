@@ -56,6 +56,13 @@ export function writeSyntheseLogistiqueSheet(wb: ExcelJS.Workbook, log: Synthese
       if (col === 1) c.font = { ...c.font, name: "Consolas" };
     });
   }
+  // Aucun besoin calculable (dates de campagne manquantes) : on l'indique clairement
+  // plutôt que de laisser un tableau vide qu'on pourrait confondre avec un bug.
+  if (!log.lignes.length) {
+    const empty = sw.addRow(["", "Aucun besoin calculé — renseigne les dates de début et de fin de campagne."]);
+    sw.mergeCells(empty.number, 2, empty.number, nbCols);
+    sw.getCell(empty.number, 2).font = { italic: true, size: 10, color: { argb: "FF6B7280" }, name: "Calibri" };
+  }
   const totRow = sw.addRow(["", "TOTAL", ...log.totalParMois, log.totalGeneral]);
   totRow.eachCell((c, col) => {
     c.font = { bold: true, size: 10, name: "Calibri", color: { argb: "FF" + WHITE } };

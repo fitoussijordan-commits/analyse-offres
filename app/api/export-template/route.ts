@@ -28,11 +28,17 @@ export async function POST(req: NextRequest) {
     // Onglet "Synthèse détaillée" (CA/marge par offre + par statut).
     if (paliers.length) writeSyntheseDetailleeSheet(wb, paliers, payload.gcEnseignes);
 
-    // Onglet "Synthèse logistique" (réf × mois) si la campagne fournit ses besoins.
-    if (payload.logistique && payload.logistique.lignes?.length) {
+    // Onglet "Synthèse logistique" (réf × mois). TOUJOURS réécrit : sinon un éventuel
+    // contenu résiduel du gabarit ressortirait tel quel dans l'export (données d'une
+    // autre campagne). Si la campagne n'a pas de besoins (dates manquantes), l'onglet
+    // est régénéré vide avec un message explicite.
+    {
       const nameByRef: Record<string, string> = {};
       for (const pal of payload.paliers) for (const p of pal.produits) { const r = (p.ref || "").trim(); if (r && p.name && !nameByRef[r]) nameByRef[r] = p.name; }
-      writeSyntheseLogistiqueSheet(wb, payload.logistique, nameByRef);
+      const log = payload.logistique && payload.logistique.lignes?.length
+        ? payload.logistique
+        : { lignes: [], totalParMois: [], totalGeneral: 0, moisLabels: [] };
+      writeSyntheseLogistiqueSheet(wb, log, nameByRef);
     }
 
     // Renommer l'onglet "Proposition template" par le nom de la campagne (nettoyé : Excel
