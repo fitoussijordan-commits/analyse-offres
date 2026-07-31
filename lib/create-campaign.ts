@@ -405,7 +405,9 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
   return {
     nom: camp.nom,
     gcEnseignes: camp.gcEnseignes,
-    canauxNonB2B: camp.canauxNonB2B,
+    // Non B2B « d'office » : même sans saisie, les colonnes Maison Dr Hauschka / Eshop
+    // apparaissent dans l'Excel (comme les 6 GC fixes du template).
+    canauxNonB2B: camp.canauxNonB2B ?? CANAUX_NONB2B_DEFAUT,
     paliers: camp.paliers.map(pal => {
       const vent = ventilationPalier(arts, pal);
       return {

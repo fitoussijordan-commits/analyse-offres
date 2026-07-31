@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadCampagnesCreees, upsertCampagne, upsertCampagneCreee } from "@/lib/campaigns";
-import { CampagneCreee, PalierSaisi, ArticleCampagne, GcEnseigne, GC_ENSEIGNES_DEFAUT, qtyParPack, qtyKeyLib, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse } from "@/lib/create-campaign";
+import { CampagneCreee, PalierSaisi, ArticleCampagne, GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT, qtyParPack, qtyKeyLib, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef, detailPalier, calcGrandsComptes,
@@ -73,7 +73,9 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
   const [tab, setTab] = useState<SubTab>("offre");
   // Grands Comptes : enseignes dynamiques. Template Excel = 6 colonnes max, UI = 10 max.
   const GC_MAX = 10;
+  const NB2B_MAX = 8;
   const [gcEnseignes, setGcEnseignes] = useState<GcEnseigne[]>(GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} })));
+  const [canauxNb, setCanauxNb] = useState<GcEnseigne[]>(CANAUX_NONB2B_DEFAUT.map(e => ({ ...e, qties: {} })));
 
   useEffect(() => { void (async () => {
     try { const list = await loadCampagnesCreees(); setSaved(list); if (list.length) selectCamp(list[0]); }
@@ -83,7 +85,13 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
   function selectCamp(c: CampagneCreee) {
     setCamp(c); setPaliers(toPaliersEdit(c));
     setGcEnseignes(c.gcEnseignes != null ? c.gcEnseignes.map(e => ({ ...e, qties: { ...e.qties } })) : GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} })));
+    setCanauxNb(c.canauxNonB2B != null ? c.canauxNonB2B.map(e => ({ ...e, qties: { ...e.qties } })) : CANAUX_NONB2B_DEFAUT.map(e => ({ ...e, qties: {} })));
   }
+  const setNbQty = (ei: number, key: string, v: number) => setCanauxNb(es => es.map((e, i) => i === ei ? { ...e, qties: { ...e.qties, [key]: v } } : e));
+  const setNbNom = (ei: number, nom: string) => setCanauxNb(es => es.map((e, i) => i === ei ? { ...e, nom } : e));
+  const setNbRemise = (ei: number, remise: number) => setCanauxNb(es => es.map((e, i) => i === ei ? { ...e, remise } : e));
+  const addNb = () => setCanauxNb(es => es.length >= NB2B_MAX ? es : [...es, { nom: `Canal ${es.length + 1}`, remise: 0, qties: {} }]);
+  const removeNb = (ei: number) => setCanauxNb(es => es.filter((_, i) => i !== ei));
   const setGcQty = (ei: number, key: string, v: number) => setGcEnseignes(es => es.map((e, i) => i === ei ? { ...e, qties: { ...e.qties, [key]: v } } : e));
   const setGcNom = (ei: number, nom: string) => setGcEnseignes(es => es.map((e, i) => i === ei ? { ...e, nom } : e));
   const setGcRemise = (ei: number, remise: number) => setGcEnseignes(es => es.map((e, i) => i === ei ? { ...e, remise } : e));
@@ -118,7 +126,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
         remiseStandardTaux: toutesEgales ? pe.remises[0] : orig.remiseStandardTaux,
       };
     });
-    return { ...camp, paliers: nouveauxPaliers, gcEnseignes };
+    return { ...camp, paliers: nouveauxPaliers, gcEnseignes, canauxNonB2B: canauxNb };
   };
 
   const sauvegarder = async () => {
@@ -186,6 +194,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
       const payload: any = {
         nom,
         gcEnseignes,
+        canauxNonB2B: canauxNb,
         paliers: paliers.map(p => ({
           code: p.code, label: p.label, qtyPacks: p.nbPacks, descriptif: p.descriptif,
           pctOffres: p.pcts, remises: p.remises, remiseAddTaux: p.remiseAdd,
@@ -302,6 +311,8 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
       {tab === "offre" && <>
         <OffreTab paliers={paliers} calcPaliers={calcPaliers} setPalier={setPalier} setPct={setPct} setRemise={setRemise} setQty={setQty} besoin={besoin} />
         <GrandsComptesBloc produits={paliers[0]?.produits || []} remiseAdd={paliers[0]?.remiseAdd || 0} enseignes={gcEnseignes} gcMax={GC_MAX} setGcQty={setGcQty} setGcNom={setGcNom} setGcRemise={setGcRemise} addGc={addGc} removeGc={removeGc} />
+        <GrandsComptesBloc produits={paliers[0]?.produits || []} remiseAdd={paliers[0]?.remiseAdd || 0} enseignes={canauxNb} gcMax={NB2B_MAX} setGcQty={setNbQty} setGcNom={setNbNom} setGcRemise={setNbRemise} addGc={addNb} removeGc={removeNb}
+          title="NON B2B" accent={C.purple} accentSoft={C.purpleSoft} accentSoft2={C.purpleSoft} channelSing="canal" channelArrow="Canal →" addLabel="Ajouter un canal non B2B" />
       </>}
       {tab === "logistique" && <LogistiqueTab log={logistique} />}
       {tab === "synthese" && <SyntheseTab paliers={paliers} calcPaliers={calcPaliers} gc={gc} />}
@@ -490,14 +501,19 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
   );
 }
 
-// ── Bloc GRANDS COMPTES : mêmes articles × enseignes dynamiques (max 6, limite template) ──
-function GrandsComptesBloc({ produits, remiseAdd, enseignes, gcMax, setGcQty, setGcNom, setGcRemise, addGc, removeGc }: {
+// ── Bloc « canaux × articles » : réutilisé pour GRANDS COMPTES et BESOINS NON B2B.
+//    Thème (couleur/titre/vocabulaire) paramétrable ; logique identique. ──
+function GrandsComptesBloc({ produits, remiseAdd, enseignes, gcMax, setGcQty, setGcNom, setGcRemise, addGc, removeGc,
+  title = "GRANDS COMPTES", accent = "#b45309", accentSoft = "#fff7ed", accentSoft2 = "#fffdf9",
+  channelSing = "enseigne", channelArrow = "Enseigne →", addLabel = "Ajouter une enseigne GC" }: {
   produits: any[]; remiseAdd: number; enseignes: GcEnseigne[]; gcMax: number;
   setGcQty: (ei: number, key: string, v: number) => void;
   setGcNom: (ei: number, nom: string) => void;
   setGcRemise: (ei: number, remise: number) => void;
   addGc: () => void;
   removeGc: (ei: number) => void;
+  title?: string; accent?: string; accentSoft?: string; accentSoft2?: string;
+  channelSing?: string; channelArrow?: string; addLabel?: string;
 }) {
   if (!produits.length) return null;
   // Clé composite : distingue les doublons de réf (stick vendu vs stick UG).
@@ -517,10 +533,10 @@ function GrandsComptesBloc({ produits, remiseAdd, enseignes, gcMax, setGcQty, se
 
   return (
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
-      <div style={{ padding: "12px 16px", background: "#fff7ed", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: "#b45309", color: "#fff", borderRadius: 5, padding: "2px 8px" }}>GRANDS COMPTES</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités par enseigne (nom et remise éditables)</span>
-        <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{enseignes.length} enseigne{enseignes.length > 1 ? "s" : ""}</span>
+      <div style={{ padding: "12px 16px", background: accentSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: accent, color: "#fff", borderRadius: 5, padding: "2px 8px" }}>{title}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Quantités par {channelSing} (nom et remise éditables)</span>
+        <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{enseignes.length} {channelSing}{enseignes.length > 1 ? "s" : ""}</span>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 13, fontWeight: 700, color: C.blue }}>CA {fmtEur(gcCalc.caTotal)}</span>
         <span style={{ fontSize: 13, fontWeight: 700, color: C.green }}>Marge {fmtEur(gcCalc.margeTotal)} ({fmtPct(gcCalc.margePct)})</span>
@@ -528,7 +544,7 @@ function GrandsComptesBloc({ produits, remiseAdd, enseignes, gcMax, setGcQty, se
 
       {/* Bandeau CA / Marge par enseigne (comme les paliers, mais ventilé par enseigne). */}
       {gcCalc.caTotal > 0 && (
-        <div style={{ padding: "8px 16px", overflowX: "auto", borderBottom: `1px solid ${C.border}`, background: "#fffdf9" }}>
+        <div style={{ padding: "8px 16px", overflowX: "auto", borderBottom: `1px solid ${C.border}`, background: accentSoft2 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr>
@@ -568,17 +584,17 @@ function GrandsComptesBloc({ produits, remiseAdd, enseignes, gcMax, setGcQty, se
           <thead>
             {/* Ligne 1 : noms d'enseignes éditables + bouton + */}
             <tr>
-              <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }} colSpan={2}>Enseigne →</th>
+              <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }} colSpan={2}>{channelArrow}</th>
               {enseignes.map((e, ei) => (
                 <th key={ei} style={{ padding: "4px 4px", borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                    <input style={{ ...input, width: 80, textAlign: "center", fontWeight: 700, color: "#b45309" }} value={e.nom} onChange={ev => setGcNom(ei, ev.target.value)} />
-                    <button onClick={() => removeGc(ei)} title="Supprimer cette enseigne" style={{ padding: "2px 5px", background: "none", border: "1px solid #fca5a5", borderRadius: 5, cursor: "pointer", color: "#ef4444", fontSize: 11, fontWeight: 700, lineHeight: 1 }}>×</button>
+                    <input style={{ ...input, width: 90, textAlign: "center", fontWeight: 700, color: accent }} value={e.nom} onChange={ev => setGcNom(ei, ev.target.value)} />
+                    <button onClick={() => removeGc(ei)} title={`Supprimer cette ${channelSing}`} style={{ padding: "2px 5px", background: "none", border: "1px solid #fca5a5", borderRadius: 5, cursor: "pointer", color: "#ef4444", fontSize: 11, fontWeight: 700, lineHeight: 1 }}>×</button>
                   </div>
                 </th>
               ))}
               <th style={{ padding: "4px 4px", borderBottom: `1px solid ${C.border}`, verticalAlign: "middle" }}>
-                <button onClick={addGc} disabled={enseignes.length >= gcMax} title={enseignes.length >= gcMax ? `Maximum ${gcMax} enseignes (limite du template)` : "Ajouter une enseigne GC"} style={{ padding: "4px 8px", background: enseignes.length >= gcMax ? C.border : "#fff7ed", border: "1px dashed #b45309", borderRadius: 6, cursor: enseignes.length >= gcMax ? "default" : "pointer", color: enseignes.length >= gcMax ? C.textMuted : "#b45309", fontSize: 13, fontWeight: 700, opacity: enseignes.length >= gcMax ? 0.4 : 1 }}>+</button>
+                <button onClick={addGc} disabled={enseignes.length >= gcMax} title={enseignes.length >= gcMax ? `Maximum ${gcMax}` : addLabel} style={{ padding: "4px 8px", background: enseignes.length >= gcMax ? C.border : accentSoft, border: `1px dashed ${accent}`, borderRadius: 6, cursor: enseignes.length >= gcMax ? "default" : "pointer", color: enseignes.length >= gcMax ? C.textMuted : accent, fontSize: 13, fontWeight: 700, opacity: enseignes.length >= gcMax ? 0.4 : 1 }}>+</button>
               </th>
             </tr>
             {/* Ligne 2 : remises éditables (%) */}
@@ -608,19 +624,19 @@ function GrandsComptesBloc({ produits, remiseAdd, enseignes, gcMax, setGcQty, se
                   <td style={{ padding: "4px 8px", color: C.textSec, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{p.name}</td>
                   {enseignes.map((e, ei) => (
                     <td key={ei} style={{ padding: "3px 4px", textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
-                      <input type="number" style={{ ...input, width: 60, textAlign: "center", color: "#b45309" }} value={e.qties[k] || ""} onChange={ev => setGcQty(ei, k, parseInt(ev.target.value) || 0)} placeholder="0" />
+                      <input type="number" style={{ ...input, width: 60, textAlign: "center", color: accent }} value={e.qties[k] || ""} onChange={ev => setGcQty(ei, k, parseInt(ev.target.value) || 0)} placeholder="0" />
                     </td>
                   ))}
                   <td style={{ borderBottom: `1px solid ${C.border}` }} />
                 </tr>
               );
             })}
-            {/* Ligne total par enseigne */}
-            <tr style={{ background: "#fff7ed" }}>
-              <td style={{ padding: "5px 8px", fontWeight: 800, color: "#b45309" }} colSpan={2}>TOTAL</td>
+            {/* Ligne total par canal */}
+            <tr style={{ background: accentSoft }}>
+              <td style={{ padding: "5px 8px", fontWeight: 800, color: accent }} colSpan={2}>TOTAL</td>
               {enseignes.map((e, ei) => {
                 const tot = produits.reduce((s, p) => s + (e.qties[keyOf(p)] || 0), 0);
-                return <td key={ei} style={{ padding: "5px 4px", textAlign: "center", fontWeight: 800, color: "#b45309" }}>{fmtNum(tot)}</td>;
+                return <td key={ei} style={{ padding: "5px 4px", textAlign: "center", fontWeight: 800, color: accent }}>{fmtNum(tot)}</td>;
               })}
               <td />
             </tr>
