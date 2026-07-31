@@ -533,74 +533,108 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     ws.getColumn(cols.qte + 2).width = 13;
   }
 
-  // ── BESOINS NON B2B : colonnes ajoutées APRÈS le bloc GC + Total (Maison Dr Hauschka,
-  //    Eshop…). Même structure qu'un GC : 3 colonnes (Qtités/CA/Marges) + remise par canal.
+  // ── BESOINS NON B2B : NOUVEAU TABLEAU sous le bloc GC (pas des colonnes à droite).
+  //    Réplique de la structure GC, décalée de +51 lignes (149→200) : titre, bandeau,
+  //    noms/remises des canaux, en-têtes, synthèse, lignes articles avec VLOOKUP et
+  //    formules CA/Marges. Canaux en colonnes M+ (3 colonnes chacun) comme les GC.
   const nonB2B = payload.canauxNonB2B || [];
   if (nonB2B.length && pal1?.produits?.length) {
-    // Le bloc Total GC se termine à (34 + nbExtras*3) ; on laisse 1 colonne d'espace.
-    const NB_START = 34 + nbExtras * 3 + 2;
-    const NB_COLS = nonB2B.map((_, i) => ({ nom: NB_START + i * 3, qte: NB_START + i * 3, remise: NB_START + i * 3 + 2 }));
+    const OFF = 51; // 149 (bloc GC) → 200 (bloc non B2B), sous les besoins logistiques (185-197)
+    const NB_TITLE = 149 + OFF, NB_BAND = 150 + OFF, NB_NOM = GC_NOM_ROW + OFF, NB_REM = GC_REMISE_ROW + OFF;
+    const NB_HDR = 154 + OFF, NB_UNIT = 155 + OFF, NB_SYN = GC_SYN_ROW + OFF;
+    const NB_FIRST = GC_PV_FIRST + OFF, NB_LAST = GC_ROW_LAST + OFF;
+    const NB_COLS = nonB2B.map((_, i) => ({ qte: 13 + i * 3, remise: 15 + i * 3 }));
+    const lastCanalCol = 12 + nonB2B.length * 3;
 
-    // Styles des colonnes copiés de NewPharma (cols 28/29/30) + largeurs.
-    for (let i = 0; i < nonB2B.length; i++) {
-      const base = NB_START + i * 3;
-      for (let k = 0; k < 3; k++) {
-        for (let r = GC_ROW_TOP; r <= GC_ROW_LAST; r++) {
-          ws.getCell(r, base + k).style = cloneStyle(ws.getCell(r, 28 + k).style) as ExcelJS.Style;
-        }
-        const w = ws.getColumn(28 + k).width; if (w) ws.getColumn(base + k).width = w;
+    // 1) Styles : recopie ligne à ligne du bloc GC (cols A..L + groupe BIOCOOP par canal).
+    for (let r = GC_ROW_TOP; r <= GC_ROW_LAST; r++) {
+      for (let c = 1; c <= 12; c++) ws.getCell(r + OFF, c).style = cloneStyle(ws.getCell(r, c).style) as ExcelJS.Style;
+      for (let i = 0; i < nonB2B.length; i++) for (let k = 0; k < 3; k++) {
+        ws.getCell(r + OFF, 13 + i * 3 + k).style = cloneStyle(ws.getCell(r, 13 + k).style) as ExcelJS.Style;
       }
     }
-    // Bandeau catégorie (ligne 150) « BESOINS NON B2B » fusionné sur toutes les colonnes.
-    ws.mergeCells(150, NB_START, 150, NB_START + nonB2B.length * 3 - 1);
-    const cat = ws.getCell(150, NB_START);
-    cat.value = "BESOINS NON B2B";
-    cat.style = cloneStyle(ws.getCell(150, 25).style) as ExcelJS.Style;
 
-    // En-têtes + formules + remise + nom de chaque canal (mêmes formules que les GC).
+    // 2) Titre + bandeau.
+    ws.getCell(NB_TITLE, 1).value = "BESOINS NON B2B";
+    ws.mergeCells(NB_BAND, 13, NB_BAND, lastCanalCol);
+    const band = ws.getCell(NB_BAND, 13);
+    band.value = "NON B2B";
+    band.style = cloneStyle(ws.getCell(150, 25).style) as ExcelJS.Style;
+
+    // 3) En-têtes fixes (libellés colonnes A..L identiques au bloc GC).
+    for (let c = 1; c <= 12; c++) {
+      const v154 = ws.getCell(154, c).value, v155 = ws.getCell(155, c).value;
+      if (v154 != null && typeof v154 !== "object") ws.getCell(NB_HDR, c).value = v154;
+      if (v155 != null && typeof v155 !== "object") ws.getCell(NB_UNIT, c).value = v155;
+    }
+    ws.getCell(NB_SYN, 1).value = "Synthèse";
+
+    // 4) Canaux : nom, remise, en-têtes, synthèse, formules par ligne.
     NB_COLS.forEach((c, idx) => {
       const ens = nonB2B[idx];
       const qL = colL(c.qte), caL = colL(c.qte + 1), mgL = colL(c.qte + 2);
-      ws.getCell(GC_NOM_ROW, c.nom).value = ens.nom;
-      ws.getCell(GC_REMISE_ROW, c.qte).value = "Remise";
-      ws.getCell(GC_REMISE_ROW, c.remise).value = typeof ens.remise === "number" ? ens.remise : 0;
-      ws.getCell(154, c.qte).value = "Qtités"; ws.getCell(154, c.qte + 1).value = "CA"; ws.getCell(154, c.qte + 2).value = "Marges";
-      ws.getCell(155, c.qte).value = "'#"; ws.getCell(155, c.qte + 1).value = "'€"; ws.getCell(155, c.qte + 2).value = "'€";
-      ws.getCell(GC_SYN_ROW, c.qte).value = { formula: `SUM(${qL}${GC_PV_FIRST}:${qL}${GC_ROW_LAST})` };
-      ws.getCell(GC_SYN_ROW, c.qte + 1).value = { formula: `SUM(${caL}${GC_PV_FIRST}:${caL}${GC_ROW_LAST})` };
-      ws.getCell(GC_SYN_ROW, c.qte + 2).value = { formula: `SUM(${mgL}${GC_PV_FIRST}:${mgL}${GC_ROW_LAST})` };
-      for (let r = GC_PV_FIRST; r <= GC_ROW_LAST; r++) {
-        ws.getCell(r, c.qte + 1).value = { formula: `${qL}${r}*H${r}*(1-I${r})*(1-$${colL(c.remise)}$${GC_REMISE_ROW})` };
+      ws.getCell(NB_NOM, c.qte).value = ens.nom;
+      ws.getCell(NB_REM, c.qte).value = "Remise";
+      ws.getCell(NB_REM, c.remise).value = typeof ens.remise === "number" ? ens.remise : 0;
+      ws.getCell(NB_HDR, c.qte).value = "Qtités"; ws.getCell(NB_HDR, c.qte + 1).value = "CA"; ws.getCell(NB_HDR, c.qte + 2).value = "Marges";
+      ws.getCell(NB_UNIT, c.qte).value = "'#"; ws.getCell(NB_UNIT, c.qte + 1).value = "'€"; ws.getCell(NB_UNIT, c.qte + 2).value = "'€";
+      ws.getCell(NB_SYN, c.qte).value = { formula: `SUM(${qL}${NB_FIRST}:${qL}${NB_LAST})` };
+      ws.getCell(NB_SYN, c.qte + 1).value = { formula: `SUM(${caL}${NB_FIRST}:${caL}${NB_LAST})` };
+      ws.getCell(NB_SYN, c.qte + 2).value = { formula: `SUM(${mgL}${NB_FIRST}:${mgL}${NB_LAST})` };
+      for (let r = NB_FIRST; r <= NB_LAST; r++) {
+        ws.getCell(r, c.qte + 1).value = { formula: `${qL}${r}*H${r}*(1-I${r})*(1-$${colL(c.remise)}$${NB_REM})` };
         ws.getCell(r, c.qte + 2).value = { formula: `${caL}${r}-(F${r}*${qL}${r})` };
       }
       ws.getColumn(c.qte + 1).width = 13; ws.getColumn(c.qte + 2).width = 13;
     });
 
-    // Quantités par article et par canal (même clé que les GC).
+    // 5) Lignes articles : réf + libellé/prix (VLOOKUP ou valeurs) + qtés par canal +
+    //    Qtités totale (col E) + PPC remisé / BRI (cols K/L) comme le gabarit.
+    const qteLettersNb = NB_COLS.map(c => colL(c.qte));
     for (let i = 0; i < GC_PV_COUNT; i++) {
-      const row = GC_PV_FIRST + i, p = pal1.produits[i];
+      const row = NB_FIRST + i, p = pal1.produits[i];
+      const ref = p ? (p.ref || "").trim() : "";
+      if (p) {
+        const horsMapping = p.productId === 0 && !mapRefs.has(ref);
+        setRefText(ws, row, ref);
+        const vente = estVente(p);
+        if (horsMapping) {
+          ws.getCell(row, 2).value = p.name || "";
+          ws.getCell(row, 6).value = round2(p.standardPrice || 0);
+          ws.getCell(row, 8).value = vente ? round2(p.listPrice || 0) : 0;
+          ws.getCell(row, 10).value = vente ? round2(p.ppc || 0) : 0;
+        } else {
+          ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) };
+          ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
+          ws.getCell(row, 8).value = vente ? { formula: vlookup(`A${row}`, 5) } : 0;
+          ws.getCell(row, 10).value = vente ? { formula: vlookup(`A${row}`, 6) } : 0;
+        }
+        ws.getCell(row, 11).value = { formula: `J${row}*(1-I${row})` };
+        ws.getCell(row, 12).value = { formula: `IFERROR(J${row}-K${row},"")` };
+      }
+      ws.getCell(row, 5).value = { formula: qteLettersNb.map(L => `${L}${row}`).join("+") };
+      // Quantités saisies par canal (même clé composite que les GC).
       const gk = gcKey(p);
-      if (!gk) continue;
-      NB_COLS.forEach((c, idx) => {
+      if (gk) NB_COLS.forEach((c, idx) => {
         const q = nonB2B[idx].qties[gk];
         if (q != null) { const cell = ws.getCell(row, c.qte); cell.value = q; cell.numFmt = "0"; }
       });
     }
+    ws.getCell(NB_SYN, 5).value = { formula: `SUM(E${NB_FIRST}:E${NB_LAST})` };
 
-    // Bloc « Total non B2B » (titre + CA/Marges) après les colonnes, styles du gabarit Total.
-    const TB = NB_START + nonB2B.length * 3 + 1;   // spacer col
+    // 6) Bloc « Total non B2B » à droite du tableau (styles du bloc Total du gabarit).
+    const TB = lastCanalCol + 2;
     for (let r = 148; r <= 158; r++) for (let c = 31; c <= 34; c++) {
       const st = totSnap[`${r}:${c}`];
-      if (st) ws.getCell(r, c - 31 + TB).style = cloneStyle(st) as ExcelJS.Style;
+      if (st) ws.getCell(r + OFF, c - 31 + TB).style = cloneStyle(st) as ExcelJS.Style;
     }
-    const B1 = TB + 1, B2 = TB + 2, B3 = TB + 3;
-    ws.getCell(149, B1).value = "Non B2B";
-    ws.getCell(151, B1).value = "Total";
-    ws.getCell(154, B2).value = "CA"; ws.getCell(154, B3).value = "Marges";
-    ws.getCell(155, B2).value = "'€"; ws.getCell(155, B3).value = "'€";
-    ws.getCell(GC_SYN_ROW, B2).value = { formula: NB_COLS.map(c => `${colL(c.qte + 1)}${GC_SYN_ROW}`).join("+") };
-    ws.getCell(GC_SYN_ROW, B3).value = { formula: NB_COLS.map(c => `${colL(c.qte + 2)}${GC_SYN_ROW}`).join("+") };
-    ws.getColumn(B2).width = 13; ws.getColumn(B3).width = 13;
+    ws.getCell(149 + OFF, TB + 1).value = "Non B2B";
+    ws.getCell(151 + OFF, TB + 1).value = "Total";
+    ws.getCell(154 + OFF, TB + 2).value = "CA"; ws.getCell(154 + OFF, TB + 3).value = "Marges";
+    ws.getCell(155 + OFF, TB + 2).value = "'€"; ws.getCell(155 + OFF, TB + 3).value = "'€";
+    ws.getCell(NB_SYN, TB + 2).value = { formula: NB_COLS.map(c => `${colL(c.qte + 1)}${NB_SYN}`).join("+") };
+    ws.getCell(NB_SYN, TB + 3).value = { formula: NB_COLS.map(c => `${colL(c.qte + 2)}${NB_SYN}`).join("+") };
+    ws.getColumn(TB + 2).width = 13; ws.getColumn(TB + 3).width = 13;
   }
 
   // Besoins logistiques (palier 1) : code + libellé en VLOOKUP sur toutes les lignes.
