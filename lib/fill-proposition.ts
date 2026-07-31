@@ -533,13 +533,30 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     ws.getColumn(cols.qte + 2).width = 13;
   }
 
-  // ── BESOINS NON B2B : NOUVEAU TABLEAU sous le bloc GC (pas des colonnes à droite).
-  //    Réplique de la structure GC, décalée de +51 lignes (149→200) : titre, bandeau,
-  //    noms/remises des canaux, en-têtes, synthèse, lignes articles avec VLOOKUP et
-  //    formules CA/Marges. Canaux en colonnes M+ (3 colonnes chacun) comme les GC.
+
+  // Besoins logistiques (palier 1) : code + libellé en VLOOKUP. Les lignes réservées du
+  // gabarit SANS article sont vidées (pas de formules fantômes) pour que le tableau
+  // non B2B puisse se coller juste en dessous sans grand vide.
+  for (let i = 0; i < LOG_PV_COUNT; i++) {
+    const row = LOG_PV_FIRST + i, p = pal1 ? pal1.produits[i] : undefined;
+    if (!p) { ws.getCell(row, 1).value = null; ws.getCell(row, 2).value = null; continue; }
+    const ref = (p.ref || "").trim();
+    const horsMapping = p.productId === 0 && !mapRefs.has(ref);
+    setRefText(ws, row, ref);
+    ws.getCell(row, 2).value = horsMapping ? (p.name || "") : { formula: vlookup(`A${row}`, 2) };
+  }
+  // Vider PLV/Testeurs fixes du gabarit (positions du template vierge : GC 172-178, log 192-197).
+  for (const row of [172, 173, 174, 175, 176, 177, 178]) for (const c of [1, 2, 4, 6, 8, 10]) ws.getCell(row, c).value = null;
+  for (const row of [192, 193, 194, 195, 196, 197]) for (const c of [1, 2, 4]) ws.getCell(row, c).value = null;
+
+  // ── BESOINS NON B2B : NOUVEAU TABLEAU sous le bloc Besoins logistiques.
+  //    Réplique de la structure GC : titre, bandeau, noms/remises des canaux, en-têtes,
+  //    synthèse, lignes articles avec VLOOKUP et formules CA/Marges. Position DYNAMIQUE :
+  //    2 lignes sous le dernier article logistique (pas de grand vide si peu d'articles).
   const nonB2B = payload.canauxNonB2B || [];
   if (nonB2B.length && pal1?.produits?.length) {
-    const OFF = 51; // 149 (bloc GC) → 200 (bloc non B2B), sous les besoins logistiques (185-197)
+    const nbLog = Math.min(pal1.produits.length, LOG_PV_COUNT);
+    const OFF = (LOG_PV_FIRST + nbLog + 2) - 149; // titre du bloc = 2 lignes sous la fin logistique
     const NB_TITLE = 149 + OFF, NB_BAND = 150 + OFF, NB_NOM = GC_NOM_ROW + OFF, NB_REM = GC_REMISE_ROW + OFF;
     const NB_HDR = 154 + OFF, NB_UNIT = 155 + OFF, NB_SYN = GC_SYN_ROW + OFF;
     const NB_FIRST = GC_PV_FIRST + OFF, NB_LAST = GC_ROW_LAST + OFF;
@@ -636,18 +653,6 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     ws.getCell(NB_SYN, TB + 3).value = { formula: NB_COLS.map(c => `${colL(c.qte + 2)}${NB_SYN}`).join("+") };
     ws.getColumn(TB + 2).width = 13; ws.getColumn(TB + 3).width = 13;
   }
-
-  // Besoins logistiques (palier 1) : code + libellé en VLOOKUP sur toutes les lignes.
-  for (let i = 0; i < LOG_PV_COUNT; i++) {
-    const row = LOG_PV_FIRST + i, p = pal1 ? pal1.produits[i] : undefined;
-    const ref = p ? (p.ref || "").trim() : "";
-    const horsMapping = !!p && p.productId === 0 && !mapRefs.has(ref);
-    setRefText(ws, row, ref);
-    ws.getCell(row, 2).value = horsMapping ? (p!.name || "") : { formula: vlookup(`A${row}`, 2) };
-  }
-  // Vider PLV/Testeurs fixes du gabarit (positions du template vierge : GC 172-178, log 192-197).
-  for (const row of [172, 173, 174, 175, 176, 177, 178]) for (const c of [1, 2, 4, 6, 8, 10]) ws.getCell(row, c).value = null;
-  for (const row of [192, 193, 194, 195, 196, 197]) for (const c of [1, 2, 4]) ws.getCell(row, c).value = null;
 }
 
 
