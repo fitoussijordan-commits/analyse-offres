@@ -534,29 +534,24 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   }
 
 
-  // Besoins logistiques (palier 1) : code + libellé en VLOOKUP. Les lignes réservées du
-  // gabarit SANS article sont vidées (pas de formules fantômes) pour que le tableau
-  // non B2B puisse se coller juste en dessous sans grand vide.
+  // Zone « Besoins logistiques » du gabarit (lignes 185-197) : entièrement vidée ici.
+  // Elle n'a ni titre ni en-tête et fait doublon avec l'onglet « Synthèse logistique » ;
+  // sa liste réf/libellé est réécrite À LA FIN, après le bloc non B2B (voir plus bas).
   for (let i = 0; i < LOG_PV_COUNT; i++) {
-    const row = LOG_PV_FIRST + i, p = pal1 ? pal1.produits[i] : undefined;
-    if (!p) { ws.getCell(row, 1).value = null; ws.getCell(row, 2).value = null; continue; }
-    const ref = (p.ref || "").trim();
-    const horsMapping = p.productId === 0 && !mapRefs.has(ref);
-    setRefText(ws, row, ref);
-    ws.getCell(row, 2).value = horsMapping ? (p.name || "") : { formula: vlookup(`A${row}`, 2) };
+    const row = LOG_PV_FIRST + i;
+    ws.getCell(row, 1).value = null; ws.getCell(row, 2).value = null;
   }
   // Vider PLV/Testeurs fixes du gabarit (positions du template vierge : GC 172-178, log 192-197).
   for (const row of [172, 173, 174, 175, 176, 177, 178]) for (const c of [1, 2, 4, 6, 8, 10]) ws.getCell(row, c).value = null;
   for (const row of [192, 193, 194, 195, 196, 197]) for (const c of [1, 2, 4]) ws.getCell(row, c).value = null;
 
-  // ── BESOINS NON B2B : NOUVEAU TABLEAU sous le bloc Besoins logistiques.
+  // ── BESOINS NON B2B : NOUVEAU TABLEAU juste sous le bloc GRANDS COMPTES.
   //    Réplique de la structure GC : titre, bandeau, noms/remises des canaux, en-têtes,
-  //    synthèse, lignes articles avec VLOOKUP et formules CA/Marges. Position DYNAMIQUE :
-  //    2 lignes sous le dernier article logistique (pas de grand vide si peu d'articles).
+  //    synthèse, lignes articles avec VLOOKUP et formules CA/Marges.
   const nonB2B = payload.canauxNonB2B || [];
+  let logistiqueRow = LOG_PV_FIRST; // position de la liste logistique (recalculée si non B2B)
   if (nonB2B.length && pal1?.produits?.length) {
-    const nbLog = Math.min(pal1.produits.length, LOG_PV_COUNT);
-    const OFF = (LOG_PV_FIRST + nbLog + 2) - 149; // titre du bloc = 2 lignes sous la fin logistique
+    const OFF = (GC_ROW_LAST + 3) - 149; // titre du bloc = 3 lignes sous la fin du bloc GC (178)
     const NB_TITLE = 149 + OFF, NB_BAND = 150 + OFF, NB_NOM = GC_NOM_ROW + OFF, NB_REM = GC_REMISE_ROW + OFF;
     const NB_HDR = 154 + OFF, NB_UNIT = 155 + OFF, NB_SYN = GC_SYN_ROW + OFF;
     const NB_FIRST = GC_PV_FIRST + OFF, NB_LAST = GC_ROW_LAST + OFF;
@@ -652,6 +647,24 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     ws.getCell(NB_SYN, TB + 2).value = { formula: NB_COLS.map(c => `${colL(c.qte + 1)}${NB_SYN}`).join("+") };
     ws.getCell(NB_SYN, TB + 3).value = { formula: NB_COLS.map(c => `${colL(c.qte + 2)}${NB_SYN}`).join("+") };
     ws.getColumn(TB + 2).width = 13; ws.getColumn(TB + 3).width = 13;
+    // La liste logistique passe APRÈS ce bloc (3 lignes sous sa dernière ligne d'article).
+    logistiqueRow = NB_LAST + 3;
+  }
+
+  // ── Liste « Besoins logistiques » (réf + libellé), écrite en DERNIER, tout en bas.
+  //    Le détail par mois est dans l'onglet dédié « Synthèse logistique » ; ici on ne
+  //    garde que le rappel des références, avec un titre pour qu'il ne soit plus orphelin.
+  if (pal1?.produits?.length) {
+    ws.getCell(logistiqueRow - 1, 1).value = "Besoins logistiques — références";
+    ws.getCell(logistiqueRow - 1, 1).font = { bold: true, size: 11 };
+    for (let i = 0; i < LOG_PV_COUNT; i++) {
+      const row = logistiqueRow + i, p = pal1.produits[i];
+      if (!p) { ws.getCell(row, 1).value = null; ws.getCell(row, 2).value = null; continue; }
+      const ref = (p.ref || "").trim();
+      const horsMapping = p.productId === 0 && !mapRefs.has(ref);
+      setRefText(ws, row, ref);
+      ws.getCell(row, 2).value = horsMapping ? (p.name || "") : { formula: vlookup(`A${row}`, 2) };
+    }
   }
 }
 
