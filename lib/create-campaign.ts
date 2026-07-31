@@ -36,6 +36,9 @@ export interface PalierSaisi {
   // Remise statut : standard (même % pour toutes les typologies) ou spécifique (gabarit).
   remiseStandard?: boolean;
   remiseStandardTaux?: number; // ex. 0.17
+  // Remises par typologie (7 valeurs, ordre TYPOLOGIES) éditées dans l'Aperçu offre.
+  // Si défini, prime sur remiseStandardTaux / le gabarit (permet des remises fines par statut).
+  remisesTypo?: number[];
   // Remise additionnelle (colonne I) appliquée à tous les produits du palier (ex. 0.15).
   remiseAddTaux?: number;
   // Reco % offres par typologie (7 valeurs, ordre TYPOLOGIES) propre à CE palier, calculée
@@ -375,6 +378,7 @@ export interface ExportPayload {
     code: string; label: string; qtyPacks: number; descriptif?: string;
     remiseStandard?: boolean; remiseStandardTaux?: number; remiseAddTaux?: number;
     pctOffres?: number[]; // % offres reco par typologie (7 valeurs), propre à ce palier
+    remises?: number[];   // remises par typologie (7 valeurs) éditées dans l'aperçu
     produits: Array<{
       ref: string; name: string; productId: number;
       qtyParPack: number;
@@ -402,6 +406,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
       remiseStandardTaux: pal.remiseStandardTaux,
       remiseAddTaux: pal.remiseAddTaux,
       pctOffres: pal.pctOffresReco,
+      remises: pal.remisesTypo,
       produits: arts.map(a => {
         // Tout ce qui n'est PAS "Produit Vente" (UG, Testeur, PLV, Échantillon) est gratuit :
         // prix de vente (listPrice) et PPC forcés à 0 → aucun CA généré. Le coût (standardPrice)

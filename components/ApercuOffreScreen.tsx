@@ -1,8 +1,8 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
-import { loadCampagnesCreees, upsertCampagne } from "@/lib/campaigns";
-import { CampagneCreee, GcEnseigne, GC_ENSEIGNES_DEFAUT, qtyParPack, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse } from "@/lib/create-campaign";
+import { loadCampagnesCreees, upsertCampagne, upsertCampagneCreee } from "@/lib/campaigns";
+import { CampagneCreee, PalierSaisi, ArticleCampagne, GcEnseigne, GC_ENSEIGNES_DEFAUT, qtyParPack, qtyKeyLib, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef, detailPalier, calcGrandsComptes,
@@ -39,10 +39,11 @@ function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
     return {
     code: pal.code, label: pal.label, nbPacks: pal.nbPacks || 0, descriptif: pal.descriptif,
     pcts: (pal as any).pctOffresReco && (pal as any).pctOffresReco.length === 7 ? [...(pal as any).pctOffresReco] : [...DEFAULT_PCTS],
-    // Remise unique du palier (Créer campagne) → répliquée sur les 7 typologies.
-    // Dès qu'un taux est défini (>=0), on l'applique aux 7, même si le flag remiseStandard
-    // n'a pas été (re)stocké. Sinon on garde les remises par défaut du gabarit.
-    remises: pal.remiseStandardTaux != null ? new Array(7).fill(pal.remiseStandardTaux) : [...DEFAULT_REMISES],
+    // Remises par typologie : (1) remisesTypo éditées dans l'Aperçu si présentes,
+    // (2) sinon remise unique du palier répliquée, (3) sinon défauts du gabarit.
+    remises: (pal as any).remisesTypo && (pal as any).remisesTypo.length === 7
+      ? [...(pal as any).remisesTypo]
+      : pal.remiseStandardTaux != null ? new Array(7).fill(pal.remiseStandardTaux) : [...DEFAULT_REMISES],
     remiseAdd: pal.remiseAddTaux != null ? pal.remiseAddTaux : REMISE_ADD_DEFAUT,
     produits: arts.map(a => {
       // Réplique la gratuité : UG / Testeur / PLV / Échantillon → tarif de vente et PPC = 0
@@ -68,6 +69,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
   const [camp, setCamp] = useState<CampagneCreee | null>(null);
   const [paliers, setPaliers] = useState<PalierEdit[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<SubTab>("offre");
   // Grands Comptes : enseignes dynamiques. Template Excel = 6 colonnes max, UI = 10 max.
   const GC_MAX = 10;
@@ -87,6 +89,50 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
   const setGcRemise = (ei: number, remise: number) => setGcEnseignes(es => es.map((e, i) => i === ei ? { ...e, remise } : e));
   const addGc = () => setGcEnseignes(es => es.length >= GC_MAX ? es : [...es, { nom: `GC${es.length + 1}`, remise: 0, qties: {} }]);
   const removeGc = (ei: number) => setGcEnseignes(es => es.filter((_, i) => i !== ei));
+
+  // Reconstruit une CampagneCreee à partir de l'état édité de l'aperçu, pour la sauvegarder
+  // (les modifications se retrouvent alors dans « Créer une campagne »). Les qtés/offre
+  // éditées sont figées en dur (mode manuel), les % et remises par typologie conservés.
+  const buildCampagneFromEdits = (): CampagneCreee | null => {
+    if (!camp) return null;
+    const arts = camp.articles.filter(a => a.ref.trim());
+    const nouveauxPaliers: PalierSaisi[] = paliers.map((pe, pi) => {
+      const orig = camp.paliers[pi] || ({} as PalierSaisi);
+      // Qtés/offre figées par clé article (réf seule si unique, sinon réf#type).
+      const qtyParPack: Record<string, number> = {};
+      arts.forEach((a, j) => {
+        const q = pe.produits[j]?.qtyParPack;
+        if (q != null) qtyParPack[qtyKeyLib(a, arts)] = q;
+      });
+      // Remise unique si les 7 remises sont identiques, sinon on garde le détail par typo.
+      const toutesEgales = pe.remises.every(r => Math.abs(r - pe.remises[0]) < 1e-9);
+      return {
+        ...orig,
+        code: pe.code, label: pe.label, nbPacks: pe.nbPacks, descriptif: pe.descriptif,
+        qtyParPack,
+        nbProduitsPack: undefined,           // les qtés sont désormais figées à la main
+        pctOffresReco: [...pe.pcts],
+        remiseAddTaux: pe.remiseAdd,
+        remisesTypo: [...pe.remises],
+        remiseStandard: toutesEgales,
+        remiseStandardTaux: toutesEgales ? pe.remises[0] : orig.remiseStandardTaux,
+      };
+    });
+    return { ...camp, paliers: nouveauxPaliers, gcEnseignes };
+  };
+
+  const sauvegarder = async () => {
+    const maj = buildCampagneFromEdits();
+    if (!maj) { onToast("Aucune campagne à enregistrer", "error"); return; }
+    setSaving(true);
+    try {
+      await upsertCampagneCreee(maj);
+      setCamp(maj);
+      setSaved(prev => prev.map(c => c.id === maj.id ? maj : c));
+      onToast("Modifications enregistrées — visibles dans « Créer une campagne »", "success");
+    } catch (e: any) { onToast("Erreur enregistrement : " + e.message, "error"); }
+    finally { setSaving(false); }
+  };
   const nom = camp?.nom || "";
 
   // ── Mutations ──────────────────────────────────────────────────────────────
@@ -209,6 +255,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
         <select value={camp?.id || ""} onChange={e => { const c = saved.find(s => s.id === e.target.value); if (c) selectCamp(c); }} style={{ ...input, width: 240, textAlign: "left", fontSize: 13, padding: "7px 10px" }}>
           {saved.map(s => <option key={s.id} value={s.id}>{s.nom || "(sans nom)"}</option>)}
         </select>
+        <button onClick={sauvegarder} disabled={saving} style={{ padding: "8px 16px", background: C.white, border: `1px solid ${C.blue}`, borderRadius: 8, cursor: saving ? "default" : "pointer", fontSize: 13, fontWeight: 600, color: C.blueDark, fontFamily: "inherit", opacity: saving ? 0.6 : 1 }}>{saving ? "Enregistrement…" : "Enregistrer les modifications"}</button>
         <button onClick={validerPourAnalyse} style={{ padding: "8px 16px", background: C.teal, border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit" }}>✓ Valider → suivre la progression</button>
         <button onClick={exporter} disabled={exporting} style={{ padding: "8px 16px", background: C.blue, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "Exporter Excel"}</button>
         <button onClick={exporterAnnuel} disabled={exportingAnnuel} title="Toutes les campagnes : 1 onglet par campagne + synthèse logistique cumulée + synthèse CA annuelle" style={{ padding: "8px 16px", background: C.blueDark, border: "none", borderRadius: 8, cursor: exportingAnnuel ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingAnnuel ? 0.6 : 1 }}>{exportingAnnuel ? "Export…" : "📚 Export annuel (toutes campagnes)"}</button>
@@ -260,7 +307,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
       {tab === "synthese" && <SyntheseTab paliers={paliers} calcPaliers={calcPaliers} gc={gc} />}
 
       <div style={{ fontSize: 12, color: C.textMuted, fontStyle: "italic", paddingBottom: 20 }}>
-        Aperçu en lecture/édition — les modifications ne sont pas sauvegardées. Utilise « Exporter Excel » pour récupérer le fichier avec tes valeurs.
+        Aperçu en édition — clique « Enregistrer les modifications » pour les retrouver dans « Créer une campagne », ou « Exporter Excel » pour le fichier avec tes valeurs.
       </div>
     </div>
     </div>
