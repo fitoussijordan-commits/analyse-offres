@@ -4,7 +4,7 @@ import * as odoo from "@/lib/odoo";
 import {
   CampagneCreee, PalierSaisi, ArticleCampagne, genId,
   analyseCampagneCreee, toExportPayload, qtyParPack, totalPacks, ventilationPalier, TYPES_PRODUIT,
-  GcEnseigne, GC_ENSEIGNES_DEFAUT,
+  GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT,
 } from "@/lib/create-campaign";
 import { loadCampagnesCreees, upsertCampagneCreee, deleteCampagneCreee, loadCampagnesCreeesCorbeille, restoreCampagneCreee, hardDeleteCampagneCreee } from "@/lib/campaigns";
 import { buildSyntheseLogistique } from "@/lib/logistique";
@@ -219,6 +219,16 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   const setGcRemise = (ei: number, remise: number) => setCamp(c => { const g = ensureGc(c); g[ei] = { ...g[ei], remise }; return { ...c, gcEnseignes: g }; });
   const addGc = () => setCamp(c => { const g = ensureGc(c); if (g.length >= GC_MAX) return c; return { ...c, gcEnseignes: [...g, { nom: `GC${g.length + 1}`, remise: 0, qties: {} }] }; });
   const removeGc = (ei: number) => setCamp(c => { const g = ensureGc(c); return { ...c, gcEnseignes: g.filter((_, i) => i !== ei) }; });
+
+  // ── Besoins NON B2B (même structure que GC : nom + remise + quantités par article).
+  const NB2B_MAX = 8;
+  const canauxNb: GcEnseigne[] = camp.canauxNonB2B != null ? camp.canauxNonB2B : CANAUX_NONB2B_DEFAUT;
+  const ensureNb = (c: CampagneCreee): GcEnseigne[] => c.canauxNonB2B != null ? c.canauxNonB2B.map(e => ({ ...e, qties: { ...e.qties } })) : CANAUX_NONB2B_DEFAUT.map(e => ({ ...e, qties: {} }));
+  const setNbQty = (ei: number, key: string, v: number) => setCamp(c => { const g = ensureNb(c); g[ei] = { ...g[ei], qties: { ...g[ei].qties, [key]: v } }; return { ...c, canauxNonB2B: g }; });
+  const setNbNom = (ei: number, nom: string) => setCamp(c => { const g = ensureNb(c); g[ei] = { ...g[ei], nom }; return { ...c, canauxNonB2B: g }; });
+  const setNbRemise = (ei: number, remise: number) => setCamp(c => { const g = ensureNb(c); g[ei] = { ...g[ei], remise }; return { ...c, canauxNonB2B: g }; });
+  const addNb = () => setCamp(c => { const g = ensureNb(c); if (g.length >= NB2B_MAX) return c; return { ...c, canauxNonB2B: [...g, { nom: `Canal ${g.length + 1}`, remise: 0, qties: {} }] }; });
+  const removeNb = (ei: number) => setCamp(c => { const g = ensureNb(c); return { ...c, canauxNonB2B: g.filter((_, i) => i !== ei) }; });
   const setPalierQty = (pi: number, ref: string, val: number | null) =>
     setCamp(c => ({ ...c, paliers: c.paliers.map((p, i) => {
       if (i !== pi) return p;
@@ -966,6 +976,77 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                   {gcEnseignes.map((e, ei) => {
                     const tot = articlesValides.reduce((s, a) => s + (e.qties[qtyKey(a, articlesValides)] || 0), 0);
                     return <td key={ei} style={{ padding: "5px 4px", textAlign: "center", fontWeight: 800, color: "#b45309" }}>{fmtNum(tot)}</td>;
+                  })}
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Bloc BESOINS NON B2B : même structure que GC (Maison Dr Hauschka, Eshop…). */}
+      {articlesValides.length > 0 && (
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+          <div style={{ padding: "12px 16px", background: C.purpleSoft, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: C.purple, color: "#fff", borderRadius: 5, padding: "2px 8px" }}>NON B2B</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Besoins non B2B (canal, remise et quantités éditables, sauvegardés)</span>
+            <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{canauxNb.length} canal{canauxNb.length > 1 ? "aux" : ""}</span>
+          </div>
+          <div style={{ padding: "0 16px 14px", overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }} colSpan={2}>Canal →</th>
+                  {canauxNb.map((e, ei) => (
+                    <th key={ei} style={{ padding: "4px 4px", borderBottom: `1px solid ${C.border}` }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                        <input style={{ ...inputStyle, width: 110, textAlign: "center", fontWeight: 700, color: C.purple, padding: "4px 6px" }} value={e.nom} onChange={ev => setNbNom(ei, ev.target.value)} />
+                        <button onClick={() => removeNb(ei)} title="Supprimer ce canal" style={{ padding: "2px 5px", background: "none", border: `1px solid #fca5a5`, borderRadius: 5, cursor: "pointer", color: "#ef4444", fontSize: 11, fontWeight: 700, lineHeight: 1 }}>×</button>
+                      </div>
+                    </th>
+                  ))}
+                  <th style={{ padding: "4px 4px", borderBottom: `1px solid ${C.border}`, verticalAlign: "middle" }}>
+                    <button onClick={addNb} disabled={canauxNb.length >= NB2B_MAX} title={canauxNb.length >= NB2B_MAX ? `Maximum ${NB2B_MAX} canaux` : "Ajouter un canal non B2B"} style={{ padding: "4px 8px", background: canauxNb.length >= NB2B_MAX ? C.border : C.purpleSoft, border: `1px dashed ${C.purple}`, borderRadius: 6, cursor: canauxNb.length >= NB2B_MAX ? "default" : "pointer", color: canauxNb.length >= NB2B_MAX ? C.textMuted : C.purple, fontSize: 13, fontWeight: 700, opacity: canauxNb.length >= NB2B_MAX ? 0.4 : 1 }}>+</button>
+                  </th>
+                </tr>
+                <tr>
+                  <th style={{ padding: "3px 8px", textAlign: "right", color: C.textMuted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }} colSpan={2}>Remise %</th>
+                  {canauxNb.map((e, ei) => (
+                    <th key={ei} style={{ padding: "3px 4px", textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
+                      <input type="number" step="0.1" style={{ ...inputStyle, width: 64, textAlign: "center", padding: "4px 6px" }} value={Math.round(e.remise * 1000) / 10} onChange={ev => setNbRemise(ei, (parseFloat(ev.target.value) || 0) / 100)} />
+                    </th>
+                  ))}
+                  <th style={{ borderBottom: `1px solid ${C.border}` }} />
+                </tr>
+                <tr>
+                  <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Réf</th>
+                  <th style={{ padding: "5px 8px", textAlign: "left", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Libellé</th>
+                  {canauxNb.map((e, ei) => <th key={ei} style={{ padding: "5px 4px", textAlign: "center", color: C.textMuted, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>Qté</th>)}
+                  <th style={{ borderBottom: `1px solid ${C.border}` }} />
+                </tr>
+              </thead>
+              <tbody>
+                {articlesValides.map((a, ai) => {
+                  const k = qtyKey(a, articlesValides);
+                  return (
+                    <tr key={ai}>
+                      <td style={{ padding: "4px 8px", fontFamily: "monospace", fontSize: 13, borderBottom: `1px solid ${C.border}` }}>{a.ref}</td>
+                      <td style={{ padding: "4px 8px", color: C.textSec, fontSize: 13, borderBottom: `1px solid ${C.border}` }}>{a.name || "—"}{(a.typProd && a.typProd !== "Produit Vente") ? ` (${a.typProd})` : ""}</td>
+                      {canauxNb.map((e, ei) => (
+                        <td key={ei} style={{ padding: "3px 4px", textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
+                          <input type="number" style={{ ...inputStyle, width: 60, textAlign: "center", color: C.purple, padding: "4px 6px" }} value={e.qties[k] || ""} onChange={ev => setNbQty(ei, k, parseInt(ev.target.value) || 0)} placeholder="0" />
+                        </td>
+                      ))}
+                      <td style={{ borderBottom: `1px solid ${C.border}` }} />
+                    </tr>
+                  );
+                })}
+                <tr style={{ background: C.purpleSoft }}>
+                  <td style={{ padding: "5px 8px", fontWeight: 800, color: C.purple }} colSpan={2}>TOTAL</td>
+                  {canauxNb.map((e, ei) => {
+                    const tot = articlesValides.reduce((s, a) => s + (e.qties[qtyKey(a, articlesValides)] || 0), 0);
+                    return <td key={ei} style={{ padding: "5px 4px", textAlign: "center", fontWeight: 800, color: C.purple }}>{fmtNum(tot)}</td>;
                   })}
                   <td />
                 </tr>

@@ -66,6 +66,9 @@ export interface CampagneCreee {
   // Grands Comptes : 6 enseignes, chacune avec sa remise et ses quantités par article (ref→qté).
   // Retranscrites dans le bloc GRANDS COMPTES du fichier Excel (une colonne qté + remise par enseigne).
   gcEnseignes?: GcEnseigne[];
+  // Besoins NON B2B : canaux internes / directs (Maison Dr Hauschka, Eshop…), même structure
+  // que les GC (remise + quantités par article). Colonnes ajoutées après le bloc GC dans l'Excel.
+  canauxNonB2B?: GcEnseigne[];
   createdAt?: string;
 }
 
@@ -83,6 +86,12 @@ export const GC_ENSEIGNES_DEFAUT: GcEnseigne[] = [
   { nom: "Printemps", remise: 0.185, qties: {} },
   { nom: "Place des tendances", remise: 0.15, qties: {} },
   { nom: "NewPharma", remise: 0.20, qties: {} },
+];
+
+// Canaux NON B2B par défaut (2 premiers imposés, l'utilisateur peut en ajouter).
+export const CANAUX_NONB2B_DEFAUT: GcEnseigne[] = [
+  { nom: "Maison Dr Hauschka", remise: 0, qties: {} },
+  { nom: "Eshop", remise: 0, qties: {} },
 ];
 
 // Ordre des 7 typologies du template (= statuts clients Odoo, mêmes noms).
@@ -374,6 +383,7 @@ export function ventilationPalier(articles: ArticleCampagne[], pal: PalierSaisi)
 export interface ExportPayload {
   nom: string;
   gcEnseignes?: GcEnseigne[]; // Grands Comptes : 6 enseignes (qté + remise par article)
+  canauxNonB2B?: GcEnseigne[]; // Besoins non B2B (Maison Dr Hauschka, Eshop…)
   paliers: Array<{
     code: string; label: string; qtyPacks: number; descriptif?: string;
     remiseStandard?: boolean; remiseStandardTaux?: number; remiseAddTaux?: number;
@@ -395,6 +405,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
   return {
     nom: camp.nom,
     gcEnseignes: camp.gcEnseignes,
+    canauxNonB2B: camp.canauxNonB2B,
     paliers: camp.paliers.map(pal => {
       const vent = ventilationPalier(arts, pal);
       return {
