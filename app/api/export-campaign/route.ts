@@ -145,20 +145,28 @@ function buildCommandesNote(wb: ExcelJS.Workbook, catchalls: CatchallResult[]) {
 // ── Toutes Commandes ────────────────────────────────────────────────────────────
 function buildToutesCommandes(wb: ExcelJS.Workbook, results: OffreAnalyse[], catchalls: CatchallResult[]) {
   const ws = wb.addWorksheet("Toutes Commandes", { views: [{ showGridLines: false }] });
-  ws.mergeCells("A1:F1"); const t = ws.getCell("A1"); t.value = "Toutes les commandes — Offres + Notes";
+  ws.mergeCells("A1:H1"); const t = ws.getCell("A1"); t.value = "Toutes les commandes — Offres + Notes";
   t.font = { bold: true, size: 14, color: { argb: "FF" + WHITE } }; t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + DARK } }; t.alignment = { horizontal: "center", vertical: "middle" }; ws.getRow(1).height = 32; ws.getRow(2).height = 6;
-  headRow(ws, ["Commande", "Client", "Source", "Libellé", "Type", "Expédition prévue"], DARK);
+  headRow(ws, ["Commande", "Client", "Source", "Libellé", "Type", "Expédition prévue", "Statut", "CA à venir"], DARK);
   const seen = new Set<string>();
-  const rows: { name: string; partner: string; code: string; label: string; type: string; exp: string }[] = [];
-  for (const r of results) for (const o of r.debugOrders) { const n = o.name.replace(" (note)", ""); if (seen.has(n)) continue; seen.add(n); rows.push({ name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", exp: fmtDateFr(o.dateExpedition) }); }
-  for (const c of catchalls) for (const o of (c.data?.debugOrders ?? [])) { const n = o.name.replace(" (note)", ""); if (seen.has(n)) continue; seen.add(n); rows.push({ name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", exp: fmtDateFr(o.dateExpedition) }); }
+  const rows: { name: string; partner: string; code: string; label: string; type: string; exp: string; avenir: boolean; ca: number }[] = [];
+  for (const r of results) for (const o of r.debugOrders) { const n = o.name.replace(" (note)", ""); if (seen.has(n)) continue; seen.add(n); rows.push({ name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", exp: fmtDateFr(o.dateExpedition), avenir: !o.invoiced, ca: o.ca ?? 0 }); }
+  for (const c of catchalls) for (const o of (c.data?.debugOrders ?? [])) { const n = o.name.replace(" (note)", ""); if (seen.has(n)) continue; seen.add(n); rows.push({ name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", exp: fmtDateFr(o.dateExpedition), avenir: !o.invoiced, ca: o.ca ?? 0 }); }
   rows.sort((a, b) => a.name.localeCompare(b.name));
   rows.forEach((o, i) => {
     const isNote = o.type === "Note"; const bg = isNote ? ORANGE_S : (i % 2 ? LGRAY : WHITE);
-    const row = ws.addRow([o.name, o.partner, o.code, o.label, o.type, o.exp]); row.height = 18;
-    row.eachCell((cell, col) => { dataCell(cell, cell.value, bg, col === 3 || col === 5 || col === 6 ? "center" : "left"); if (col === 3) { cell.font = { bold: true, color: { argb: "FF" + (isNote ? ORANGE : TEAL) }, size: 10 }; cell.numFmt = "@"; } if (col === 5 && isNote) cell.font = { bold: true, color: { argb: "FF" + ORANGE }, size: 10 }; });
+    const row = ws.addRow([o.name, o.partner, o.code, o.label, o.type, o.exp, o.avenir ? "À venir" : "Facturé", o.avenir ? o.ca : null]); row.height = 18;
+    row.eachCell((cell, col) => { dataCell(cell, cell.value, bg, col === 3 || col === 5 || col === 6 || col === 7 ? "center" : col === 8 ? "right" : "left"); if (col === 3) { cell.font = { bold: true, color: { argb: "FF" + (isNote ? ORANGE : TEAL) }, size: 10 }; cell.numFmt = "@"; } if (col === 5 && isNote) cell.font = { bold: true, color: { argb: "FF" + ORANGE }, size: 10 };
+      // Statut de facturation + CA à venir (vide si la commande est déjà facturée).
+      if (col === 7) cell.font = { bold: true, color: { argb: "FF" + (o.avenir ? AMBER : TEAL) }, size: 10 };
+      if (col === 8 && o.avenir) { cell.font = { bold: true, color: { argb: "FF" + AMBER }, size: 10 }; eur(cell); } });
   });
-  ws.columns = [{ width: 16 }, { width: 42 }, { width: 14 }, { width: 34 }, { width: 10 }, { width: 18 }];
+  // Ligne TOTAL du CA à venir.
+  const totalAvenir = rows.filter(r => r.avenir).reduce((s2, r) => s2 + r.ca, 0);
+  const tr = ws.addRow(["TOTAL CA à venir", "", "", "", "", "", `${rows.filter(r => r.avenir).length} cmd`, totalAvenir]); tr.height = 22;
+  tr.eachCell((c, col) => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + AMBER } }; c.font = { bold: true, color: { argb: "FF" + WHITE }, size: 10 }; c.alignment = { horizontal: col === 1 ? "left" : col === 8 ? "right" : "center", vertical: "middle" }; c.border = border(); });
+  eur(tr.getCell(8));
+  ws.columns = [{ width: 16 }, { width: 42 }, { width: 14 }, { width: 34 }, { width: 10 }, { width: 18 }, { width: 12 }, { width: 16 }];
 }
 
 // ── Synthèse Articles ───────────────────────────────────────────────────────────
