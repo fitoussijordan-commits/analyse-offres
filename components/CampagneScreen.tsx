@@ -10,6 +10,8 @@ import { ChartCard, HBarChart, PieChart, SplitBar, fmtEurShort } from "./Campagn
 import { C } from "@/lib/theme";
 const fmtEur = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
 const fmtNum = (n: number) => new Intl.NumberFormat("fr-FR").format(n || 0);
+// Date Odoo "YYYY-MM-DD" (ou datetime) → "JJ/MM/AAAA".
+const fmtDate = (d?: string) => { const m = (d || "").match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : "—"; };
 
 function extractRefs(text: string): string[] {
   const numRefs = text.match(/\d{5,}/g);
@@ -265,7 +267,7 @@ function odooOrderUrl(baseUrl: string, orderId: number): string {
 }
 
 // Construit la liste dédoublonnée des commandes (offres + notes), comme l'onglet Excel "Toutes Commandes"
-interface CmdRow { id: number; name: string; partner: string; code: string; label: string; type: "Offre" | "Note"; ca: number; avenir: boolean; orderTotal: number; }
+interface CmdRow { id: number; name: string; partner: string; code: string; label: string; type: "Offre" | "Note"; ca: number; avenir: boolean; orderTotal: number; dateExpedition?: string; }
 function buildCommandes(result: CampaignResult): CmdRow[] {
   const seen = new Set<string>();
   const rows: CmdRow[] = [];
@@ -274,7 +276,7 @@ function buildCommandes(result: CampaignResult): CmdRow[] {
       const n = o.name.replace(" (note)", "");
       if (seen.has(n)) continue;
       seen.add(n);
-      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", ca: o.ca ?? 0, avenir: !o.invoiced, orderTotal: o.orderTotal ?? 0 });
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", ca: o.ca ?? 0, avenir: !o.invoiced, orderTotal: o.orderTotal ?? 0, dateExpedition: o.dateExpedition });
     }
   }
   for (const c of result.catchalls) {
@@ -282,7 +284,7 @@ function buildCommandes(result: CampaignResult): CmdRow[] {
       const n = o.name.replace(" (note)", "");
       if (seen.has(n)) continue;
       seen.add(n);
-      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", ca: o.ca ?? 0, avenir: !o.invoiced, orderTotal: o.orderTotal ?? 0 });
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", ca: o.ca ?? 0, avenir: !o.invoiced, orderTotal: o.orderTotal ?? 0, dateExpedition: o.dateExpedition });
     }
   }
   return rows.sort((a, b) => a.name.localeCompare(b.name));
@@ -861,7 +863,7 @@ function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: st
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
               <tr style={{ background: C.bg }}>
-                {["Commande", "Client", "Source", "CA à venir", ""].map((h, i) => <th key={i} style={{ padding: "10px 14px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: i === 3 ? "right" : i === 4 ? "center" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
+                {["Commande", "Client", "Source", "Expédition prévue", "CA à venir", ""].map((h, i) => <th key={i} style={{ padding: "10px 14px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: i === 4 ? "right" : i === 5 ? "center" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -870,6 +872,7 @@ function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: st
                   <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.border}`, fontFamily: "monospace" }}>{r.name}</td>
                   <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{r.partner || "—"}</td>
                   <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: r.type === "Note" ? "#f97316" : C.teal, borderBottom: `1px solid ${C.border}`, fontFamily: "monospace" }}>{r.code}</td>
+                  <td style={{ padding: "9px 14px", fontSize: 13, color: r.dateExpedition ? C.textSec : C.textMuted, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{fmtDate(r.dateExpedition)}</td>
                   <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 700, color: C.amber, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtEur(r.ca)}</td>
                   <td style={{ padding: "9px 14px", textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
                     <a href={odooOrderUrl(baseUrl, r.id)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontWeight: 600, color: C.blue, textDecoration: "none", whiteSpace: "nowrap" }} title="Ouvrir dans Odoo">Odoo ↗</a>

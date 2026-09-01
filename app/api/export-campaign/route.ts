@@ -22,6 +22,8 @@ function hdr(ws: ExcelJS.Worksheet, row: number, col: number, value: string, bg:
   if (span) ws.mergeCells(row, col, row, col + span - 1);
 }
 function border(): any { return { top: { style: "thin", color: { argb: "FFE5E7EB" } }, bottom: { style: "thin", color: { argb: "FFE5E7EB" } }, left: { style: "thin", color: { argb: "FFE5E7EB" } }, right: { style: "thin", color: { argb: "FFE5E7EB" } } }; }
+// Date Odoo "YYYY-MM-DD" (ou datetime) → "JJ/MM/AAAA" ; vide si non renseignée.
+function fmtDateFr(d?: string): string { const m = (d || "").match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : ""; }
 function dataCell(cell: ExcelJS.Cell, value: any, bg: string, align: "left" | "center" | "right" = "left") {
   cell.value = value;
   cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + bg } };
@@ -40,7 +42,7 @@ function headRow(ws: ExcelJS.Worksheet, cols: string[], bg: string) {
 interface ProduitCA { ref: string; name: string; qtyVendue: number; ca: number; }
 interface DelegueCA { name: string; qtyVendue: number; ca: number; }
 interface ClientStat { name: string; qtyVendue: number; ca: number; nbCommandes: number; }
-interface DebugOrder { id: number; name: string; partnerName?: string; }
+interface DebugOrder { id: number; name: string; partnerName?: string; ca?: number; invoiced?: boolean; dateExpedition?: string; }
 interface OffreAnalyse { offre: { code: string; label: string }; caTotal: number; qtyTotal: number; produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[]; error: string | null; }
 interface CatchallResult { codeInterne: string; data: { caTotal: number; qtyTotal: number; produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[] } | null; }
 interface Payload {
@@ -143,20 +145,20 @@ function buildCommandesNote(wb: ExcelJS.Workbook, catchalls: CatchallResult[]) {
 // ── Toutes Commandes ────────────────────────────────────────────────────────────
 function buildToutesCommandes(wb: ExcelJS.Workbook, results: OffreAnalyse[], catchalls: CatchallResult[]) {
   const ws = wb.addWorksheet("Toutes Commandes", { views: [{ showGridLines: false }] });
-  ws.mergeCells("A1:E1"); const t = ws.getCell("A1"); t.value = "Toutes les commandes — Offres + Notes";
+  ws.mergeCells("A1:F1"); const t = ws.getCell("A1"); t.value = "Toutes les commandes — Offres + Notes";
   t.font = { bold: true, size: 14, color: { argb: "FF" + WHITE } }; t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + DARK } }; t.alignment = { horizontal: "center", vertical: "middle" }; ws.getRow(1).height = 32; ws.getRow(2).height = 6;
-  headRow(ws, ["Commande", "Client", "Source", "Libellé", "Type"], DARK);
+  headRow(ws, ["Commande", "Client", "Source", "Libellé", "Type", "Expédition prévue"], DARK);
   const seen = new Set<string>();
-  const rows: { name: string; partner: string; code: string; label: string; type: string }[] = [];
-  for (const r of results) for (const o of r.debugOrders) { const n = o.name.replace(" (note)", ""); if (seen.has(n)) continue; seen.add(n); rows.push({ name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre" }); }
-  for (const c of catchalls) for (const o of (c.data?.debugOrders ?? [])) { const n = o.name.replace(" (note)", ""); if (seen.has(n)) continue; seen.add(n); rows.push({ name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note" }); }
+  const rows: { name: string; partner: string; code: string; label: string; type: string; exp: string }[] = [];
+  for (const r of results) for (const o of r.debugOrders) { const n = o.name.replace(" (note)", ""); if (seen.has(n)) continue; seen.add(n); rows.push({ name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", exp: fmtDateFr(o.dateExpedition) }); }
+  for (const c of catchalls) for (const o of (c.data?.debugOrders ?? [])) { const n = o.name.replace(" (note)", ""); if (seen.has(n)) continue; seen.add(n); rows.push({ name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", exp: fmtDateFr(o.dateExpedition) }); }
   rows.sort((a, b) => a.name.localeCompare(b.name));
   rows.forEach((o, i) => {
     const isNote = o.type === "Note"; const bg = isNote ? ORANGE_S : (i % 2 ? LGRAY : WHITE);
-    const row = ws.addRow([o.name, o.partner, o.code, o.label, o.type]); row.height = 18;
-    row.eachCell((cell, col) => { dataCell(cell, cell.value, bg, col === 3 || col === 5 ? "center" : "left"); if (col === 3) { cell.font = { bold: true, color: { argb: "FF" + (isNote ? ORANGE : TEAL) }, size: 10 }; cell.numFmt = "@"; } if (col === 5 && isNote) cell.font = { bold: true, color: { argb: "FF" + ORANGE }, size: 10 }; });
+    const row = ws.addRow([o.name, o.partner, o.code, o.label, o.type, o.exp]); row.height = 18;
+    row.eachCell((cell, col) => { dataCell(cell, cell.value, bg, col === 3 || col === 5 || col === 6 ? "center" : "left"); if (col === 3) { cell.font = { bold: true, color: { argb: "FF" + (isNote ? ORANGE : TEAL) }, size: 10 }; cell.numFmt = "@"; } if (col === 5 && isNote) cell.font = { bold: true, color: { argb: "FF" + ORANGE }, size: 10 }; });
   });
-  ws.columns = [{ width: 16 }, { width: 42 }, { width: 14 }, { width: 34 }, { width: 10 }];
+  ws.columns = [{ width: 16 }, { width: 42 }, { width: 14 }, { width: 34 }, { width: 10 }, { width: 18 }];
 }
 
 // ── Synthèse Articles ───────────────────────────────────────────────────────────

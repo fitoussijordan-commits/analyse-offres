@@ -11,7 +11,9 @@ export interface DelegueCA { userId: number; name: string; qtyVendue: number; ca
 export interface ClientStat { id: number; name: string; qtyVendue: number; ca: number; nbCommandes: number; }
 // Perf d'un produit ventilée par statut client : { statutName -> { qty, ca } }
 export interface ProduitStatut { ref: string; name: string; productId: number; qtyVendue: number; ca: number; parStatut: Record<string, { qty: number; ca: number }>; }
-export interface DebugOrder { id: number; name: string; partnerName?: string; invoiceStatus?: string; ca?: number; invoiced?: boolean; orderTotal?: number; }
+export interface DebugOrder { id: number; name: string; partnerName?: string; invoiceStatus?: string; ca?: number; invoiced?: boolean; orderTotal?: number;
+  // Date d'expédition prévue (champ Odoo studio x_studio_date_dexpdition_prvue, "YYYY-MM-DD").
+  dateExpedition?: string; }
 
 export interface OffreAnalyse {
   offre: { code: string; label: string };
@@ -138,11 +140,11 @@ async function analyseOffre(session: odoo.OdooSession, offre: Offre, filter: Sta
 
   const caByOrder: Record<number, number> = {};
   for (const r of recs) caByOrder[r.orderId] = (caByOrder[r.orderId] || 0) + r.subtotal;
-  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed"], 0);
+  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed", "x_studio_date_dexpdition_prvue"], 0);
   const userByOrder: Record<number, { id: number; name: string }> = {};
   const debugOrders: DebugOrder[] = ords.map((o: any) => {
     if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0 };
+    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0, dateExpedition: o.x_studio_date_dexpdition_prvue || undefined };
   });
 
   // délégués : qté depuis les packs, CA depuis les composants
@@ -157,7 +159,7 @@ async function analyseOffre(session: odoo.OdooSession, offre: Offre, filter: Sta
 // ── Analyse d'une note interne (catchall historique) ──────────────────────────
 async function analyseNote(session: odoo.OdooSession, note: string, excludeOrderIds: number[], excludeOfferCodes: string[], filter: StateFilter, produitRefs: string[]): Promise<{ res: CatchallResult; recs: LineRec[] }> {
   const oDom = orderDomain(filter);
-  const noteOrders = await odoo.searchRead(session, "sale.order", [["x_note_interne", "ilike", note.trim()], ...oDom], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed"], 0);
+  const noteOrders = await odoo.searchRead(session, "sale.order", [["x_note_interne", "ilike", note.trim()], ...oDom], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed", "x_studio_date_dexpdition_prvue"], 0);
   const exclude = new Set(excludeOrderIds);
   let orphans = noteOrders.filter((o: any) => !exclude.has(o.id));
   if (orphans.length && excludeOfferCodes.length) {
@@ -197,7 +199,7 @@ async function analyseNote(session: odoo.OdooSession, note: string, excludeOrder
     .filter((o: any) => matchedOrderIds.has(o.id))
     .map((o: any) => {
       if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-      return { id: o.id, name: `${o.name} (note)`, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0 };
+      return { id: o.id, name: `${o.name} (note)`, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0, dateExpedition: o.x_studio_date_dexpdition_prvue || undefined };
     });
   const um: Record<number, DelegueCA> = {};
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].qtyVendue += r.qty; um[u.id].ca += r.subtotal; }
@@ -225,11 +227,11 @@ async function analyseStandalone(session: odoo.OdooSession, refs: string[], filt
   const orderIds = [...new Set(recs.map(r => r.orderId))];
   const caByOrder: Record<number, number> = {};
   for (const r of recs) caByOrder[r.orderId] = (caByOrder[r.orderId] || 0) + r.subtotal;
-  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed"], 0);
+  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed", "x_studio_date_dexpdition_prvue"], 0);
   const userByOrder: Record<number, { id: number; name: string }> = {};
   const debugOrders: DebugOrder[] = ords.map((o: any) => {
     if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0 };
+    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0, dateExpedition: o.x_studio_date_dexpdition_prvue || undefined };
   });
   const um: Record<number, DelegueCA> = {};
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].qtyVendue += r.qty; um[u.id].ca += r.subtotal; }
