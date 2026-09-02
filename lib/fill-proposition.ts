@@ -253,12 +253,82 @@ function fillSynthese(wb: ExcelJS.Workbook, payload: PropPayload) {
   }
 }
 
+/** Convertit toutes les formules PARTAGÉES du gabarit en formules normales. Obligatoire
+ *  avant d'insérer des lignes : sinon les "clones" perdent leur cellule maître et Excel
+ *  refuse d'ouvrir le fichier ("Shared Formula master must exist"). */
+function unshareFormulas(ws: ExcelJS.Worksheet) {
+  ws.eachRow({ includeEmpty: false }, row => {
+    row.eachCell({ includeEmpty: false }, cell => {
+      const v: any = cell.value;
+      if (v && typeof v === "object" && v.sharedFormula) {
+        try { cell.value = { formula: cell.formula }; } catch { /* laisse tel quel */ }
+      }
+    });
+  });
+}
+
+/** Après une insertion de `n` lignes à la position `at`, décale les références de ligne des
+ *  formules existantes (ExcelJS, contrairement à Excel, ne le fait PAS : sans ça les formules
+ *  du gabarit continuent de pointer sur les anciennes lignes → #VALUE! en cascade).
+ *  Les références absolues ($10) se décalent aussi : une insertion déplace la cellule visée. */
+function shiftFormulaRefs(ws: ExcelJS.Worksheet, at: number, n: number) {
+  const re = /(\$?)([A-Z]{1,3})(\$?)(\d+)/g;
+  ws.eachRow({ includeEmpty: false }, row => {
+    row.eachCell({ includeEmpty: false }, cell => {
+      const v: any = cell.value;
+      if (!v || typeof v !== "object" || typeof v.formula !== "string") return;
+      const shifted = v.formula.replace(re, (m: string, d1: string, col: string, d2: string, rowStr: string) => {
+        const r = parseInt(rowStr, 10);
+        return r >= at ? `${d1}${col}${d2}${r + n}` : m;
+      });
+      if (shifted !== v.formula) cell.value = { formula: shifted };
+    });
+  });
+}
+
 function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: Set<string>) {
   const paliers = (payload.paliers || []).filter(p => p.produits && p.produits.length);
   const used = Math.min(paliers.length, BLOCKS.length);
 
-  for (let b = 0; b < BLOCKS.length; b++) {
-    const blk = BLOCKS[b];
+  // ── Capacité des blocs : le gabarit réserve 20 lignes d'articles par palier. Si une
+  //    campagne en a davantage, on AGRANDIT chaque bloc en insérant les lignes manquantes
+  //    (du dernier bloc vers le premier) et on décale toutes les positions en aval.
+  //    Sans ça, les articles au-delà de la capacité étaient purement et simplement perdus.
+  const blocks = BLOCKS.map(b => ({ ...b }));
+  const gcPos = { top: 149, band: 150, nom: 152, remise: 153, hdr: 154, unit: 155, syn: 157, pvFirst: 159, last: 178 };
+  let logFirst = 185;   // première ligne de la zone « Besoins logistiques » du gabarit
+  const capacite = blocks[0].dataLast - blocks[0].pvFirst + 1;             // 20 dans le gabarit
+  const maxProduits = paliers.length ? Math.max(...paliers.slice(0, blocks.length).map(p => p.produits.length)) : 0;
+  const extra = Math.max(0, maxProduits - capacite);
+
+  if (extra > 0) {
+    unshareFormulas(ws);
+    const styleCols = 34;
+    for (let bi = blocks.length - 1; bi >= 0; bi--) {
+      const at = blocks[bi].dataLast + 1;                                  // insertion en fin de zone data
+      ws.spliceRows(at, 0, ...Array.from({ length: extra }, () => [] as any[]));
+      shiftFormulaRefs(ws, at, extra);   // recale les formules du gabarit sur les nouvelles lignes
+      // Style des nouvelles lignes recopié d'une ligne d'article existante du même bloc.
+      const src = ws.getRow(blocks[bi].pvFirst + 1);
+      for (let k = 0; k < extra; k++) {
+        const dst = ws.getRow(at + k);
+        dst.height = src.height;
+        for (let c = 1; c <= styleCols; c++) dst.getCell(c).style = JSON.parse(JSON.stringify(src.getCell(c).style || {}));
+      }
+      // Décaler tout ce qui se trouve APRÈS le point d'insertion.
+      blocks[bi].dataLast += extra;
+      for (let bj = bi + 1; bj < blocks.length; bj++) {
+        const b = blocks[bj];
+        b.title += extra; b.nbOffresRow += extra; b.nbProduitsRow += extra; b.pvFirst += extra;
+        b.remiseRow += extra; b.nbOffRow += extra; b.synRow += extra; b.dataFirst += extra; b.dataLast += extra;
+      }
+      for (const k of Object.keys(gcPos) as (keyof typeof gcPos)[]) gcPos[k] += extra;
+      logFirst += extra;
+    }
+  }
+
+  for (let b = 0; b < blocks.length; b++) {
+    const blk = blocks[b];
     const pal = b < used ? paliers[b] : null;
 
     if (pal) {
@@ -269,8 +339,7 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(blk.nbOffresRow, 2).value = pal.qtyPacks || 0;
       // Nombre de produits = SUM des "Pdt dans offre" (colonne E) des lignes Produit Vente.
       // Formule (pas une valeur) pour rester cohérent si on édite une qté à la main.
-      const pvLast = blk.pvFirst + blk.pvCount - 1;
-      ws.getCell(blk.nbProduitsRow, 2).value = { formula: `SUM(E${blk.pvFirst}:E${pvLast})` };
+      ws.getCell(blk.nbProduitsRow, 2).value = { formula: `SUM(E${blk.pvFirst}:E${blk.dataLast})` };
 
       // % Offres par typologie : si une reco PROPRE AU PALIER (commandes N-1 du code offre par
       // statut) est fournie, on l'écrit sur la ligne %Offres (= remiseRow-1). Sinon on laisse
@@ -302,7 +371,10 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     // VLOOKUP sur TOUTES les lignes produits (même vides) : ainsi, si l'utilisateur tape une
     // réf dans une ligne vide, libellé/EAN/prix/PPC se remplissent automatiquement depuis le
     // Mapping. B/C/F/H/J sont donc toujours des formules VLOOKUP basées sur la colonne A.
-    for (let i = 0; i < blk.pvCount; i++) {
+    // On parcourt TOUTE la zone d'articles du bloc (pvFirst..dataLast), pas seulement les
+    // 13 premières lignes : sinon les articles au-delà (UG, testeurs, PLV…) étaient perdus.
+    const nbLignes = blk.dataLast - blk.pvFirst + 1;
+    for (let i = 0; i < nbLignes; i++) {
       const row = blk.pvFirst + i;
       const p = pal ? pal.produits[i] : undefined;
       const ref = p ? (p.ref || "").trim() : "";
@@ -326,45 +398,19 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
         ws.getCell(row, 8).value = vente ? { formula: vlookup(`A${row}`, 5) } : 0;
         ws.getCell(row, 10).value = vente ? { formula: vlookup(`A${row}`, 6) } : 0;
       }
-      if (p && p.typProd) ws.getCell(row, 4).value = p.typProd;            // D : Typ. Prod
+      // D : Typ. Prod — vidé si la ligne n'a pas d'article (évite les résidus du gabarit).
+      ws.getCell(row, 4).value = p ? (p.typProd || "Produit Vente") : null;
       ws.getCell(row, 5).value = p ? (p.qtyParPack || 0) : null;          // E : qté/pack
       // I : Remise additionnelle du palier (si renseignée) appliquée à tous les produits.
       if (pal && typeof pal.remiseAddTaux === "number") ws.getCell(row, 9).value = pal.remiseAddTaux;
-      // CA/Marges : toujours en formules (donnent 0 si E vide), pour rester remplissables.
-      writeTypoFormulas(ws, row, blk.remiseRow, blk.nbOffRow);
-      // Masquer les lignes Produit Vente VIDES (sans réf) pour alléger le fichier ; les lignes
-      // remplies restent visibles. La formule/format reste en place (démasquable dans Excel).
-      ws.getRow(row).hidden = !ref;
-    }
-
-    // Lignes PLV / Testeurs / SR (au-delà des Produit Vente, jusqu'à dataLast).
-    // RÈGLE : ne garder QUE les réfs présentes dans la campagne (pal.produits). Toute réf
-    // pré-remplie du gabarit (PANNEAU REGE, PRESENTOIR REGE, SR REGE RETAIL 1…) absente de la
-    // campagne est VIDÉE (réf, libellé, prix, quantités) et la ligne masquée — sinon on
-    // exportait des références d'une ancienne campagne, ce qui n'a aucun sens.
-    const refsCampagne = new Set((pal?.produits || []).map(p => (p.ref || "").trim()).filter(Boolean));
-    for (let row = blk.pvFirst + blk.pvCount; row <= blk.dataLast; row++) {
-      const cur = ws.getCell(row, 1).value;
-      const ref = cur == null ? "" : String(cur).trim();
-      if (!ref) continue;
-      // Résidu du gabarit (réf absente de la campagne) → on vide entièrement la ligne.
-      if (!refsCampagne.has(ref)) {
-        for (let col = 1; col <= 30; col++) ws.getCell(row, col).value = null;
-        ws.getRow(row).hidden = true;
-        continue;
-      }
-      setRefText(ws, row, ref);
-      ws.getCell(row, 2).value = { formula: vlookup(`A${row}`, 2) };
-      ws.getCell(row, 3).value = { formula: vlookup(`A${row}`, 3) };
-      ws.getCell(row, 6).value = { formula: vlookup(`A${row}`, 4) };
-      // Ces lignes sont des PLV / Testeurs / SR (non "Produit Vente") → prix vente + PPC = 0.
-      ws.getCell(row, 8).value = 0;
-      ws.getCell(row, 10).value = 0;
-      // Remise additionnelle du palier (col I) aussi sur ces lignes.
-      if (pal && typeof pal.remiseAddTaux === "number") ws.getCell(row, 9).value = pal.remiseAddTaux;
+      ws.getCell(row, 7).value = { formula: `E${row}*F${row}` };               // G : montant achat
       ws.getCell(row, 11).value = { formula: `J${row}*(1-I${row})` };           // K : PPC remisé
       ws.getCell(row, 12).value = { formula: `IFERROR(J${row}-K${row},"")` };   // L : Montant BRI
-      writeTypoFormulas(ws, row, blk.remiseRow, blk.nbOffRow);                  // M..Z : CA/Marges
+      // CA/Marges : toujours en formules (donnent 0 si E vide), pour rester remplissables.
+      writeTypoFormulas(ws, row, blk.remiseRow, blk.nbOffRow);
+      // Masquer les lignes VIDES (sans réf) pour alléger le fichier ; les lignes remplies
+      // restent visibles. La formule/format reste en place (démasquable dans Excel).
+      ws.getRow(row).hidden = !ref;
     }
 
     // Synthèse : SUM par colonne CA/Marges.
@@ -383,8 +429,8 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
 
   // GRANDS COMPTES : bloc en L149 (template vierge). Code (valeur) + libellé/prix VLOOKUP.
   const pal1 = paliers[0];
-  const GC_PV_FIRST = 159, GC_PV_COUNT = 13, LOG_PV_FIRST = 185, LOG_PV_COUNT = 13;
-  const GC_NOM_ROW = 152, GC_REMISE_ROW = 153;
+  const GC_PV_FIRST = gcPos.pvFirst, GC_PV_COUNT = 13, LOG_PV_FIRST = logFirst, LOG_PV_COUNT = 13;
+  const GC_NOM_ROW = gcPos.nom, GC_REMISE_ROW = gcPos.remise;
   // 6 colonnes GC fixes dans le template (M/P/S/V/Y/AB = cols 13/16/19/22/25/28).
   const GC_ENSEIGNE_COLS = [
     { nom: 13, qte: 13, remise: 15 },
@@ -403,21 +449,21 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   const nbExtras = gcExtras.length;
   const GC_EXTRA_COLS = gcExtras.map((_, i) => ({ nom: 31 + i * 3, qte: 31 + i * 3, remise: 33 + i * 3 }));
   const ALL_GC_COLS = [...GC_ENSEIGNE_COLS, ...GC_EXTRA_COLS];
-  const GC_ROW_TOP = 149, GC_ROW_LAST = 178, GC_SYN_ROW = 157;
+  const GC_ROW_TOP = gcPos.top, GC_ROW_LAST = gcPos.last, GC_SYN_ROW = gcPos.syn;
   const colL = (n: number): string => { let s = ""; while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = (n - 1 - r) / 26; } return s; };
   const cloneStyle = (st: Partial<ExcelJS.Style>): Partial<ExcelJS.Style> => JSON.parse(JSON.stringify(st || {}));
 
   // Snapshot des styles du bloc "Total" du gabarit (cols 31-34 = spacer/titre/CA/Marges),
   // pris AVANT toute modification. Réutilisé pour le Total GC décalé ET le Total non B2B.
   const totSnap: Record<string, Partial<ExcelJS.Style>> = {};
-  for (let r = 148; r <= 170; r++) for (let c = 31; c <= 34; c++) {
+  for (let r = gcPos.top - 1; r <= gcPos.top + 21; r++) for (let c = 31; c <= 34; c++) {
     totSnap[`${r}:${c}`] = cloneStyle(ws.getCell(r, c).style);
   }
 
   if (nbExtras > 0) {
     const shift = nbExtras * 3;
     // 1) Effacer l'ancienne position du bloc Total (cols 31-34) — sera réécrit décalé.
-    for (let r = 148; r <= 170; r++) for (let c = 31; c <= 34; c++) {
+    for (let r = gcPos.top - 1; r <= gcPos.top + 21; r++) for (let c = 31; c <= 34; c++) {
       const cell = ws.getCell(r, c); cell.value = null; cell.style = {} as ExcelJS.Style;
     }
     // 2) Styles des colonnes extra copiés de NewPharma (cols 28/29/30) + largeurs.
@@ -432,16 +478,16 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       }
     }
     // Bandeau catégorie (ligne 150) « Autre GC » fusionné sur toutes les colonnes extra.
-    ws.mergeCells(150, 31, 150, 30 + shift);
-    const cat = ws.getCell(150, 31);
+    ws.mergeCells(gcPos.band, 31, gcPos.band, 30 + shift);
+    const cat = ws.getCell(gcPos.band, 31);
     cat.value = "Autre GC";
-    cat.style = cloneStyle(ws.getCell(150, 25).style) as ExcelJS.Style;
+    cat.style = cloneStyle(ws.getCell(gcPos.band, 25).style) as ExcelJS.Style;
     // 3) En-têtes + formules de chaque colonne extra (mêmes formules que les 6 fixes).
     for (const c of GC_EXTRA_COLS) {
       const qL = colL(c.qte), caL = colL(c.qte + 1), mgL = colL(c.qte + 2);
       ws.getCell(GC_REMISE_ROW, c.qte).value = "Remise";
-      ws.getCell(154, c.qte).value = "Qtités"; ws.getCell(154, c.qte + 1).value = "CA"; ws.getCell(154, c.qte + 2).value = "Marges";
-      ws.getCell(155, c.qte).value = "'#"; ws.getCell(155, c.qte + 1).value = "'€"; ws.getCell(155, c.qte + 2).value = "'€";
+      ws.getCell(gcPos.hdr, c.qte).value = "Qtités"; ws.getCell(gcPos.hdr, c.qte + 1).value = "CA"; ws.getCell(gcPos.hdr, c.qte + 2).value = "Marges";
+      ws.getCell(gcPos.unit, c.qte).value = "'#"; ws.getCell(gcPos.unit, c.qte + 1).value = "'€"; ws.getCell(gcPos.unit, c.qte + 2).value = "'€";
       ws.getCell(GC_SYN_ROW, c.qte).value = { formula: `SUM(${qL}${GC_PV_FIRST}:${qL}${GC_ROW_LAST})` };
       ws.getCell(GC_SYN_ROW, c.qte + 1).value = { formula: `SUM(${caL}${GC_PV_FIRST}:${caL}${GC_ROW_LAST})` };
       ws.getCell(GC_SYN_ROW, c.qte + 2).value = { formula: `SUM(${mgL}${GC_PV_FIRST}:${mgL}${GC_ROW_LAST})` };
@@ -457,24 +503,24 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(r, 5).value = { formula: qteLetters.map(L => `${L}${r}`).join("+") };
     }
     // 5) Bloc "Grands Comptes Total" + "Poids Gratuités" réécrit à sa nouvelle position.
-    for (let r = 148; r <= 170; r++) for (let c = 31; c <= 34; c++) {
+    for (let r = gcPos.top - 1; r <= gcPos.top + 21; r++) for (let c = 31; c <= 34; c++) {
       const st = totSnap[`${r}:${c}`];
       if (st) ws.getCell(r, c + shift).style = st as ExcelJS.Style;
     }
     const T1 = 32 + shift, T2 = 33 + shift, T3 = 34 + shift;
     const caTL = colL(T2), mgTL = colL(T3);
-    ws.getCell(149, T1).value = "Grands Comptes";
-    ws.getCell(151, T1).value = "Total";
-    ws.getCell(154, T2).value = "CA"; ws.getCell(154, T3).value = "Marges";
-    ws.getCell(155, T2).value = "'€"; ws.getCell(155, T3).value = "'€";
+    ws.getCell(gcPos.top, T1).value = "Grands Comptes";
+    ws.getCell(gcPos.top + 2, T1).value = "Total";
+    ws.getCell(gcPos.hdr, T2).value = "CA"; ws.getCell(gcPos.hdr, T3).value = "Marges";
+    ws.getCell(gcPos.unit, T2).value = "'€"; ws.getCell(gcPos.unit, T3).value = "'€";
     ws.getCell(GC_SYN_ROW, T2).value = { formula: ALL_GC_COLS.map(c => `${colL(c.qte + 1)}${GC_SYN_ROW}`).join("+") };
     ws.getCell(GC_SYN_ROW, T3).value = { formula: ALL_GC_COLS.map(c => `${colL(c.qte + 2)}${GC_SYN_ROW}`).join("+") };
-    ws.getCell(161, T2).value = "Poids Gratuités achats :";
-    ws.getCell(161, T3).value = { formula: `SUM(${mgTL}163:${mgTL}166)` };
+    ws.getCell(gcPos.top + 12, T2).value = "Poids Gratuités achats :";
+    ws.getCell(gcPos.top + 12, T3).value = { formula: `SUM(${mgTL}${gcPos.top + 14}:${mgTL}${gcPos.top + 17})` };
     ["UG", "PLV", "Echantillon", "Testeur"].forEach((lbl, gi) => {
-      const r = 163 + gi;
+      const r = gcPos.top + 14 + gi;
       ws.getCell(r, T2).value = lbl;
-      ws.getCell(r, T3).value = { formula: `SUMIF($D$159:$D$178,${caTL}${r},$G$159:$G$178)/$${caTL}$${GC_SYN_ROW}` };
+      ws.getCell(r, T3).value = { formula: `SUMIF($D$${GC_PV_FIRST}:$D$${GC_ROW_LAST},${caTL}${r},$G$${GC_PV_FIRST}:$G$${GC_ROW_LAST})/$${caTL}$${GC_SYN_ROW}` };
     });
     // Largeurs des colonnes CA/Marges du Total (évite "###").
     ws.getColumn(T2).width = 13;
@@ -542,8 +588,8 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     ws.getCell(row, 1).value = null; ws.getCell(row, 2).value = null;
   }
   // Vider PLV/Testeurs fixes du gabarit (positions du template vierge : GC 172-178, log 192-197).
-  for (const row of [172, 173, 174, 175, 176, 177, 178]) for (const c of [1, 2, 4, 6, 8, 10]) ws.getCell(row, c).value = null;
-  for (const row of [192, 193, 194, 195, 196, 197]) for (const c of [1, 2, 4]) ws.getCell(row, c).value = null;
+  for (let row = GC_PV_FIRST + GC_PV_COUNT; row <= GC_ROW_LAST; row++) for (const c of [1, 2, 4, 6, 8, 10]) ws.getCell(row, c).value = null;
+  for (let row = LOG_PV_FIRST + LOG_PV_COUNT - 6; row < LOG_PV_FIRST + LOG_PV_COUNT; row++) for (const c of [1, 2, 4]) ws.getCell(row, c).value = null;
 
   // ── BESOINS NON B2B : NOUVEAU TABLEAU juste sous le bloc GRANDS COMPTES.
   //    Réplique de la structure GC : titre, bandeau, noms/remises des canaux, en-têtes,
@@ -551,9 +597,9 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   const nonB2B = payload.canauxNonB2B || [];
   let logistiqueRow = LOG_PV_FIRST; // position de la liste logistique (recalculée si non B2B)
   if (nonB2B.length && pal1?.produits?.length) {
-    const OFF = (GC_ROW_LAST + 3) - 149; // titre du bloc = 3 lignes sous la fin du bloc GC (178)
-    const NB_TITLE = 149 + OFF, NB_BAND = 150 + OFF, NB_NOM = GC_NOM_ROW + OFF, NB_REM = GC_REMISE_ROW + OFF;
-    const NB_HDR = 154 + OFF, NB_UNIT = 155 + OFF, NB_SYN = GC_SYN_ROW + OFF;
+    const OFF = (GC_ROW_LAST + 3) - gcPos.top; // titre du bloc = 3 lignes sous la fin du bloc GC (178)
+    const NB_TITLE = gcPos.top + OFF, NB_BAND = gcPos.band + OFF, NB_NOM = GC_NOM_ROW + OFF, NB_REM = GC_REMISE_ROW + OFF;
+    const NB_HDR = gcPos.hdr + OFF, NB_UNIT = gcPos.unit + OFF, NB_SYN = GC_SYN_ROW + OFF;
     const NB_FIRST = GC_PV_FIRST + OFF, NB_LAST = GC_ROW_LAST + OFF;
     const NB_COLS = nonB2B.map((_, i) => ({ qte: 13 + i * 3, remise: 15 + i * 3 }));
     const lastCanalCol = 12 + nonB2B.length * 3;
@@ -571,11 +617,11 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     ws.mergeCells(NB_BAND, 13, NB_BAND, lastCanalCol);
     const band = ws.getCell(NB_BAND, 13);
     band.value = "NON B2B";
-    band.style = cloneStyle(ws.getCell(150, 25).style) as ExcelJS.Style;
+    band.style = cloneStyle(ws.getCell(gcPos.band, 25).style) as ExcelJS.Style;
 
     // 3) En-têtes fixes (libellés colonnes A..L identiques au bloc GC).
     for (let c = 1; c <= 12; c++) {
-      const v154 = ws.getCell(154, c).value, v155 = ws.getCell(155, c).value;
+      const v154 = ws.getCell(gcPos.hdr, c).value, v155 = ws.getCell(gcPos.unit, c).value;
       if (v154 != null && typeof v154 !== "object") ws.getCell(NB_HDR, c).value = v154;
       if (v155 != null && typeof v155 !== "object") ws.getCell(NB_UNIT, c).value = v155;
     }
@@ -636,14 +682,14 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
 
     // 6) Bloc « Total non B2B » à droite du tableau (styles du bloc Total du gabarit).
     const TB = lastCanalCol + 2;
-    for (let r = 148; r <= 158; r++) for (let c = 31; c <= 34; c++) {
+    for (let r = gcPos.top - 1; r <= gcPos.top + 9; r++) for (let c = 31; c <= 34; c++) {
       const st = totSnap[`${r}:${c}`];
       if (st) ws.getCell(r + OFF, c - 31 + TB).style = cloneStyle(st) as ExcelJS.Style;
     }
-    ws.getCell(149 + OFF, TB + 1).value = "Non B2B";
-    ws.getCell(151 + OFF, TB + 1).value = "Total";
-    ws.getCell(154 + OFF, TB + 2).value = "CA"; ws.getCell(154 + OFF, TB + 3).value = "Marges";
-    ws.getCell(155 + OFF, TB + 2).value = "'€"; ws.getCell(155 + OFF, TB + 3).value = "'€";
+    ws.getCell(gcPos.top + OFF, TB + 1).value = "Non B2B";
+    ws.getCell(gcPos.top + 2 + OFF, TB + 1).value = "Total";
+    ws.getCell(gcPos.hdr + OFF, TB + 2).value = "CA"; ws.getCell(gcPos.hdr + OFF, TB + 3).value = "Marges";
+    ws.getCell(gcPos.unit + OFF, TB + 2).value = "'€"; ws.getCell(gcPos.unit + OFF, TB + 3).value = "'€";
     ws.getCell(NB_SYN, TB + 2).value = { formula: NB_COLS.map(c => `${colL(c.qte + 1)}${NB_SYN}`).join("+") };
     ws.getCell(NB_SYN, TB + 3).value = { formula: NB_COLS.map(c => `${colL(c.qte + 2)}${NB_SYN}`).join("+") };
     ws.getColumn(TB + 2).width = 13; ws.getColumn(TB + 3).width = 13;
