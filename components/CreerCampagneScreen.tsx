@@ -112,6 +112,10 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   const [corbeille, setCorbeille] = useState<CampagneCreee[]>([]);
   const [showCorbeille, setShowCorbeille] = useState(false);
   const [openInfoPalier, setOpenInfoPalier] = useState<number | null>(null);
+  // Duplication : id de la campagne en cours de duplication + nom saisi.
+  const [dupId, setDupId] = useState<string | null>(null);
+  const [dupNom, setDupNom] = useState("");
+  const [dupSaving, setDupSaving] = useState(false);
 
   useEffect(() => { void reload(); }, []);
   // Charger le brouillon transféré depuis l'analyse (préco N+1), une seule fois.
@@ -293,6 +297,32 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
     }
   };
   const supprimer = async (id: string) => { try { await deleteCampagneCreee(id); await reload(); onToast("Déplacée dans la corbeille", "success"); } catch (e: any) { onToast(e.message, "error"); } };
+
+  // ── Duplication d'une campagne : copie PROFONDE (articles, paliers, GC, non B2B) sous un
+  //    nouvel id et un nouveau nom. La copie est sauvegardée puis chargée à l'écran.
+  const dupliquer = async (src: CampagneCreee, nouveauNom: string) => {
+    const nom = nouveauNom.trim();
+    if (!nom) { onToast("Donne un nom à la copie", "error"); return; }
+    setDupSaving(true);
+    try {
+      const copie: CampagneCreee = {
+        ...src,
+        id: genId(),
+        nom,
+        createdAt: undefined,
+        articles: src.articles.map(a => ({ ...a })),
+        paliers: src.paliers.map(p => ({ ...p, qtyParPack: { ...p.qtyParPack }, ...(p.pctOffresReco ? { pctOffresReco: [...p.pctOffresReco] } : {}), ...(p.remisesTypo ? { remisesTypo: [...p.remisesTypo] } : {}) })),
+        ...(src.gcEnseignes ? { gcEnseignes: src.gcEnseignes.map(e => ({ ...e, qties: { ...e.qties } })) } : {}),
+        ...(src.canauxNonB2B ? { canauxNonB2B: src.canauxNonB2B.map(e => ({ ...e, qties: { ...e.qties } })) } : {}),
+      };
+      await upsertCampagneCreee(copie);
+      await reload();
+      setCamp(copie); setAnalysed(false);
+      setDupId(null); setDupNom("");
+      onToast(`« ${nom} » créée à partir de « ${src.nom} »`, "success");
+    } catch (e: any) { onToast("Erreur duplication : " + e.message, "error"); }
+    finally { setDupSaving(false); }
+  };
   const restaurer = async (id: string) => { try { await restoreCampagneCreee(id); await reload(); onToast("Campagne restaurée", "success"); } catch (e: any) { onToast(e.message, "error"); } };
   const supprimerDefinitif = async (c: CampagneCreee) => {
     if (!window.confirm(`Supprimer DÉFINITIVEMENT « ${c.nom || "(sans nom)"} » ? Cette action est irréversible.`)) return;
@@ -440,11 +470,27 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             <button onClick={exporterMulti} disabled={exportingMulti || selected.size === 0} style={{ padding: "7px 14px", background: selected.size ? C.teal : C.border, border: "none", borderRadius: 8, cursor: exportingMulti || !selected.size ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingMulti ? 0.6 : 1 }}>{exportingMulti ? "Export…" : `Exporter sélection (${selected.size}) + synthèse logistique`}</button>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {savedFiltered.map(s => (
+            {savedFiltered.map(s => dupId === s.id ? (
+              // Mode duplication : saisie du nom de la copie (Entrée = valider, Échap = annuler).
+              <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, background: C.blueSoft, border: `1px solid ${C.blue}`, borderRadius: 8, padding: "5px 8px", fontSize: 12 }}>
+                <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: "nowrap" }}>Copie de « {s.nom} » →</span>
+                <input
+                  autoFocus
+                  value={dupNom}
+                  onChange={e => setDupNom(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") dupliquer(s, dupNom); if (e.key === "Escape") { setDupId(null); setDupNom(""); } }}
+                  placeholder="Nom de la nouvelle campagne"
+                  style={{ ...inputStyle, width: 230, padding: "4px 8px", fontSize: 12 }}
+                />
+                <button onClick={() => dupliquer(s, dupNom)} disabled={dupSaving} style={{ padding: "4px 10px", background: C.blue, border: "none", borderRadius: 6, cursor: dupSaving ? "default" : "pointer", color: "#fff", fontSize: 11.5, fontWeight: 600, fontFamily: "inherit", opacity: dupSaving ? 0.6 : 1 }}>{dupSaving ? "…" : "Créer"}</button>
+                <button onClick={() => { setDupId(null); setDupNom(""); }} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 11.5, fontFamily: "inherit" }}>Annuler</button>
+              </div>
+            ) : (
               <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, background: selected.has(s.id) ? C.tealSoft : C.white, border: `1px solid ${selected.has(s.id) ? C.teal : C.border}`, borderRadius: 8, padding: "5px 8px 5px 8px", fontSize: 12 }}>
                 <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)} style={{ cursor: "pointer" }} />
                 <button onClick={() => charger(s)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>{s.nom || "(sans nom)"}</button>
                 <span style={{ fontSize: 10, color: C.textMuted, background: C.bg, borderRadius: 4, padding: "1px 5px" }}>{yearOf(s)}</span>
+                <button onClick={() => { setDupId(s.id); setDupNom(`${s.nom || "Campagne"} (copie)`); }} title="Dupliquer cette campagne" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.blue, fontSize: 11.5, fontWeight: 600, fontFamily: "inherit" }}>Dupliquer</button>
                 <button onClick={() => supprimer(s.id)} title="Mettre à la corbeille" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 14 }}>×</button>
               </div>
             ))}
