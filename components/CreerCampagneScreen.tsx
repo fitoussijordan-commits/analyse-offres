@@ -467,30 +467,45 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             </select>
             <span style={{ fontSize: 12, color: C.textMuted }}>Coche celles à inclure dans l'export annuel.</span>
             <div style={{ flex: 1 }} />
+            {/* Duplication : active quand UNE seule campagne est cochée. */}
+            <button
+              onClick={() => {
+                const s = saved.find(c => c.id === [...selected][0]);
+                if (s) { setDupId(s.id); setDupNom(`${s.nom || "Campagne"} (copie)`); }
+              }}
+              disabled={selected.size !== 1}
+              title={selected.size === 1 ? "Dupliquer la campagne cochée" : "Coche exactement une campagne pour la dupliquer"}
+              style={{ padding: "7px 14px", background: C.white, border: `1px solid ${selected.size === 1 ? C.blue : C.border}`, borderRadius: 8, cursor: selected.size === 1 ? "pointer" : "default", fontSize: 12.5, fontWeight: 600, color: selected.size === 1 ? C.blueDark : C.textMuted, fontFamily: "inherit", opacity: selected.size === 1 ? 1 : 0.55 }}
+            >Dupliquer</button>
             <button onClick={exporterMulti} disabled={exportingMulti || selected.size === 0} style={{ padding: "7px 14px", background: selected.size ? C.teal : C.border, border: "none", borderRadius: 8, cursor: exportingMulti || !selected.size ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingMulti ? 0.6 : 1 }}>{exportingMulti ? "Export…" : `Exporter sélection (${selected.size}) + synthèse logistique`}</button>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {savedFiltered.map(s => dupId === s.id ? (
-              // Mode duplication : saisie du nom de la copie (Entrée = valider, Échap = annuler).
-              <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, background: C.blueSoft, border: `1px solid ${C.blue}`, borderRadius: 8, padding: "5px 8px", fontSize: 12 }}>
-                <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: "nowrap" }}>Copie de « {s.nom} » →</span>
+
+          {/* Barre de duplication : nom de la copie (Entrée = valider, Échap = annuler). */}
+          {dupId && (() => {
+            const src = saved.find(c => c.id === dupId);
+            if (!src) return null;
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "8px 12px", background: C.blueSoft, border: `1px solid ${C.blue}`, borderRadius: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, color: C.textSec, whiteSpace: "nowrap" }}>Dupliquer « <b>{src.nom}</b> » sous le nom :</span>
                 <input
                   autoFocus
                   value={dupNom}
                   onChange={e => setDupNom(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") dupliquer(s, dupNom); if (e.key === "Escape") { setDupId(null); setDupNom(""); } }}
+                  onKeyDown={e => { if (e.key === "Enter") dupliquer(src, dupNom); if (e.key === "Escape") { setDupId(null); setDupNom(""); } }}
                   placeholder="Nom de la nouvelle campagne"
-                  style={{ ...inputStyle, width: 230, padding: "4px 8px", fontSize: 12 }}
+                  style={{ ...inputStyle, flex: 1, minWidth: 240, padding: "6px 10px", fontSize: 12.5 }}
                 />
-                <button onClick={() => dupliquer(s, dupNom)} disabled={dupSaving} style={{ padding: "4px 10px", background: C.blue, border: "none", borderRadius: 6, cursor: dupSaving ? "default" : "pointer", color: "#fff", fontSize: 11.5, fontWeight: 600, fontFamily: "inherit", opacity: dupSaving ? 0.6 : 1 }}>{dupSaving ? "…" : "Créer"}</button>
-                <button onClick={() => { setDupId(null); setDupNom(""); }} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 11.5, fontFamily: "inherit" }}>Annuler</button>
+                <button onClick={() => dupliquer(src, dupNom)} disabled={dupSaving} style={{ padding: "6px 14px", background: C.blue, border: "none", borderRadius: 7, cursor: dupSaving ? "default" : "pointer", color: "#fff", fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", opacity: dupSaving ? 0.6 : 1 }}>{dupSaving ? "Création…" : "Créer la copie"}</button>
+                <button onClick={() => { setDupId(null); setDupNom(""); }} style={{ ...btnGhost, padding: "6px 12px" }}>Annuler</button>
               </div>
-            ) : (
+            );
+          })()}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {savedFiltered.map(s => (
               <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, background: selected.has(s.id) ? C.tealSoft : C.white, border: `1px solid ${selected.has(s.id) ? C.teal : C.border}`, borderRadius: 8, padding: "5px 8px 5px 8px", fontSize: 12 }}>
                 <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)} style={{ cursor: "pointer" }} />
                 <button onClick={() => charger(s)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>{s.nom || "(sans nom)"}</button>
                 <span style={{ fontSize: 10, color: C.textMuted, background: C.bg, borderRadius: 4, padding: "1px 5px" }}>{yearOf(s)}</span>
-                <button onClick={() => { setDupId(s.id); setDupNom(`${s.nom || "Campagne"} (copie)`); }} title="Dupliquer cette campagne" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.blue, fontSize: 11.5, fontWeight: 600, fontFamily: "inherit" }}>Dupliquer</button>
                 <button onClick={() => supprimer(s.id)} title="Mettre à la corbeille" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 14 }}>×</button>
               </div>
             ))}
