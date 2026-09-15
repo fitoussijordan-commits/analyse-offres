@@ -1,12 +1,14 @@
-// Client Supabase léger — REST API sans dépendance externe
-const BASE = 'https://fcjtntvuuhmrqgafdsjl.supabase.co/rest/v1'
-const KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZjanRudHZ1dWhtcnFnYWZkc2psIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MTI2OTYsImV4cCI6MjA5MDA4ODY5Nn0.dx8b_rkv7Lt-9K-xGq9-z9OnLsolFNnWJfoTTA8re7M'
+// Client Supabase léger — passe par la passerelle serveur /api/db (aucune clé côté navigateur).
+// Chaque requête porte la session Odoo ; le serveur la vérifie puis relaie vers Supabase.
+const BASE = '/api/db'
 
-const H: Record<string, string> = {
-  apikey: KEY,
-  Authorization: `Bearer ${KEY}`,
-  'Content-Type': 'application/json',
+function odooSessionId(): string {
+  try { return JSON.parse(localStorage.getItem('ao_session') || 'null')?.sessionId || '' } catch { return '' }
+}
+
+// En-têtes recalculés à chaque appel (la session peut changer après une reconnexion).
+function hdrs(extra: Record<string, string> = {}): Record<string, string> {
+  return { 'Content-Type': 'application/json', 'x-odoo-session': odooSessionId(), ...extra }
 }
 
 function buildUrl(table: string, filters: string[], order: string | null, select: string) {
@@ -46,7 +48,7 @@ class MutationBuilder {
     if (this.filters.length) url += '?' + this.filters.join('&')
     fetch(url, {
       method: this.method,
-      headers: { ...H, Prefer: 'return=minimal' },
+      headers: hdrs({ Prefer: 'return=minimal' }),
       body: this.method === 'PATCH' ? JSON.stringify(this.body) : undefined,
     })
       .then(async res => {
@@ -83,7 +85,7 @@ class SelectBuilder {
   }
 
   then(resolve: (v: { data: any; error: any }) => void) {
-    fetch(buildUrl(this.table, this._filters, this._order, this._select), { headers: H })
+    fetch(buildUrl(this.table, this._filters, this._order, this._select), { headers: hdrs() })
       .then(async res => {
         if (!res.ok) { const t = await res.text(); return resolve({ data: null, error: { message: t } }) }
         resolve({ data: await res.json(), error: null })
@@ -95,7 +97,7 @@ class SelectBuilder {
   upsert(body: object | object[], _opts?: { onConflict?: string }): Promise<{ error: any }> {
     return fetch(`${BASE}/${this.table}`, {
       method: 'POST',
-      headers: { ...H, Prefer: 'resolution=merge-duplicates,return=minimal' },
+      headers: hdrs({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
       body: JSON.stringify(body),
     })
       .then(async res => {

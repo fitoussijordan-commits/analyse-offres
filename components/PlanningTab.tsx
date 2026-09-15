@@ -188,7 +188,8 @@ export default function PlanningTab({ onToast }: Props) {
   const exportExcel = async () => {
     setExporting(true)
     try {
-      const res = await fetch(`/api/export-planning?year=${year}`)
+      const sessionId = (() => { try { return JSON.parse(localStorage.getItem('ao_session') || 'null')?.sessionId || '' } catch { return '' } })()
+      const res = await fetch(`/api/export-planning?year=${year}`, { headers: { 'x-odoo-session': sessionId } })
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`)
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)

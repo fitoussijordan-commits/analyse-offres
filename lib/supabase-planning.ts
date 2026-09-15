@@ -1,18 +1,14 @@
-// Client Supabase léger (REST API, pas de dépendance externe)
-const SUPABASE_URL = 'https://fcjtntvuuhmrqgafdsjl.supabase.co/rest/v1'
-const SUPABASE_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZjanRudHZ1dWhtcnFnYWZkc2psIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MTI2OTYsImV4cCI6MjA5MDA4ODY5Nn0.dx8b_rkv7Lt-9K-xGq9-z9OnLsolFNnWJfoTTA8re7M'
+// Client Supabase léger — passe par la passerelle serveur /api/db (aucune clé côté navigateur).
+const SUPABASE_URL = '/api/db'
 
-const H: Record<string, string> = {
-  apikey: SUPABASE_KEY,
-  Authorization: `Bearer ${SUPABASE_KEY}`,
-  'Content-Type': 'application/json',
+function odooSessionId(): string {
+  try { return JSON.parse(localStorage.getItem('ao_session') || 'null')?.sessionId || '' } catch { return '' }
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${SUPABASE_URL}${path}`, {
     ...init,
-    headers: { ...H, ...(init?.headers as Record<string, string> | undefined) },
+    headers: { 'Content-Type': 'application/json', 'x-odoo-session': odooSessionId(), ...(init?.headers as Record<string, string> | undefined) },
   })
   if (!res.ok) {
     const text = await res.text()

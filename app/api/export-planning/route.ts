@@ -4,20 +4,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
+import { sbAdminGet } from "@/lib/server/supabase-admin";
+import { requireOdooSession } from "@/lib/server/odoo-auth";
 
 export const maxDuration = 30;
 
-const SUPABASE_URL = "https://fcjtntvuuhmrqgafdsjl.supabase.co/rest/v1";
-const SUPABASE_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZjanRudHZ1dWhtcnFnYWZkc2psIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MTI2OTYsImV4cCI6MjA5MDA4ODY5Nn0.dx8b_rkv7Lt-9K-xGq9-z9OnLsolFNnWJfoTTA8re7M";
-
-const H = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
-
-async function sbGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${SUPABASE_URL}${path}`, { headers: H });
-  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
-  return res.json();
-}
+async function sbGet<T>(path: string): Promise<T> { return sbAdminGet<T>(path); }
 
 // ── Couleurs ──────────────────────────────────────────────────────────────────
 const TEAL = "0D9488";
@@ -52,6 +44,8 @@ function thin() {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await requireOdooSession(req);
+  if (auth instanceof NextResponse) return auth;
   try {
     const year = Number(new URL(req.url).searchParams.get("year")) || new Date().getFullYear();
 
