@@ -505,7 +505,50 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
 
   // GRANDS COMPTES : bloc en L149 (template vierge). Code (valeur) + libellé/prix VLOOKUP.
   const pal1 = paliers[0];
-  const GC_PV_FIRST = gcPos.pvFirst, GC_PV_COUNT = 13, LOG_PV_FIRST = logFirst, LOG_PV_COUNT = 13;
+
+  // Le bloc GC du gabarit a 20 lignes d'articles (159-178). Au-delà, les références en trop
+  // étaient perdues dans GC, Non B2B et la liste logistique : on insère les lignes manquantes
+  // (formules recopiées de la dernière ligne) et on étend les SUM/SUMIF qui couvraient 159:178.
+  const nbArticlesGc = pal1?.produits?.length || 0;
+  const extraGc = Math.max(0, nbArticlesGc - (gcPos.last - gcPos.pvFirst + 1));
+  if (extraGc > 0) {
+    unshareFormulas(ws);
+    const srcRow = gcPos.last, oldLast = gcPos.last, at = gcPos.last + 1;
+    const src = ws.getRow(srcRow);
+    const srcCells: { value: any; style: any }[] = [];
+    for (let c = 1; c <= 40; c++) {
+      const cell = src.getCell(c); const v: any = cell.value;
+      srcCells.push({ value: v && typeof v === "object" && v.formula ? { formula: v.formula } : v, style: JSON.parse(JSON.stringify(cell.style || {})) });
+    }
+    ws.spliceRows(at, 0, ...Array.from({ length: extraGc }, () => [] as any[]));
+    shiftFormulaRefs(ws, at, extraGc);
+    for (let k = 1; k <= extraGc; k++) {
+      const dst = ws.getRow(srcRow + k);
+      dst.height = src.height;
+      srcCells.forEach((sc, ci) => {
+        const cell = dst.getCell(ci + 1);
+        cell.style = JSON.parse(JSON.stringify(sc.style));
+        cell.value = sc.value && typeof sc.value === "object" && typeof sc.value.formula === "string"
+          ? { formula: sc.value.formula.replace(/(\$?[A-Z]{1,3}\$?)(\d+)/g, (m: string, col: string, rs: string) => +rs === srcRow ? `${col}${srcRow + k}` : m) }
+          : (sc.value ?? null);
+      });
+    }
+    const newLast = oldLast + extraGc;
+    const plage = new RegExp(`(\\$?[A-Z]{1,3}\\$?)${gcPos.pvFirst}:(\\$?[A-Z]{1,3}\\$?)${oldLast}(?!\\d)`, "g");
+    ws.eachRow({ includeEmpty: false }, row => row.eachCell({ includeEmpty: false }, cell => {
+      const v: any = cell.value;
+      if (v && typeof v === "object" && typeof v.formula === "string" && plage.test(v.formula)) {
+        plage.lastIndex = 0;
+        cell.value = { formula: v.formula.replace(plage, `$1${gcPos.pvFirst}:$2${newLast}`) };
+      }
+      plage.lastIndex = 0;
+    }));
+    gcPos.last = newLast;
+    logFirst += extraGc;
+  }
+
+  // GC_PV_COUNT = toutes les lignes d'articles du bloc (plus seulement les 13 "Produit Vente").
+  const GC_PV_FIRST = gcPos.pvFirst, GC_PV_COUNT = gcPos.last - gcPos.pvFirst + 1, LOG_PV_FIRST = logFirst, LOG_PV_COUNT = 13;
   const GC_NOM_ROW = gcPos.nom, GC_REMISE_ROW = gcPos.remise;
   // 6 colonnes GC fixes dans le template (M/P/S/V/Y/AB = cols 13/16/19/22/25/28).
   const GC_ENSEIGNE_COLS = [
@@ -635,6 +678,9 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 10).value = venteGC ? { formula: vlookup(`A${row}`, 6) } : 0;
     }
     // Grands Comptes : qté pour toutes les enseignes (formules CA/Marges des extras déjà posées).
+    ws.getCell(row, 4).value = p ? (p.typProd || "Produit Vente") : null;   // D : sert au « Poids gratuités »
+    if (!p) for (const c of [2, 6, 8, 10]) ws.getCell(row, c).value = null;
+    else ws.getCell(row, 11).value = { formula: `J${row}*(1-I${row})` };      // K : absent du gabarit après la ligne 13
     const gk = gcKey(p);
     if (gk && allGcEnseignes.length) {
       ALL_GC_COLS.forEach((cols, idx) => {
@@ -664,7 +710,6 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
     ws.getCell(row, 1).value = null; ws.getCell(row, 2).value = null;
   }
   // Vider PLV/Testeurs fixes du gabarit (positions du template vierge : GC 172-178, log 192-197).
-  for (let row = GC_PV_FIRST + GC_PV_COUNT; row <= GC_ROW_LAST; row++) for (const c of [1, 2, 4, 6, 8, 10]) ws.getCell(row, c).value = null;
   for (let row = LOG_PV_FIRST + LOG_PV_COUNT - 6; row < LOG_PV_FIRST + LOG_PV_COUNT; row++) for (const c of [1, 2, 4]) ws.getCell(row, c).value = null;
 
   // ── BESOINS NON B2B : NOUVEAU TABLEAU juste sous le bloc GRANDS COMPTES.
@@ -779,7 +824,7 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   if (pal1?.produits?.length) {
     ws.getCell(logistiqueRow - 1, 1).value = "Besoins logistiques — références";
     ws.getCell(logistiqueRow - 1, 1).font = { bold: true, size: 11 };
-    for (let i = 0; i < LOG_PV_COUNT; i++) {
+    for (let i = 0; i < Math.max(LOG_PV_COUNT, pal1.produits.length); i++) {
       const row = logistiqueRow + i, p = pal1.produits[i];
       if (!p) { ws.getCell(row, 1).value = null; ws.getCell(row, 2).value = null; continue; }
       const ref = (p.ref || "").trim();
