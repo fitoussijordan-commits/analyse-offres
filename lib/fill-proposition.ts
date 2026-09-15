@@ -145,8 +145,8 @@ export function fillPropositionWorkbook(wb: ExcelJS.Workbook, payload: PropPaylo
   const ws = wb.getWorksheet(PROP_SHEET);
   if (!ws) return;
   const mapRefs = fillMapping(wb, payload);
-  fillProposition(ws, payload, mapRefs);
-  fillSynthese(wb, payload);
+  const blocks = fillProposition(ws, payload, mapRefs);
+  fillSynthese(wb, payload, blocks);
 }
 
 const SYNTHESE_SHEET = "Synthese";
@@ -171,7 +171,7 @@ function norm(s: string): string {
  *    "Offres retail+Institut" (E) = besoin total = somme(qté/pack × nb packs) sur les paliers ;
  *    TOTAL (K) = somme E:J. Les colonnes GC/MDRH/ESHOP/DC/Marketing restent vides (saisie main).
  */
-function fillSynthese(wb: ExcelJS.Workbook, payload: PropPayload) {
+function fillSynthese(wb: ExcelJS.Workbook, payload: PropPayload, blocks: BlockPos[] = BLOCKS) {
   const sw = wb.getWorksheet(SYNTHESE_SHEET);
   if (!sw) return;
   const paliers = (payload.paliers || []).filter(p => p.produits && p.produits.length);
@@ -222,7 +222,8 @@ function fillSynthese(wb: ExcelJS.Workbook, payload: PropPayload) {
   //     du bloc. Ainsi, changer une réf en colonne A met tout à jour automatiquement.
   //   - K (TOTAL) → somme E:J.
   // Plages "Produit Vente" + Testeurs/PLV de chaque bloc dans Proposition.
-  const propRanges = BLOCKS.map(b => ({ first: b.pvFirst, last: b.dataLast, nbOffresCell: `'${PROP_SHEET}'!$B$${b.nbOffresRow}` }));
+  // Positions RÉELLES des blocs (décalées si lignes d'articles ou blocs de paliers ajoutés).
+  const propRanges = blocks.map(b => ({ first: b.pvFirst, last: b.dataLast, nbOffresCell: `'${PROP_SHEET}'!$B$${b.nbOffresRow}` }));
 
   const maxRow = sw.rowCount;
   // IMPORTANT : ne traiter QUE les tableaux du bas (à partir de la ligne 10). La zone du HAUT
@@ -286,9 +287,11 @@ function shiftFormulaRefs(ws: ExcelJS.Worksheet, at: number, n: number) {
   });
 }
 
-function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: Set<string>) {
+type BlockPos = (typeof BLOCKS)[number];
+
+function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: Set<string>): BlockPos[] {
   const paliers = (payload.paliers || []).filter(p => p.produits && p.produits.length);
-  const used = Math.min(paliers.length, BLOCKS.length);
+  let used = Math.min(paliers.length, BLOCKS.length);
 
   // ── Capacité des blocs : le gabarit réserve 20 lignes d'articles par palier. Si une
   //    campagne en a davantage, on AGRANDIT chaque bloc en insérant les lignes manquantes
@@ -297,6 +300,69 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   const blocks = BLOCKS.map(b => ({ ...b }));
   const gcPos = { top: 149, band: 150, nom: 152, remise: 153, hdr: 154, unit: 155, syn: 157, pvFirst: 159, last: 178 };
   let logFirst = 185;   // première ligne de la zone « Besoins logistiques » du gabarit
+
+  // ── Plus de 4 paliers : le gabarit n'a que 4 blocs, les suivants étaient perdus. On
+  //    recopie le bloc 1 (titre → lignes vides de séparation) autant de fois que nécessaire,
+  //    juste avant GRANDS COMPTES, et on décale le GC et la zone logistique d'autant.
+  const blocsManquants = Math.max(0, paliers.length - blocks.length);
+  if (blocsManquants > 0) {
+    unshareFormulas(ws);
+    const SRC_FIRST = BLOCKS[0].title, SRC_LAST = BLOCKS[1].title - 1;   // lignes 3 → 38
+    const HAUT = SRC_LAST - SRC_FIRST + 1;
+    const NB_COLS_COPIE = 40;
+    // Instantané du bloc source AVANT l'insertion (valeurs, formules, styles, hauteurs, fusions).
+    const snap = [] as { height?: number; cells: { value: any; style: any }[] }[];
+    for (let r = SRC_FIRST; r <= SRC_LAST; r++) {
+      const row = ws.getRow(r);
+      const cells = [];
+      for (let c = 1; c <= NB_COLS_COPIE; c++) {
+        const cell = row.getCell(c);
+        const v: any = cell.value;
+        cells.push({ value: v && typeof v === "object" && v.formula ? { formula: v.formula } : (v && typeof v === "object" ? JSON.parse(JSON.stringify(v)) : v), style: JSON.parse(JSON.stringify(cell.style || {})) });
+      }
+      snap.push({ height: row.height, cells });
+    }
+    const fusions = ((ws.model as any).merges as string[] || [])
+      .map(rg => rg.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/))
+      .filter((m): m is RegExpMatchArray => !!m && +m[2] >= SRC_FIRST && +m[4] <= SRC_LAST);
+
+    const at = gcPos.top;
+    const total = HAUT * blocsManquants;
+    ws.spliceRows(at, 0, ...Array.from({ length: total }, () => [] as any[]));
+    shiftFormulaRefs(ws, at, total);
+
+    const refLigne = /(\$?)([A-Z]{1,3})(\$?)(\d+)/g;
+    for (let k = 0; k < blocsManquants; k++) {
+      const delta = at + k * HAUT - SRC_FIRST;
+      snap.forEach((sr, i) => {
+        const dst = ws.getRow(SRC_FIRST + i + delta);
+        if (sr.height) dst.height = sr.height;
+        sr.cells.forEach((sc, ci) => {
+          const cell = dst.getCell(ci + 1);
+          cell.style = JSON.parse(JSON.stringify(sc.style));
+          if (sc.value && typeof sc.value === "object" && typeof sc.value.formula === "string") {
+            // Références internes au bloc décalées vers la copie ; le reste (Mapping!$A:$F…) intact.
+            cell.value = { formula: sc.value.formula.replace(refLigne, (m: string, d1: string, col: string, d2: string, rs: string) => {
+              const r = parseInt(rs, 10);
+              return r >= SRC_FIRST && r <= SRC_LAST ? `${d1}${col}${d2}${r + delta}` : m;
+            }) };
+          } else {
+            cell.value = sc.value ?? null;
+          }
+        });
+      });
+      for (const m of fusions) ws.mergeCells(`${m[1]}${+m[2] + delta}:${m[3]}${+m[4] + delta}`);
+      const b0 = BLOCKS[0];
+      blocks.push({
+        title: b0.title + delta, nbOffresRow: b0.nbOffresRow + delta, nbProduitsRow: b0.nbProduitsRow + delta,
+        pvFirst: b0.pvFirst + delta, pvCount: b0.pvCount, remiseRow: b0.remiseRow + delta, nbOffRow: b0.nbOffRow + delta,
+        synRow: b0.synRow + delta, dataFirst: b0.dataFirst + delta, dataLast: b0.dataLast + delta,
+      });
+    }
+    for (const key of Object.keys(gcPos) as (keyof typeof gcPos)[]) gcPos[key] += total;
+    logFirst += total;
+  }
+  used = Math.min(paliers.length, blocks.length);
   const capacite = blocks[0].dataLast - blocks[0].pvFirst + 1;             // 20 dans le gabarit
   const maxProduits = paliers.length ? Math.max(...paliers.slice(0, blocks.length).map(p => p.produits.length)) : 0;
   const extra = Math.max(0, maxProduits - capacite);
@@ -411,6 +477,16 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       // Masquer les lignes VIDES (sans réf) pour alléger le fichier ; les lignes remplies
       // restent visibles. La formule/format reste en place (démasquable dans Excel).
       ws.getRow(row).hidden = !ref;
+    }
+
+    // « Poids Gratuités achats » (UG/PLV/Échantillon/Testeur, colonnes AC/AD) : le gabarit
+    // fait pointer le bloc 2 sur les lignes du bloc 1. On réécrit la formule sur les lignes
+    // réelles de CHAQUE bloc (y compris blocs ajoutés et lignes d'articles insérées).
+    for (let r = blk.title; r <= blk.dataLast; r++) {
+      const lbl = ws.getCell(r, 29).value;
+      if (typeof lbl === "string" && ["UG", "PLV", "Echantillon", "Échantillon", "Testeur"].includes(lbl.trim())) {
+        ws.getCell(r, 30).value = { formula: `IFERROR(SUMIF($D$${blk.pvFirst}:$D$${blk.dataLast},AC${r},$G$${blk.pvFirst}:$G$${blk.dataLast})/$AC$${blk.synRow},0)` };
+      }
     }
 
     // Synthèse : SUM par colonne CA/Marges.
@@ -712,8 +788,8 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 2).value = horsMapping ? (p.name || "") : { formula: vlookup(`A${row}`, 2) };
     }
   }
+  return blocks;
 }
-
 
 // Remplit une feuille Proposition. mapRefs = réfs présentes dans le Mapping partagé (pour que
 // les VLOOKUP fonctionnent). Si omis, aucun Mapping (valeurs en dur uniquement).
