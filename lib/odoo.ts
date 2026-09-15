@@ -524,3 +524,10 @@ export async function getQtyByStatut(session: OdooSession, refs: string[], dateF
   }
   return out;
 }
+
+/** Noms des champs d'un modèle Odoo (fields_get). Sert à détecter les champs optionnels
+ *  (ex. purchase_price, fourni par le module sale_margin) avant de les demander. */
+export async function getFieldNames(session: OdooSession, model: string): Promise<Set<string>> {
+  const res = await call(session, "/web/dataset/call_kw", { model, method: "fields_get", args: [], kwargs: { attributes: ["type"] } });
+  return new Set(Object.keys(res || {}));
+}

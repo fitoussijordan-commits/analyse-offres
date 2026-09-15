@@ -18,21 +18,25 @@ export interface DebugOrder { id: number; name: string; partnerName?: string; in
 export interface OffreAnalyse {
   offre: { code: string; label: string };
   caTotal: number; qtyTotal: number;
+  coutTotal?: number;  // coût des lignes comptées dans le CA → marge = caTotal − coutTotal
   produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[];
   // Qui a pris CETTE offre : ventilation par statut client (nb commandes / qté / CA).
   // Renseigné après le rattachement des commandes aux partenaires (voir plus bas).
   parStatut?: Record<string, { qty: number; ca: number; nbCommandes: number }>;
   error: string | null;
 }
-export interface CatchallResult { codeInterne: string; data: { caTotal: number; qtyTotal: number; produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[] } | null; }
+export interface CatchallResult { codeInterne: string; data: { caTotal: number; qtyTotal: number; coutTotal?: number; produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[] } | null; }
 
 export interface CampaignResult {
   nom: string;
   caTotal: number; qtyTotal: number; nbCommandes: number;
+  // Marge = CA − coût des lignes vendues. Coût = purchase_price de la ligne de commande
+  // (coût figé à la vente, module sale_margin) ; à défaut, coût actuel du produit.
+  margeTotal: number; margePct: number;
   produits: ProduitCA[]; delegues: DelegueCA[];
   categories: ClientStat[]; adherents: ClientStat[]; statuts: ClientStat[];
   produitsParStatut: ProduitStatut[];  // croisement produit × statut client (pour préco N+1)
-  perOffre: { code: string; label: string; caTotal: number; qtyTotal: number; error: string | null }[];
+  perOffre: { code: string; label: string; caTotal: number; qtyTotal: number; margeTotal: number; error: string | null }[];
   results: OffreAnalyse[];        // détail par offre (+ produits autonomes)
   catchalls: CatchallResult[];    // détail par note
   split?: { valide: { qty: number; ca: number }; avenir: { qty: number; ca: number } };
@@ -56,7 +60,29 @@ function noteDomain(notes: string[]): any[] {
   return [...Array(conds.length - 1).fill("|"), ...conds];
 }
 
-interface LineRec { id: number; orderId: number; productId: number; productName: string; ref: string; qty: number; subtotal: number; }
+interface LineRec { id: number; orderId: number; productId: number; productName: string; ref: string; qty: number; subtotal: number; cost?: number; }
+
+// Champs lus sur sale.order.line. purchase_price n'existe que si le module sale_margin est
+// installé : on le détecte une fois par base Odoo (fields_get) pour ne pas faire échouer la requête.
+const purchasePriceDispo = new Map<string, Promise<boolean>>();
+async function lineFields(session: odoo.OdooSession, base: string[]): Promise<string[]> {
+  const key = `${session.config.url}|${session.config.db}`;
+  if (!purchasePriceDispo.has(key)) {
+    purchasePriceDispo.set(key, odoo.getFieldNames(session, "sale.order.line").then(f => f.has("purchase_price")).catch(() => false));
+  }
+  return (await purchasePriceDispo.get(key)) ? [...base, "purchase_price"] : base;
+}
+
+/** Complète le coût unitaire des lignes sans purchase_price avec le coût actuel du produit. */
+async function completerCouts(session: odoo.OdooSession, recs: LineRec[]): Promise<void> {
+  const manquants = [...new Set(recs.filter(r => r.cost == null).map(r => r.productId))];
+  if (!manquants.length) return;
+  const prods = await odoo.searchRead(session, "product.product", [["id", "in", manquants]], ["id", "standard_price"], 0);
+  const cout: Record<number, number> = {};
+  for (const p of prods as any[]) cout[p.id] = typeof p.standard_price === "number" ? p.standard_price : 0;
+  for (const r of recs) if (r.cost == null) r.cost = cout[r.productId] || 0;
+}
+const coutDe = (recs: LineRec[]) => recs.reduce((s, r) => s + r.qty * (r.cost || 0), 0);
 
 /**
  * Détermine les commandes réellement facturées : celles ayant au moins une facture
@@ -106,6 +132,7 @@ function toRecs(lines: any[], refByPid: Record<number, string>): LineRec[] {
     ref: refByPid[l.product_id[0]] || "",
     qty: l.product_uom_qty || 0,
     subtotal: l.price_subtotal || 0,
+    cost: typeof l.purchase_price === "number" && l.purchase_price > 0 ? l.purchase_price : undefined,
   }));
 }
 
@@ -130,8 +157,9 @@ async function analyseOffre(session: odoo.OdooSession, offre: Offre, filter: Sta
   let produits: ProduitCA[] = [];
   let caTotal = 0;
   if (compIds.length) {
-    const compLines = await odoo.searchRead(session, "sale.order.line", [["order_id", "in", orderIds], ["product_id", "in", compIds], ["display_type", "=", false], ["is_downpayment", "=", false]], ["order_id", "product_id", "product_uom_qty", "price_subtotal", "state"], 0);
+    const compLines = await odoo.searchRead(session, "sale.order.line", [["order_id", "in", orderIds], ["product_id", "in", compIds], ["display_type", "=", false], ["is_downpayment", "=", false]], await lineFields(session, ["order_id", "product_id", "product_uom_qty", "price_subtotal", "state"]), 0);
     recs = toRecs(compLines, refByPid);
+    await completerCouts(session, recs);
     const pm: Record<number, ProduitCA> = {};
     for (const r of recs) { if (!pm[r.productId]) pm[r.productId] = { productId: r.productId, ref: r.ref, name: r.productName, qtyVendue: 0, ca: 0 }; pm[r.productId].qtyVendue += r.qty; pm[r.productId].ca += r.subtotal; }
     produits = Object.values(pm).sort((a, b) => b.ca - a.ca);
@@ -153,7 +181,7 @@ async function analyseOffre(session: odoo.OdooSession, offre: Offre, filter: Sta
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].ca += r.subtotal; }
   const delegues = Object.values(um).sort((a, b) => b.ca - a.ca);
 
-  return { res: { offre: { code: offre.code, label: offre.label }, caTotal, qtyTotal, produits, delegues, debugOrders, error: null }, recs };
+  return { res: { offre: { code: offre.code, label: offre.label }, caTotal, qtyTotal, coutTotal: coutDe(recs), produits, delegues, debugOrders, error: null }, recs };
 }
 
 // ── Analyse d'une note interne (catchall historique) ──────────────────────────
@@ -180,9 +208,10 @@ async function analyseNote(session: odoo.OdooSession, note: string, excludeOrder
     const r = await resolveRefs(session, produitRefs);
     filteredPids = new Set(r.ids); refByPid = r.refByPid;
   }
-  const lines = await odoo.searchRead(session, "sale.order.line", [["order_id", "in", orphanIds], ["display_type", "=", false], ["is_downpayment", "=", false]], ["order_id", "product_id", "product_uom_qty", "price_subtotal", "state"], 0);
+  const lines = await odoo.searchRead(session, "sale.order.line", [["order_id", "in", orphanIds], ["display_type", "=", false], ["is_downpayment", "=", false]], await lineFields(session, ["order_id", "product_id", "product_uom_qty", "price_subtotal", "state"]), 0);
   const active = lines.filter((l: any) => l.state !== "cancel" && l.price_subtotal > 0 && l.product_id && (!filteredPids || filteredPids.has(l.product_id[0])));
   const recs = toRecs(active, refByPid);
+  await completerCouts(session, recs);
   const caTotal = recs.reduce((s, r) => s + r.subtotal, 0);
 
   const pm: Record<number, ProduitCA> = {};
@@ -205,7 +234,7 @@ async function analyseNote(session: odoo.OdooSession, note: string, excludeOrder
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].qtyVendue += r.qty; um[u.id].ca += r.subtotal; }
   const delegues = Object.values(um).sort((a, b) => b.ca - a.ca);
 
-  return { res: { codeInterne: note, data: { caTotal, qtyTotal: matchedOrderIds.size, produits, delegues, debugOrders } }, recs };
+  return { res: { codeInterne: note, data: { caTotal, qtyTotal: matchedOrderIds.size, coutTotal: coutDe(recs), produits, delegues, debugOrders } }, recs };
 }
 
 // ── Produits autonomes (réfs campagne hors offres/notes) ──────────────────────
@@ -213,10 +242,11 @@ async function analyseStandalone(session: odoo.OdooSession, refs: string[], filt
   const { ids, refByPid } = await resolveRefs(session, refs);
   if (!ids.length) return { res: null, recs: [] };
   const lineDom = orderLineDomain(filter);
-  const lines = await odoo.searchRead(session, "sale.order.line", [["product_id", "in", ids], ...lineDom, ["display_type", "=", false], ["is_downpayment", "=", false]], ["order_id", "product_id", "product_uom_qty", "price_subtotal", "state"], 0);
+  const lines = await odoo.searchRead(session, "sale.order.line", [["product_id", "in", ids], ...lineDom, ["display_type", "=", false], ["is_downpayment", "=", false]], await lineFields(session, ["order_id", "product_id", "product_uom_qty", "price_subtotal", "state"]), 0);
   // exclure les lignes déjà comptées dans une offre (dédoublonnage "hors offre")
   const recs = toRecs(lines, refByPid).filter(r => !excludeLineIds.has(r.id));
   if (!recs.length) return { res: null, recs: [] };
+  await completerCouts(session, recs);
 
   const pm: Record<number, ProduitCA> = {};
   for (const r of recs) { if (!pm[r.productId]) pm[r.productId] = { productId: r.productId, ref: r.ref, name: r.productName, qtyVendue: 0, ca: 0 }; pm[r.productId].qtyVendue += r.qty; pm[r.productId].ca += r.subtotal; }
@@ -237,7 +267,7 @@ async function analyseStandalone(session: odoo.OdooSession, refs: string[], filt
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].qtyVendue += r.qty; um[u.id].ca += r.subtotal; }
   const delegues = Object.values(um).sort((a, b) => b.ca - a.ca);
 
-  return { res: { offre: { code: "PRODUITS", label: "Produits hors offre" }, caTotal, qtyTotal, produits, delegues, debugOrders, error: null }, recs };
+  return { res: { offre: { code: "PRODUITS", label: "Produits hors offre" }, caTotal, qtyTotal, coutTotal: coutDe(recs), produits, delegues, debugOrders, error: null }, recs };
 }
 
 // ── Analyse complète de la campagne ───────────────────────────────────────────
@@ -288,10 +318,10 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   for (const r of allRecs) if (!byId.has(r.id)) byId.set(r.id, r);
   const lines = [...byId.values()].filter(l => !noteOrderIdSet.has(l.orderId));
 
-  const perOffre = results.map(r => ({ code: r.offre.code, label: r.offre.label, caTotal: r.caTotal, qtyTotal: r.qtyTotal, error: r.error }));
+  const perOffre = results.map(r => ({ code: r.offre.code, label: r.offre.label, caTotal: r.caTotal, qtyTotal: r.qtyTotal, margeTotal: r.caTotal - (r.coutTotal || 0), error: r.error }));
 
   if (!lines.length) {
-    return { nom: campagne.nom, caTotal: 0, qtyTotal: 0, nbCommandes: 0, produits: [], delegues: [], categories: [], adherents: [], statuts: [], produitsParStatut: [], perOffre, results, catchalls, split: { valide: { qty: 0, ca: 0 }, avenir: { qty: 0, ca: 0 } }, error: null };
+    return { nom: campagne.nom, caTotal: 0, qtyTotal: 0, nbCommandes: 0, margeTotal: 0, margePct: 0, produits: [], delegues: [], categories: [], adherents: [], statuts: [], produitsParStatut: [], perOffre, results, catchalls, split: { valide: { qty: 0, ca: 0 }, avenir: { qty: 0, ca: 0 } }, error: null };
   }
 
   // 5. Commandes → user / partner / invoice
@@ -422,6 +452,9 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   // On le recalcule explicitement pour éviter toute divergence avec les lignes agrégées.
   const caDetail = results.reduce((s, r) => s + (r.caTotal || 0), 0) + catchalls.reduce((s, c) => s + (c.data?.caTotal || 0), 0);
   caTotal = caDetail;
+  // Marge sur exactement le même périmètre que le CA (offres + standalone + notes).
+  const coutDetail = results.reduce((s, r) => s + (r.coutTotal || 0), 0) + catchalls.reduce((s, c) => s + (c.data?.coutTotal || 0), 0);
+  const margeTotal = caTotal - coutDetail;
 
   // Split validé / à venir : recalculé directement à partir du CA par commande et de son
   // statut de facturation réel, sur TOUTES les commandes (offres + notes). Cela garantit
@@ -450,6 +483,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   return {
     nom: campagne.nom,
     caTotal, qtyTotal: qtyOffres, nbCommandes: orderIds.length + extraNoteOrders,
+    margeTotal, margePct: caTotal > 0 ? margeTotal / caTotal : 0,
     produits: Object.values(prodMap).sort((a, b) => b.ca - a.ca),
     delegues: Object.values(delMap).sort((a, b) => b.ca - a.ca),
     categories: finalize(catMap), adherents: finalize(adhMap), statuts: finalize(statMap),

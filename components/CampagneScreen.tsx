@@ -412,6 +412,8 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
               {kpi("CA total", fmtEur(result.caTotal), C.teal)}
               {kpi("Quantité", fmtNum(result.qtyTotal), C.blue)}
               {kpi("Commandes", fmtNum(result.nbCommandes), C.purple)}
+              {result.margeTotal != null && kpi("Marge €", fmtEur(result.margeTotal), C.green)}
+              {result.margeTotal != null && kpi("Marge %", `${(Math.round((result.margePct || 0) * 1000) / 10).toFixed(1)} %`, C.green)}
               {result.split && filter === "all" && kpi("CA validé", fmtEur(result.split.valide.ca), C.green)}
               {result.split && filter === "all" && kpi("CA à venir", fmtEur(result.split.avenir.ca), C.amber)}
             </div>
@@ -749,10 +751,10 @@ function Tbl({ head, aligns, rows, total }: { head: string[]; aligns: ("left" | 
 function OffresDrillDown({ result }: { result: CampaignResult }) {
   const [open, setOpen] = useState<string | null>(result.results[0]?.offre.code ?? null);
   // sources = offres analysées + notes (catchalls avec données)
-  type Src = { key: string; code: string; label: string; ca: number; qty: number; cmd: number; produits: { ref: string; name: string; qtyVendue: number; ca: number }[]; delegues: { name: string; qtyVendue: number; ca: number }[]; error: string | null; note: boolean };
+  type Src = { key: string; code: string; label: string; ca: number; cout?: number; qty: number; cmd: number; produits: { ref: string; name: string; qtyVendue: number; ca: number }[]; delegues: { name: string; qtyVendue: number; ca: number }[]; error: string | null; note: boolean };
   const sources: Src[] = [
-    ...result.results.map(r => ({ key: "o:" + r.offre.code, code: r.offre.code, label: r.offre.label, ca: r.caTotal, qty: r.qtyTotal, cmd: r.debugOrders.length, produits: r.produits, delegues: r.delegues, error: r.error, note: false })),
-    ...result.catchalls.filter(c => c.data && (c.data.debugOrders.length > 0 || c.data.caTotal > 0)).map(c => ({ key: "n:" + c.codeInterne, code: c.codeInterne, label: "Note interne", ca: c.data!.caTotal, qty: c.data!.qtyTotal, cmd: c.data!.debugOrders.length, produits: c.data!.produits, delegues: c.data!.delegues, error: null, note: true })),
+    ...result.results.map(r => ({ key: "o:" + r.offre.code, code: r.offre.code, label: r.offre.label, ca: r.caTotal, cout: r.coutTotal, qty: r.qtyTotal, cmd: r.debugOrders.length, produits: r.produits, delegues: r.delegues, error: r.error, note: false })),
+    ...result.catchalls.filter(c => c.data && (c.data.debugOrders.length > 0 || c.data.caTotal > 0)).map(c => ({ key: "n:" + c.codeInterne, code: c.codeInterne, label: "Note interne", ca: c.data!.caTotal, cout: c.data!.coutTotal, qty: c.data!.qtyTotal, cmd: c.data!.debugOrders.length, produits: c.data!.produits, delegues: c.data!.delegues, error: null, note: true })),
   ];
   if (!sources.length) return <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: 30, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucune offre</div>;
   return (
@@ -769,6 +771,7 @@ function OffresDrillDown({ result }: { result: CampaignResult }) {
                 {s.note && <span style={{ marginLeft: 6, fontSize: 10, background: "#fff7ed", color: "#f97316", borderRadius: 4, padding: "1px 6px", fontWeight: 700 }}>NOTE</span>}
               </span>
               <span style={{ fontSize: 11, color: C.textMuted }}>{fmtNum(s.cmd)} cmd · {fmtNum(s.qty)} qté</span>
+              {s.cout != null && s.ca > 0 && <span style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>marge {fmtEur(s.ca - s.cout)} · {(Math.round(((s.ca - s.cout) / s.ca) * 1000) / 10).toFixed(1)} %</span>}
               <span style={{ fontSize: 15, fontWeight: 800, color: s.note ? "#f97316" : C.teal, minWidth: 90, textAlign: "right" }}>{fmtEur(s.ca)}</span>
             </div>
             {isOpen && (

@@ -46,7 +46,7 @@ interface DebugOrder { id: number; name: string; partnerName?: string; ca?: numb
 interface OffreAnalyse { offre: { code: string; label: string }; caTotal: number; qtyTotal: number; produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[]; error: string | null; }
 interface CatchallResult { codeInterne: string; data: { caTotal: number; qtyTotal: number; produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[] } | null; }
 interface Payload {
-  nom: string; caTotal: number; qtyTotal: number; nbCommandes: number;
+  nom: string; caTotal: number; qtyTotal: number; nbCommandes: number; margeTotal?: number; margePct?: number;
   produits: ProduitCA[]; delegues: DelegueCA[]; categories: ClientStat[]; adherents: ClientStat[]; statuts?: ClientStat[];
   results: OffreAnalyse[]; catchalls: CatchallResult[];
   split?: { valide: { qty: number; ca: number }; avenir: { qty: number; ca: number } };
@@ -67,9 +67,15 @@ function buildRecap(wb: ExcelJS.Workbook, p: Payload) {
   let r = 4;
   const kpis: [string, number, boolean][] = [["CA total (sans doublons)", Math.round(p.caTotal), true], ["Offres / unités vendues", p.qtyTotal, false], ["Nb commandes", p.nbCommandes, false]];
   if (p.split) { kpis.push(["CA validé (facturé)", Math.round(p.split.valide.ca), true]); kpis.push(["CA à venir", Math.round(p.split.avenir.ca), true]); }
+  if (p.margeTotal != null) kpis.push(["Marge €", Math.round(p.margeTotal), true]);
   for (const [label, val, isEur] of kpis) {
     ws.getCell(r, 1).value = label; ws.getCell(r, 1).font = { bold: true, size: 11, color: { argb: "FF334155" } };
     const v = ws.getCell(r, 3); v.value = val; v.font = { bold: true, size: 12, color: { argb: "FF" + TEAL } }; if (isEur) eur(v); else v.numFmt = "#,##0";
+    r++;
+  }
+  if (p.margePct != null) {
+    ws.getCell(r, 1).value = "Marge %"; ws.getCell(r, 1).font = { bold: true, size: 11, color: { argb: "FF334155" } };
+    const v = ws.getCell(r, 3); v.value = p.margePct; v.numFmt = "0.0%"; v.font = { bold: true, size: 12, color: { argb: "FF" + TEAL } };
     r++;
   }
 
