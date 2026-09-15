@@ -4,7 +4,7 @@ import * as odoo from "@/lib/odoo";
 import {
   CampagneCreee, PalierSaisi, ArticleCampagne, genId,
   analyseCampagneCreee, toExportPayload, qtyParPack, totalPacks, ventilationPalier, TYPES_PRODUIT,
-  GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT,
+  GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT, erreurDatesCampagne,
 } from "@/lib/create-campaign";
 import { loadCampagnesCreees, upsertCampagneCreee, deleteCampagneCreee, loadCampagnesCreeesCorbeille, restoreCampagneCreee, hardDeleteCampagneCreee } from "@/lib/campaigns";
 import { buildSyntheseLogistique } from "@/lib/logistique";
@@ -279,6 +279,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
 
   const sauvegarder = async () => {
     if (!camp.nom.trim()) { onToast("Donne un nom à la campagne", "error"); return; }
+    const errDates = erreurDatesCampagne(camp);
+    if (errDates) { onToast(errDates, "error"); return; }
     setSaving(true);
     try { await upsertCampagneCreee(camp); await reload(); onToast("Campagne sauvegardée", "success"); }
     catch (e: any) { onToast("Erreur sauvegarde : " + e.message, "error"); }
@@ -357,7 +359,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = `proposition_${(camp.nom || "campagne").replace(/[^a-zA-Z0-9_-]+/g, "_")}.xlsx`; a.click(); URL.revokeObjectURL(url);
-      onToast("Fichier Proposition exporté", "success");
+      if (payload.logistique.ignorees?.length) onToast("Exporté, mais synthèse logistique vide : dates de campagne manquantes ou invalides", "error");
+      else onToast("Fichier Proposition exporté", "success");
     } catch (e: any) { onToast("Erreur export : " + e.message, "error"); }
     finally { setExporting(false); }
   };
@@ -384,7 +387,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = `campagnes_annee.xlsx`; a.click(); URL.revokeObjectURL(url);
-      onToast(`Export de ${choisies.length} campagne(s) + synthèse logistique`, "success");
+      if (logistique.ignorees?.length) onToast(`Exporté, mais NON comptée(s) dans la logistique (dates invalides) : ${logistique.ignorees.join(", ")}`, "error");
+      else onToast(`Export de ${choisies.length} campagne(s) + synthèse logistique`, "success");
     } catch (e: any) { onToast("Erreur export multi : " + e.message, "error"); }
     finally { setExportingMulti(false); }
   };
@@ -519,8 +523,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.7fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
           <div><label style={labelStyle}>Nom de la campagne</label><input style={{ ...inputStyle, width: "100%" }} value={camp.nom} onChange={e => setField("nom", e.target.value)} placeholder="Ex. Régénérants 2026" /></div>
           <div><label style={labelStyle}>Année / cycle</label><input style={{ ...inputStyle, width: "100%" }} value={camp.annee ?? ""} onChange={e => setField("annee", e.target.value)} placeholder="Ex. 2027" /></div>
-          <div><label style={labelStyle}>Début campagne</label><input type="date" style={{ ...inputStyle, width: "100%" }} value={camp.dateDebut} onChange={e => setField("dateDebut", e.target.value)} /></div>
-          <div><label style={labelStyle}>Fin campagne</label><input type="date" style={{ ...inputStyle, width: "100%" }} value={camp.dateFin} onChange={e => setField("dateFin", e.target.value)} /></div>
+          <div><label style={labelStyle}>Début campagne</label><input type="date" min="2000-01-01" max="2100-12-31" style={{ ...inputStyle, width: "100%", ...(erreurDatesCampagne(camp) ? { borderColor: "#ef4444" } : {}) }} value={camp.dateDebut} onChange={e => setField("dateDebut", e.target.value)} /></div>
+          <div><label style={labelStyle}>Fin campagne</label><input type="date" min="2000-01-01" max="2100-12-31" style={{ ...inputStyle, width: "100%", ...(erreurDatesCampagne(camp) ? { borderColor: "#ef4444" } : {}) }} value={camp.dateFin} onChange={e => setField("dateFin", e.target.value)} /></div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.5fr", gap: 14, alignItems: "end" }}>
           <div><label style={labelStyle}>Période N-1 — début</label><input type="date" style={{ ...inputStyle, width: "100%" }} value={camp.periodeDebut} onChange={e => setField("periodeDebut", e.target.value)} /></div>

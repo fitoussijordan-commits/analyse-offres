@@ -97,6 +97,20 @@ export const CANAUX_NONB2B_DEFAUT: GcEnseigne[] = [
 // Ordre des 7 typologies du template (= statuts clients Odoo, mêmes noms).
 export const TYPOLOGIES = ["Ambassadeur", "Compagnon", "Challenger", "Rose", "Prunelier", "Anthylide", "Calendula"];
 
+/** Contrôle les dates de campagne. Renvoie un message d'erreur, ou null si tout va bien.
+ *  Bloque les fautes de frappe du champ date (ex. année « 22027 ») qui faisaient
+ *  disparaître la campagne de la synthèse logistique. Dates vides tolérées. */
+export function erreurDatesCampagne(c: Pick<CampagneCreee, "dateDebut" | "dateFin">): string | null {
+  const ok = (d: string) => {
+    const m = (d || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return !!m && +m[1] >= 2000 && +m[1] <= 2100 && +m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31;
+  };
+  if (c.dateDebut && !ok(c.dateDebut)) return `Date de début invalide (${c.dateDebut})`;
+  if (c.dateFin && !ok(c.dateFin)) return `Date de fin invalide (${c.dateFin})`;
+  if (c.dateDebut && c.dateFin && c.dateFin < c.dateDebut) return "La date de fin est avant la date de début";
+  return null;
+}
+
 export function genId(): string {
   return Math.random().toString(36).slice(2, 10);
 }

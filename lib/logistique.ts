@@ -35,6 +35,15 @@ export function writeSyntheseLogistiqueSheet(wb: ExcelJS.Workbook, log: Synthese
   tc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
   tc.alignment = { horizontal: "left", vertical: "middle", indent: 1 };
   titleRow.height = 24;
+  if (log.ignorees && log.ignorees.length) {
+    const warn = sw.addRow([`⚠ Campagne(s) NON comptée(s), dates de début/fin manquantes ou invalides : ${log.ignorees.join(", ")}`]);
+    sw.mergeCells(warn.number, 1, warn.number, nbCols);
+    const wc = sw.getCell(warn.number, 1);
+    wc.font = { bold: true, size: 10, color: { argb: "FFB91C1C" }, name: "Calibri" };
+    wc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
+    wc.alignment = { wrapText: true, vertical: "middle", indent: 1 };
+    warn.height = 30;
+  }
   sw.addRow([]);
 
   const head = sw.addRow(["Réf", "Produit", ...mois, "Total"]);
@@ -87,6 +96,9 @@ export interface SyntheseLogistique {
   totalParMois: number[];   // aligné sur moisLabels
   totalGeneral: number;
   moisLabels: string[];     // libellés des mois (peut déborder sur N+1 : "Janvier 2027"…)
+  // Campagnes exclues faute de dates exploitables (manquantes, invalides ou fin < début).
+  // Remontées à l'utilisateur : sans ça, leurs besoins disparaissaient en silence.
+  ignorees?: string[];
 }
 
 const PART_VAGUE = 0.4; // 40% le mois -1
@@ -95,9 +107,11 @@ const PART_VAGUE = 0.4; // 40% le mois -1
 // temporel qui déborde d'une année sur l'autre. Renvoie null si invalide.
 function absMonth(date: string): number | null {
   if (!date) return null;
-  const m = date.match(/^(\d{4})-(\d{2})-\d{2}/);
+  const m = date.match(/^(\d{4})-(\d{2})-\d{2}$/);
   if (!m) return null;
-  return parseInt(m[1], 10) * 12 + (parseInt(m[2], 10) - 1);
+  const y = parseInt(m[1], 10), mo = parseInt(m[2], 10);
+  if (y < 2000 || y > 2100 || mo < 1 || mo > 12) return null;
+  return y * 12 + (mo - 1);
 }
 
 // Libellé d'un mois absolu : "Janvier 2027".
@@ -159,11 +173,12 @@ export function buildSyntheseLogistique(campagnes: CampagneCreee[]): SyntheseLog
   // accum[ref] = Map<moisAbsolu, qté>
   const accum: Record<string, { name: string; parMoisAbs: Map<number, number> }> = {};
   let minAbs = Infinity, maxAbs = -Infinity;
+  const ignorees: string[] = [];
 
   for (const camp of campagnes) {
     const ad = absMonth(camp.dateDebut);
     const af = absMonth(camp.dateFin);
-    if (ad == null || af == null) continue;
+    if (ad == null || af == null || af < ad) { ignorees.push(camp.nom || "(sans nom)"); continue; }
     const besoins = besoinsCampagne(camp);
     const nameByRef: Record<string, string> = {};
     for (const a of camp.articles) if (a.ref.trim()) nameByRef[a.ref.trim()] = a.name || "";
@@ -181,7 +196,7 @@ export function buildSyntheseLogistique(campagnes: CampagneCreee[]): SyntheseLog
   }
 
   // Aucune donnée → synthèse vide.
-  if (!isFinite(minAbs)) return { lignes: [], totalParMois: [], totalGeneral: 0, moisLabels: [] };
+  if (!isFinite(minAbs)) return { lignes: [], totalParMois: [], totalGeneral: 0, moisLabels: [], ignorees };
 
   // Axe des mois : du 1er au dernier mois de livraison (continu).
   const nbMois = maxAbs - minAbs + 1;
@@ -198,5 +213,5 @@ export function buildSyntheseLogistique(campagnes: CampagneCreee[]): SyntheseLog
   for (const l of lignes) for (let i = 0; i < nbMois; i++) totalParMois[i] += l.parMois[i];
   const totalGeneral = totalParMois.reduce((s, x) => s + x, 0);
 
-  return { lignes, totalParMois, totalGeneral, moisLabels };
+  return { lignes, totalParMois, totalGeneral, moisLabels, ignorees };
 }

@@ -243,7 +243,8 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = `campagnes_${exportYear === "all" ? "toutes_annees" : exportYear.replace(/[^0-9A-Za-z_-]+/g, "_")}.xlsx`; a.click(); URL.revokeObjectURL(url);
-      onToast(`Export ${exportYear === "all" ? "annuel" : exportYear} : ${campagnesAnnee.length} campagne(s)`, "success");
+      if (logistique.ignorees?.length) onToast(`Exporté, mais NON comptée(s) dans la logistique (dates invalides) : ${logistique.ignorees.join(", ")}`, "error");
+      else onToast(`Export ${exportYear === "all" ? "annuel" : exportYear} : ${campagnesAnnee.length} campagne(s)`, "success");
     } catch (e: any) { onToast("Erreur export annuel : " + e.message, "error"); }
     finally { setExportingAnnuel(false); }
   };
