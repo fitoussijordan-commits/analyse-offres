@@ -5,6 +5,7 @@
 import type ExcelJS from "exceljs";
 import { calcPalier, CalcPalier, TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT, calcGrandsComptes, GcEnseigneCalc, GcProduitInfo } from "@/lib/calc-offre";
 import type { PropPalier, GcEnseignePayload, PropProduit } from "@/lib/fill-proposition";
+import { genereCA, remiseAddLigne } from "@/lib/type-produit";
 
 /** Pricing par article pour le calcul GC : la clé suit la même logique que fill-proposition
  *  (réf seule si unique dans le palier de référence, sinon réf#type). Le palier 1 sert de
@@ -18,9 +19,9 @@ function gcProduitsInfo(paliers: PropPalier[]): GcProduitInfo[] {
   const remiseAdd = pal1.remiseAddTaux != null ? pal1.remiseAddTaux : REMISE_ADD_DEFAUT;
   return pal1.produits.map(p => ({
     key: keyOf(p),
-    listPrice: (p.typProd || "Produit Vente") === "Produit Vente" ? (p.listPrice || 0) : 0,
+    listPrice: genereCA(p.typProd) ? (p.listPrice || 0) : 0,
     standardPrice: p.standardPrice || 0,
-    remiseAdd,
+    remiseAdd: remiseAddLigne(p.typProd, remiseAdd),
   }));
 }
 
@@ -41,6 +42,7 @@ function toCalc(p: PropPalier): CalcPalier {
       standardPrice: pr.standardPrice || 0,
       listPrice: pr.listPrice || 0,
       ppc: pr.ppc || 0,
+      typProd: pr.typProd,
     })),
   };
 }

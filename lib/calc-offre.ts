@@ -2,6 +2,8 @@
 // Réutilisable par l'aperçu interactif (recalcul live) ET l'export. N'a AUCun effet de bord
 // et ne dépend d'aucune lib : simples fonctions sur des nombres.
 
+import { remiseAddLigne } from "@/lib/type-produit";
+
 export const TYPOLOGIES = ["Ambassadeur", "Compagnon", "Challenger", "Rose", "Prunelier", "Anthylide", "Calendula"];
 // Valeurs par défaut du gabarit (peuvent être surchargées par palier).
 export const DEFAULT_PCTS = [0.5, 0.1, 0.1, 0.1, 0.1, 0.05, 0.05];
@@ -15,6 +17,7 @@ export interface CalcProduit {
   listPrice: number;       // H : tarif revendeur unitaire
   ppc: number;             // J : PPC
   remiseAdd?: number;      // I : remise additionnelle (défaut REMISE_ADD_DEFAUT)
+  typProd?: string;        // OPCA → remise additionnelle forcée à 0
 }
 
 export interface CalcPalier {
@@ -52,7 +55,7 @@ export function calcPalier(pal: CalcPalier): PalierResult {
     let ca = 0, cout = 0;
     for (const p of pal.produits) {
       const E = p.qtyParPack || 0, H = p.listPrice || 0, F = p.standardPrice || 0;
-      const I = p.remiseAdd != null ? p.remiseAdd : (pal.remiseAdd != null ? pal.remiseAdd : REMISE_ADD_DEFAUT);
+      const I = remiseAddLigne(p.typProd, p.remiseAdd != null ? p.remiseAdd : (pal.remiseAdd != null ? pal.remiseAdd : REMISE_ADD_DEFAUT));
       ca += E * H * (1 - I) * nbOff * (1 - remises[t]);
       cout += E * F * nbOff;
     }
@@ -101,7 +104,7 @@ export function detailPalier(pal: CalcPalier): DetailPalier {
 
   const produits: DetailProduit[] = pal.produits.map(p => {
     const E = p.qtyParPack || 0, H = p.listPrice || 0, F = p.standardPrice || 0;
-    const I = p.remiseAdd != null ? p.remiseAdd : (pal.remiseAdd != null ? pal.remiseAdd : REMISE_ADD_DEFAUT);
+    const I = remiseAddLigne(p.typProd, p.remiseAdd != null ? p.remiseAdd : (pal.remiseAdd != null ? pal.remiseAdd : REMISE_ADD_DEFAUT));
     let ca = 0, cout = 0;
     for (let t = 0; t < 7; t++) {
       ca += E * H * (1 - I) * nbOffres[t] * (1 - remises[t]);

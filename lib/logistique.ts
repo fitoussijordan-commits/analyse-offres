@@ -11,6 +11,7 @@
 import type ExcelJS from "exceljs";
 import type { CampagneCreee } from "@/lib/create-campaign";
 import { qtyParPack, totalPacks, ventilationPalier } from "@/lib/create-campaign";
+import { estOpca } from "@/lib/type-produit";
 
 export const MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 
@@ -155,7 +156,7 @@ function besoinsCampagne(camp: CampagneCreee): Record<string, number> {
   const out: Record<string, number> = {};
   for (const art of camp.articles) {
     const ref = art.ref.trim();
-    if (!ref) continue;
+    if (!ref || estOpca(art.typProd)) continue; // OPCA : panier virtuel, rien à approvisionner
     let total = 0;
     const totalP = totalPacks(camp.paliers);
     for (const pal of camp.paliers) {

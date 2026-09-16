@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
+import { genereCA, estOpca, coutOpca, TYP_OPCA } from "@/lib/type-produit";
 import {
   CampagneCreee, PalierSaisi, ArticleCampagne, genId,
   analyseCampagneCreee, toExportPayload, qtyParPack, totalPacks, ventilationPalier, TYPES_PRODUIT,
@@ -690,16 +691,25 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
               const inconnue = analysed && a.found === false && !!a.ref.trim();
               // Tous les champs (désignation, EAN, prix) sont TOUJOURS éditables : modifier une
               // valeur marque l'article comme manuel pour que l'analyse ne l'écrase plus.
-              const estVenteArt = (a.typProd ?? "Produit Vente") === "Produit Vente";
+              const estVenteArt = genereCA(a.typProd);
+              const opcaArt = estOpca(a.typProd);
               const numCell = (val: number | undefined, key: "standardPrice" | "listPrice" | "ppc") => {
-                // Tarif de vente et PPC sont forcés à 0 (lecture seule) pour les non-Produit Vente.
-                const bloque = !estVenteArt && (key === "listPrice" || key === "ppc");
+                // Tarif de vente et PPC forcés à 0 (lecture seule) pour les gratuits.
+                // OPCA : tarif = seuil (saisi), coût = 55 % du seuil (calculé), pas de PPC.
+                const gratuit = !estVenteArt && (key === "listPrice" || key === "ppc");
+                const calculeOpca = opcaArt && (key === "standardPrice" || key === "ppc");
+                const bloque = gratuit || calculeOpca;
+                const affiche = gratuit ? 0 : opcaArt && key === "standardPrice" ? coutOpca(a.listPrice) : opcaArt && key === "ppc" ? 0 : (val ?? "");
                 return (
                   <input type="number" step="0.01" disabled={bloque}
                     style={{ ...inputStyle, width: 75, textAlign: "right", padding: "5px 6px", background: bloque ? C.bg : undefined, color: bloque ? C.textMuted : undefined }}
-                    value={bloque ? 0 : (val ?? "")}
-                    onChange={e => setArticle(ai, { manuel: true, [key]: e.target.value === "" ? 0 : parseFloat(e.target.value) } as any)}
-                    placeholder="—" title={bloque ? "Gratuit (non Produit Vente) → 0" : undefined} />
+                    value={affiche}
+                    onChange={e => {
+                      const v = e.target.value === "" ? 0 : parseFloat(e.target.value);
+                      setArticle(ai, { manuel: true, [key]: v, ...(opcaArt && key === "listPrice" ? { standardPrice: coutOpca(v) } : {}) } as any);
+                    }}
+                    placeholder={opcaArt && key === "listPrice" ? "Seuil €" : "—"}
+                    title={calculeOpca ? (key === "standardPrice" ? "OPCA : coût = 55 % du seuil (marge 45 %)" : "OPCA : pas de PPC") : gratuit ? "Gratuit (non Produit Vente) → 0" : opcaArt && key === "listPrice" ? "OPCA : montant du seuil d'achat (ex. 500)" : undefined} />
                 );
               };
               return (
@@ -735,7 +745,9 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                     const t = e.target.value;
                     // Non "Produit Vente" (UG/Testeur/PLV/Échantillon) = gratuit → tarif de vente et PPC à 0.
                     const patch: any = { typProd: t };
-                    if (t !== "Produit Vente") { patch.listPrice = 0; patch.ppc = 0; }
+                    if (!genereCA(t)) { patch.listPrice = 0; patch.ppc = 0; }
+                    // OPCA : panier virtuel hors Odoo → saisie manuelle protégée, coût dérivé du seuil.
+                    if (t === TYP_OPCA) { patch.manuel = true; patch.ppc = 0; patch.barcode = ""; patch.standardPrice = coutOpca(a.listPrice); }
                     setArticle(ai, patch);
                   }}>
                     {TYPES_PRODUIT.map(t => <option key={t} value={t}>{t}</option>)}
@@ -802,6 +814,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 6 }}>Remise add.</span>
             <input type="number" step="0.1" style={{ ...inputStyle, width: 70 }} value={pal.remiseAddTaux != null ? Math.round(pal.remiseAddTaux * 1000) / 10 : ""} onChange={e => setPalier(pi, { remiseAddTaux: e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0) / 100 })} placeholder="—" title="% remise additionnelle (colonne I) appliquée à tous les produits du palier" />
             <span style={{ fontSize: 12, color: C.textMuted }}>%</span>
+            {articlesValides.some(a => estOpca(a.typProd)) && <span style={{ fontSize: 11, color: "#b45309" }}>(sauf OPCA : 0 %)</span>}
             <div style={{ flex: 1 }} />
             <button
               onClick={() => setOpenInfoPalier(openInfoPalier === pi ? null : pi)}
@@ -940,8 +953,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 12 }}>
                         {(() => {
                           const t = a.typProd || "Produit Vente";
-                          const vente = t === "Produit Vente";
-                          return <span title={vente ? "Génère du CA" : "Gratuit : prix de vente et PPC = 0"} style={{ fontWeight: 600, color: vente ? C.textMuted : "#b45309", background: vente ? "transparent" : "#fef3c7", borderRadius: 4, padding: vente ? 0 : "1px 6px" }}>{t}</span>;
+                          const vente = genereCA(t);
+                          return <span title={estOpca(t) ? "OPCA : CA = seuil, coût 55 %, sans remise additionnelle ni logistique" : vente ? "Génère du CA" : "Gratuit : prix de vente et PPC = 0"} style={{ fontWeight: 600, color: vente ? C.textMuted : "#b45309", background: vente ? "transparent" : "#fef3c7", borderRadius: 4, padding: vente ? 0 : "1px 6px" }}>{t}</span>;
                         })()}
                       </td>
                       <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, color: C.textMuted }}>{analysed ? fmtNum(a.consoN1 || 0) : "—"}</td>

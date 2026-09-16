@@ -4,6 +4,7 @@
 // valeurs dans les lignes produits des 3 blocs + GRANDS COMPTES + Besoins logistiques.
 
 import type ExcelJS from "exceljs";
+import { genereCA, estOpca, OPCA_TAUX_COUT } from "@/lib/type-produit";
 
 export interface PropProduit {
   ref: string; name: string; productId: number;
@@ -33,7 +34,7 @@ export const PROP_SHEET = "Proposition template";
 /** Un produit génère du CA seulement s'il est "Produit Vente". UG / Testeur / PLV /
  *  Échantillon sont gratuits → prix de vente (col 8) et PPC (col 10) forcés à 0. */
 function estVente(p?: { typProd?: string }): boolean {
-  return !p || (p.typProd || "Produit Vente") === "Produit Vente";
+  return !p || genereCA(p.typProd);
 }
 export const MAPPING_SHEET = "Mapping";
 // Colonnes de l'onglet Mapping : A=réf, B=désignation, C=EAN, D=coût, E=tarif, F=PPC.
@@ -192,7 +193,7 @@ function fillSynthese(wb: ExcelJS.Workbook, payload: PropPayload, blocks: BlockP
       : DEFAULT_REMISES;
     const pcts = DEFAULT_PCTS;
     for (const p of pal.produits) {
-      const E = p.qtyParPack || 0, H = p.listPrice || 0, F = p.standardPrice || 0, I = 0.15;
+      const E = p.qtyParPack || 0, H = p.listPrice || 0, F = p.standardPrice || 0, I = estOpca(p.typProd) ? 0 : 0.15;
       for (let t = 0; t < 7; t++) {
         const nbOff = pcts[t] * nbOffres;
         const caT = E * H * (1 - I) * nbOff * (1 - remises[t]);
@@ -468,7 +469,16 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       ws.getCell(row, 4).value = p ? (p.typProd || "Produit Vente") : null;
       ws.getCell(row, 5).value = p ? (p.qtyParPack || 0) : null;          // E : qté/pack
       // I : Remise additionnelle du palier (si renseignée) appliquée à tous les produits.
-      if (pal && typeof pal.remiseAddTaux === "number") ws.getCell(row, 9).value = pal.remiseAddTaux;
+      if (p && estOpca(p.typProd)) {
+        // OPCA : panier virtuel hors catalogue → valeurs en dur. Coût = 55 % du seuil en formule
+        // (suit le seuil si on le modifie dans Excel), pas de PPC, jamais de remise additionnelle.
+        ws.getCell(row, 2).value = p.name || "";
+        ws.getCell(row, 3).value = "";
+        ws.getCell(row, 6).value = { formula: `ROUND(H${row}*${OPCA_TAUX_COUT},2)` };
+        ws.getCell(row, 8).value = round2(p.listPrice || 0);
+        ws.getCell(row, 10).value = 0;
+        ws.getCell(row, 9).value = 0;
+      } else if (pal && typeof pal.remiseAddTaux === "number") ws.getCell(row, 9).value = pal.remiseAddTaux;
       ws.getCell(row, 7).value = { formula: `E${row}*F${row}` };               // G : montant achat
       ws.getCell(row, 11).value = { formula: `J${row}*(1-I${row})` };           // K : PPC remisé
       ws.getCell(row, 12).value = { formula: `IFERROR(J${row}-K${row},"")` };   // L : Montant BRI
@@ -821,11 +831,13 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
   // ── Liste « Besoins logistiques » (réf + libellé), écrite en DERNIER, tout en bas.
   //    Le détail par mois est dans l'onglet dédié « Synthèse logistique » ; ici on ne
   //    garde que le rappel des références, avec un titre pour qu'il ne soit plus orphelin.
-  if (pal1?.produits?.length) {
+  // OPCA exclues : ce ne sont pas des produits à approvisionner.
+  const produitsLog = (pal1?.produits || []).filter(p => !estOpca(p.typProd));
+  if (produitsLog.length) {
     ws.getCell(logistiqueRow - 1, 1).value = "Besoins logistiques — références";
     ws.getCell(logistiqueRow - 1, 1).font = { bold: true, size: 11 };
-    for (let i = 0; i < Math.max(LOG_PV_COUNT, pal1.produits.length); i++) {
-      const row = logistiqueRow + i, p = pal1.produits[i];
+    for (let i = 0; i < Math.max(LOG_PV_COUNT, produitsLog.length); i++) {
+      const row = logistiqueRow + i, p = produitsLog[i];
       if (!p) { ws.getCell(row, 1).value = null; ws.getCell(row, 2).value = null; continue; }
       const ref = (p.ref || "").trim();
       const horsMapping = p.productId === 0 && !mapRefs.has(ref);

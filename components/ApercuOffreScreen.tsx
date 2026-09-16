@@ -8,6 +8,7 @@ import {
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef, detailPalier, calcGrandsComptes,
 } from "@/lib/calc-offre";
 import { buildSyntheseLogistique } from "@/lib/logistique";
+import { genereCA, estOpca, coutOpca, remiseAddLigne } from "@/lib/type-produit";
 
 import { C } from "@/lib/theme";
 const fmtEur = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
@@ -48,13 +49,14 @@ function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
     produits: arts.map(a => {
       // Réplique la gratuité : UG / Testeur / PLV / Échantillon → tarif de vente et PPC = 0
       // (aucun CA). Le coût reste réel. Même règle que l'export.
-      const estVente = (a.typProd || "Produit Vente") === "Produit Vente";
+      const estVente = genereCA(a.typProd);
+      const opca = estOpca(a.typProd);
       return {
         ref: a.ref.trim(), name: a.name || "", barcode: a.barcode || "",
         qtyParPack: qtyParPack(a, pal, totalP, vent, arts),
-        standardPrice: a.standardPrice || 0,
+        standardPrice: opca ? coutOpca(a.listPrice) : (a.standardPrice || 0),  // OPCA : 55 % du seuil
         listPrice: estVente ? (a.listPrice || 0) : 0,
-        ppc: estVente ? (a.ppc || 0) : 0,
+        ppc: estVente && !opca ? (a.ppc || 0) : 0,
         typProd: a.typProd || "Produit Vente",
       };
     }),
@@ -165,9 +167,9 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
     const keyOf = (p: any) => { const r = (p.ref || "").trim(); return (r && count[r] > 1) ? `${r}#${p.typProd || "Produit Vente"}` : r; };
     const info = pal1.produits.map(p => ({
       key: keyOf(p),
-      listPrice: (p.typProd || "Produit Vente") === "Produit Vente" ? (p.listPrice || 0) : 0,
+      listPrice: genereCA(p.typProd) ? (p.listPrice || 0) : 0,
       standardPrice: p.standardPrice || 0,
-      remiseAdd: pal1.remiseAdd || 0,
+      remiseAdd: remiseAddLigne(p.typProd, pal1.remiseAdd || 0),
     }));
     return calcGrandsComptes(gcEnseignes.map(e => ({ nom: e.nom, remise: e.remise, qties: e.qties })), info);
   }, [paliers, gcEnseignes]);
@@ -177,7 +179,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
     if (!camp) return null;
     const virtual: CampagneCreee = {
       ...camp,
-      articles: (paliers[0]?.produits || []).map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode })),
+      articles: (paliers[0]?.produits || []).map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, typProd: p.typProd })),
       paliers: paliers.map(p => ({
         code: p.code, label: p.label, nbPacks: p.nbPacks,
         qtyParPack: Object.fromEntries(p.produits.map(pr => [pr.ref, pr.qtyParPack])),
@@ -357,6 +359,7 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
               <span style={{ fontSize: 12, color: C.textMuted }}>Remise add.</span>
               <input type="number" step="0.1" style={{ ...input, width: 60 }} value={Math.round(pal.remiseAdd * 1000) / 10} onChange={e => setPalier(pi, { remiseAdd: (parseFloat(e.target.value) || 0) / 100 })} />
               <span style={{ fontSize: 12, color: C.textMuted }}>%</span>
+              {pal.produits.some(p => estOpca(p.typProd)) && <span style={{ fontSize: 11, color: "#b45309" }}>(sauf OPCA : 0 %)</span>}
               <div style={{ flex: 1 }} />
               <span style={{ fontSize: 13, fontWeight: 700, color: C.blue }}>CA {fmtEur(r.caTotal)}</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: C.green }}>Marge {fmtEur(r.margeTotal)} ({fmtPct(r.margePct)})</span>
@@ -487,7 +490,7 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
                   {pal.produits.map((p: any, ri: number) => {
                     // PPC remisé = PPC × (1 − remise add.) ; Montant BRI = PPC − PPC remisé
                     // (l'économie client). Formules identiques aux colonnes K et L du template.
-                    const ppcRem = (p.ppc || 0) * (1 - (pal.remiseAdd || 0));
+                    const ppcRem = (p.ppc || 0) * (1 - remiseAddLigne(p.typProd, pal.remiseAdd || 0));
                     const bri = (p.ppc || 0) - ppcRem;
                     return (
                     <tr key={ri}>
@@ -539,9 +542,9 @@ function GrandsComptesBloc({ produits, remiseAdd, enseignes, gcMax, setGcQty, se
   // du palier de référence, passée en prop.
   const gcInfo = produits.map((p: any) => ({
     key: keyOf(p),
-    listPrice: (p.typProd || "Produit Vente") === "Produit Vente" ? (p.listPrice || 0) : 0,
+    listPrice: genereCA(p.typProd) ? (p.listPrice || 0) : 0,
     standardPrice: p.standardPrice || 0,
-    remiseAdd,
+    remiseAdd: remiseAddLigne(p.typProd, remiseAdd),
   }));
   const gcCalc = calcGrandsComptes(enseignes.map(e => ({ nom: e.nom, remise: e.remise, qties: e.qties })), gcInfo);
 

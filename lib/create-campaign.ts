@@ -5,6 +5,7 @@
 // par palier (conso ÷ nbPacks du palier), puis produit le même fichier Proposition.
 
 import * as odoo from "@/lib/odoo";
+import { genereCA, estOpca, coutOpca, TYP_OPCA } from "@/lib/type-produit";
 
 export interface ArticleCampagne {
   ref: string;            // code article (commun à tous les paliers)
@@ -25,7 +26,7 @@ export interface ArticleCampagne {
 }
 
 // Valeurs possibles du type de produit (liste déroulante).
-export const TYPES_PRODUIT = ["Produit Vente", "Testeur", "Échantillon", "UG", "PLV"];
+export const TYPES_PRODUIT = ["Produit Vente", TYP_OPCA, "Testeur", "Échantillon", "UG", "PLV"];
 
 export interface PalierSaisi {
   code: string;           // ex. "REGE1"
@@ -439,16 +440,17 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
         // prix de vente (listPrice) et PPC forcés à 0 → aucun CA généré. Le coût (standardPrice)
         // est conservé car ces produits ont un coût réel pour l'entreprise.
         const typ = a.typProd || "Produit Vente";
-        const estVente = typ === "Produit Vente";
+        const estVente = genereCA(typ);
         return {
           ref: a.ref.trim(),
           name: a.name || "",
           productId: a.productId || 0,
           qtyParPack: qtyParPack(a, pal, totalP, vent, arts),
           barcode: a.barcode || "",
-          standardPrice: a.standardPrice || 0,
+          // OPCA : coût = 55 % du seuil (marge 45 %), pas de PPC.
+          standardPrice: estOpca(typ) ? coutOpca(a.listPrice) : (a.standardPrice || 0),
           listPrice: estVente ? (a.listPrice || 0) : 0,
-          ppc: estVente ? (a.ppc || 0) : 0,
+          ppc: estVente && !estOpca(typ) ? (a.ppc || 0) : 0,
           typProd: typ,
         };
       }),
