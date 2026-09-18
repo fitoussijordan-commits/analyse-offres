@@ -408,12 +408,14 @@ function fillProposition(ws: ExcelJS.Worksheet, payload: PropPayload, mapRefs: S
       // Formule (pas une valeur) pour rester cohérent si on édite une qté à la main.
       ws.getCell(blk.nbProduitsRow, 2).value = { formula: `SUM(E${blk.pvFirst}:E${blk.dataLast})` };
 
-      // % Offres par typologie : si une reco PROPRE AU PALIER (commandes N-1 du code offre par
-      // statut) est fournie, on l'écrit sur la ligne %Offres (= remiseRow-1). Sinon on laisse
-      // les valeurs en dur du gabarit. Chaque palier a donc sa propre répartition.
-      if (pal.pctOffres && pal.pctOffres.length === TYPO_COLS.length) {
+      // % Offres par typologie : reco PROPRE AU PALIER (commandes N-1 du code offre par statut)
+      // si fournie, sinon la répartition par défaut du gabarit. Ce repli est indispensable :
+      // sans % offres, le "Nb Offres" de chaque typologie vaut 0 et TOUT le CA du bloc tombe à
+      // zéro dans Excel (alors que l'écran, lui, applique déjà ce même défaut).
+      {
+        const pcts = pal.pctOffres && pal.pctOffres.length === TYPO_COLS.length ? pal.pctOffres : DEFAULT_PCTS;
         const pctRow = blk.remiseRow - 1;
-        TYPO_COLS.forEach((t, idx) => { ws.getCell(`${t.param}${pctRow}`).value = pal.pctOffres![idx]; });
+        TYPO_COLS.forEach((t, idx) => { ws.getCell(`${t.param}${pctRow}`).value = pcts[idx]; });
       }
 
       // Remises par typologie : priorité (1) remises éditées (aperçu), (2) remise standard,

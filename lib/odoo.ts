@@ -538,6 +538,7 @@ export interface StatsSeuil {
   nbClients: number;     // clients distincts derrière ces commandes
   caTotal: number;       // CA HT cumulé de ces commandes
   panierMoyen: number;
+  parStatut: Record<string, number>;  // nb de commandes par statut client ("" = sans statut)
 }
 
 /**
@@ -550,7 +551,7 @@ export async function compterCommandesSeuil(
   session: OdooSession, dateFrom: string, dateTo: string,
   seuilMin: number, seuilMax?: number | null, statuts?: string[] | null,
 ): Promise<StatsSeuil> {
-  const vide: StatsSeuil = { nbCommandes: 0, nbClients: 0, caTotal: 0, panierMoyen: 0 };
+  const vide: StatsSeuil = { nbCommandes: 0, nbClients: 0, caTotal: 0, panierMoyen: 0, parStatut: {} };
   if (!dateFrom || !dateTo || !(seuilMin > 0)) return vide;
 
   const domain: any[] = [
@@ -564,21 +565,30 @@ export async function compterCommandesSeuil(
   let retenues = (orders || []) as any[];
   if (!retenues.length) return vide;
 
-  // Filtre statut client (instituts) : lu sur les partenaires des commandes trouvées.
+  // Statut client de chaque commande : sert au filtre instituts ET à la répartition affichée
+  // (elle donne les vrais libellés de la base, et alimente les % offres par typologie).
+  const pidDe = (o: any) => (Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id) as number;
+  const pids = [...new Set(retenues.map(pidDe).filter(Boolean))];
+  const partners = pids.length
+    ? await searchRead(session, "res.partner", [["id", "in", pids]], ["id", "x_statut_client_id"], 0)
+    : [];
+  const statutDuPartner: Record<number, string> = {};
+  for (const p of (partners || []) as any[]) {
+    statutDuPartner[p.id] = p.x_statut_client_id ? String(p.x_statut_client_id[1] || "").trim() : "";
+  }
   if (statuts && statuts.length) {
-    const pids = [...new Set(retenues.map(o => (Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id)).filter(Boolean))] as number[];
-    const partners = await searchRead(session, "res.partner", [["id", "in", pids]], ["id", "x_statut_client_id"], 0);
-    const ok = new Set<number>();
-    const vouluBas = statuts.map(s => s.toLowerCase());
-    for (const p of (partners || []) as any[]) {
-      const nom = p.x_statut_client_id ? String(p.x_statut_client_id[1] || "").toLowerCase() : "";
-      if (nom && vouluBas.includes(nom)) ok.add(p.id);
-    }
-    retenues = retenues.filter(o => ok.has(Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id));
+    const voulus = statuts.map(s => s.toLowerCase());
+    retenues = retenues.filter(o => voulus.includes((statutDuPartner[pidDe(o)] || "").toLowerCase()));
   }
   if (!retenues.length) return vide;
 
+  const parStatut: Record<string, number> = {};
+  for (const o of retenues) {
+    const st = statutDuPartner[pidDe(o)] || "";
+    parStatut[st] = (parStatut[st] || 0) + 1;
+  }
+
   const caTotal = retenues.reduce((s, o) => s + (typeof o.amount_untaxed === "number" ? o.amount_untaxed : 0), 0);
   const clients = new Set(retenues.map(o => (Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id)).filter(Boolean));
-  return { nbCommandes: retenues.length, nbClients: clients.size, caTotal, panierMoyen: caTotal / retenues.length };
+  return { nbCommandes: retenues.length, nbClients: clients.size, caTotal, panierMoyen: caTotal / retenues.length, parStatut };
 }

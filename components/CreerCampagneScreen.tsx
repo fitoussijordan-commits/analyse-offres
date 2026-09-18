@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import { genereCA, estOpca, coutOpca, TYP_OPCA } from "@/lib/type-produit";
-import { STATUTS_INSTITUT } from "@/lib/calc-offre";
+import { STATUTS_INSTITUT, TYPOLOGIES } from "@/lib/calc-offre";
 import {
   CampagneCreee, PalierSaisi, ArticleCampagne, genId,
   analyseCampagneCreee, toExportPayload, qtyParPack, totalPacks, ventilationPalier, TYPES_PRODUIT,
@@ -414,9 +414,16 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         session, camp.periodeDebut, camp.periodeFin, seuil, seuilSup,
         pal.opcaInstitutsSeuls === false ? null : STATUTS_INSTITUT,
       );
-      setPalier(pi, { nbPacks: st.nbCommandes });
+      // % offres par typologie = répartition RÉELLE des commandes N-1 par statut client.
+      // Sans ça, l'Excel retombe sur la répartition générique du gabarit (50/10/10/10/10/5/5).
+      const parTypo = TYPOLOGIES.map(t => st.parStatut[t] || 0);
+      const totalTypo = parTypo.reduce((a, b) => a + b, 0);
+      setPalier(pi, { nbPacks: st.nbCommandes, ...(totalTypo > 0 ? { pctOffresReco: parTypo.map(n => n / totalTypo) } : {}) });
       const borne = seuilSup ? `${seuil}–${seuilSup - 1} €` : `≥ ${seuil} €`;
-      setOpcaEstim(e => ({ ...e, [pi]: `${fmtNum(st.nbCommandes)} commande(s) ${borne} · ${fmtNum(st.nbClients)} client(s) · panier moyen ${fmtNum(st.panierMoyen)} €` }));
+      // Répartition affichée avec les VRAIS libellés de statut de la base (dont « sans statut »).
+      const detail = Object.entries(st.parStatut).sort((a, b) => b[1] - a[1])
+        .map(([nom, n]) => `${fmtNum(n)} ${nom || "sans statut"}`).join(" · ");
+      setOpcaEstim(e => ({ ...e, [pi]: `${fmtNum(st.nbCommandes)} commande(s) ${borne} · ${fmtNum(st.nbClients)} client(s) · panier moyen ${fmtNum(st.panierMoyen)} €${detail ? ` — ${detail}` : ""}${totalTypo > 0 && totalTypo < st.nbCommandes ? ` (${fmtNum(st.nbCommandes - totalTypo)} hors typologies, non réparties)` : ""}` }));
       onToast(st.nbCommandes ? `Estimation N-1 : ${st.nbCommandes} offre(s)` : "Aucune commande N-1 sur ce seuil", st.nbCommandes ? "success" : "error");
     } catch (e: any) { onToast("Erreur estimation : " + e.message, "error"); }
     finally { setOpcaLoading(null); }
