@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import { genereCA, estOpca, coutOpca, TYP_OPCA } from "@/lib/type-produit";
+import { STATUTS_INSTITUT } from "@/lib/calc-offre";
 import {
   CampagneCreee, PalierSaisi, ArticleCampagne, genId,
   analyseCampagneCreee, toExportPayload, qtyParPack, totalPacks, ventilationPalier, TYPES_PRODUIT,
@@ -117,6 +118,9 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   const [dupId, setDupId] = useState<string | null>(null);
   const [dupNom, setDupNom] = useState("");
   const [dupSaving, setDupSaving] = useState(false);
+  // Estimation OPCA depuis N-1 : { indexPalier -> texte affiché } + palier en cours de calcul.
+  const [opcaEstim, setOpcaEstim] = useState<Record<number, string>>({});
+  const [opcaLoading, setOpcaLoading] = useState<number | null>(null);
 
   useEffect(() => { void reload(); }, []);
   // Charger le brouillon transféré depuis l'analyse (préco N+1), une seule fois.
@@ -392,6 +396,30 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
       else onToast(`Export de ${choisies.length} campagne(s) + synthèse logistique`, "success");
     } catch (e: any) { onToast("Erreur export multi : " + e.message, "error"); }
     finally { setExportingMulti(false); }
+  };
+
+  // Estime le nb d'offres d'un palier OPCA = commandes N-1 atteignant le seuil.
+  // Bornes sans chevauchement : [seuil, seuil OPCA suivant[ → une commande ne compte qu'une fois.
+  const estimerOpca = async (pi: number) => {
+    const pal = camp.paliers[pi];
+    const seuil = pal.seuilOpca || 0;
+    if (!seuil) { onToast("Renseigne le seuil du palier (ex. 500)", "error"); return; }
+    if (!camp.periodeDebut || !camp.periodeFin) { onToast("Renseigne la période N-1 (début et fin)", "error"); return; }
+    const seuilSup = camp.paliers
+      .filter(p => p.opca && (p.seuilOpca || 0) > seuil)
+      .reduce<number | null>((min, p) => min == null || (p.seuilOpca || 0) < min ? (p.seuilOpca || 0) : min, null);
+    setOpcaLoading(pi);
+    try {
+      const st = await odoo.compterCommandesSeuil(
+        session, camp.periodeDebut, camp.periodeFin, seuil, seuilSup,
+        pal.opcaInstitutsSeuls === false ? null : STATUTS_INSTITUT,
+      );
+      setPalier(pi, { nbPacks: st.nbCommandes });
+      const borne = seuilSup ? `${seuil}–${seuilSup - 1} €` : `≥ ${seuil} €`;
+      setOpcaEstim(e => ({ ...e, [pi]: `${fmtNum(st.nbCommandes)} commande(s) ${borne} · ${fmtNum(st.nbClients)} client(s) · panier moyen ${fmtNum(st.panierMoyen)} €` }));
+      onToast(st.nbCommandes ? `Estimation N-1 : ${st.nbCommandes} offre(s)` : "Aucune commande N-1 sur ce seuil", st.nbCommandes ? "success" : "error");
+    } catch (e: any) { onToast("Erreur estimation : " + e.message, "error"); }
+    finally { setOpcaLoading(null); }
   };
 
   const articlesValides = camp.articles.filter(a => a.ref.trim());
@@ -781,11 +809,32 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text, flexShrink: 0 }}>Palier {pi + 1}</span>
             <input style={{ ...inputStyle, width: 90, fontFamily: "ui-monospace, monospace", fontSize: 12, color: C.blueDark, background: C.blueSoft, border: `1px solid ${C.blueSoft}` }} value={pal.code} onChange={e => setPalier(pi, { code: e.target.value })} placeholder="Code" />
             <input style={{ ...inputStyle, width: 150 }} value={pal.label} onChange={e => setPalier(pi, { label: e.target.value })} placeholder="Libellé" />
+            <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: pal.opca ? "#b45309" : C.textSec, background: pal.opca ? "#fff7ed" : "transparent", border: `1px solid ${pal.opca ? "#b45309" : C.border}`, borderRadius: 6, padding: "3px 8px", cursor: "pointer" }}
+              title="Offre Produit Contre Achat : le palier vend un SEUIL d'achat (ex. 500 €) et non une composition d'articles. Tarif = seuil, coût 55 % (marge 45 %), remises à 0, panachage libre côté institut.">
+              <input type="checkbox" checked={!!pal.opca} onChange={e => setPalier(pi, { opca: e.target.checked, ...(e.target.checked ? { remiseStandard: true, remiseStandardTaux: 0, remiseAddTaux: 0, nbProduitsPack: undefined } : {}) })} style={{ cursor: "pointer" }} />
+              OPCA
+            </label>
+            {pal.opca && (<>
+              <span style={{ fontSize: 12, color: C.textMuted }}>Seuil</span>
+              <input type="number" style={{ ...inputStyle, width: 90 }} value={pal.seuilOpca || ""} onChange={e => setPalier(pi, { seuilOpca: parseFloat(e.target.value) || 0 })} placeholder="500" title="Montant d'achat HT à atteindre par l'institut" />
+              <span style={{ fontSize: 12, color: C.textMuted }}>€</span>
+            </>)}
             <span style={{ fontSize: 12, color: C.textMuted }}>Nb offres cible</span>
             <input type="number" style={{ ...inputStyle, width: 90 }} value={pal.nbPacks || ""} onChange={e => setPalier(pi, { nbPacks: parseInt(e.target.value) || 0 })} placeholder="0" />
-            <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 6 }} title="Cible de produits (Produit Vente) par offre. La reco répartit ce total au prorata des ventes N-1. Laisse vide pour la reco automatique.">Produits/offre</span>
-            <input type="number" style={{ ...inputStyle, width: 80 }} value={pal.nbProduitsPack || ""} onChange={e => setPalier(pi, { nbProduitsPack: e.target.value === "" ? undefined : (parseInt(e.target.value) || 0) })} placeholder="auto" />
-            {(() => {
+            {pal.opca && (<>
+              <button onClick={() => estimerOpca(pi)} disabled={opcaLoading === pi}
+                title="Compte les commandes N-1 de la période qui atteignent ce seuil (sans chevauchement avec les seuils supérieurs) et remplit le nb d'offres."
+                style={{ padding: "5px 11px", background: "#fff7ed", border: "1px solid #b45309", borderRadius: 7, cursor: opcaLoading === pi ? "default" : "pointer", fontSize: 12, fontWeight: 600, color: "#b45309", fontFamily: "inherit", opacity: opcaLoading === pi ? 0.6 : 1 }}>
+                {opcaLoading === pi ? "Calcul…" : "Estimer depuis N-1"}
+              </button>
+              <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, color: C.textSec, cursor: "pointer" }} title={`Ne compter que les clients Institut (${STATUTS_INSTITUT.join(", ")})`}>
+                <input type="checkbox" checked={pal.opcaInstitutsSeuls !== false} onChange={e => setPalier(pi, { opcaInstitutsSeuls: e.target.checked })} style={{ cursor: "pointer" }} />
+                Instituts seuls
+              </label>
+            </>)}
+            {!pal.opca && <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 6 }} title="Cible de produits (Produit Vente) par offre. La reco répartit ce total au prorata des ventes N-1. Laisse vide pour la reco automatique.">Produits/offre</span>}
+            {!pal.opca && <input type="number" style={{ ...inputStyle, width: 80 }} value={pal.nbProduitsPack || ""} onChange={e => setPalier(pi, { nbProduitsPack: e.target.value === "" ? undefined : (parseInt(e.target.value) || 0) })} placeholder="auto" />}
+            {!pal.opca && (() => {
               // Total réel des qtés/offre (Produit Vente) — recalculé à chaque saisie.
               const ventH = ventilationPalier(articlesValides, pal);
               const total = articlesValides
@@ -918,8 +967,26 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
             <span style={{ fontSize: 12, color: C.textMuted, whiteSpace: "nowrap" }}>Descriptif</span>
             <input style={{ ...inputStyle, flex: 1 }} value={pal.descriptif ?? ""} onChange={e => setPalier(pi, { descriptif: e.target.value })} placeholder="Ex. Panachage 50 offres // Remise 15% pour BRI conso 10€…" title="Texte libre retranscrit dans l'Excel à côté du nom du palier" />
           </div>
+          {pal.opca && (() => {
+            const seuil = pal.seuilOpca || 0;
+            const cout = coutOpca(seuil);
+            const nb = pal.nbPacks || 0;
+            const gratuits = articlesValides.filter(a => !genereCA(a.typProd));
+            const coutGratuits = gratuits.reduce((sum, a) => sum + (a.standardPrice || 0) * (pal.qtyParPack[qtyKey(a, articlesValides)] || 0), 0);
+            const ca = seuil * nb, marge = (seuil - cout - coutGratuits) * nb;
+            return (
+              <div style={{ margin: "10px 16px 0", padding: "9px 12px", background: "#fff7ed", border: "1px solid #b4530933", borderRadius: 8, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: "#b45309" }}>OPCA {seuil ? `${fmtNum(seuil)} €` : "— seuil à saisir"}</span>
+                <span style={{ fontSize: 11.5, color: C.textSec }}>Coût {fmtNum(cout)} € (55 %) · remises forcées à 0 · panachage libre, aucun besoin logistique</span>
+                {nb > 0 && seuil > 0 && <span style={{ fontSize: 11.5, color: C.text, fontWeight: 600 }}>→ CA {fmtNum(ca)} € · marge {fmtNum(marge)} € ({ca > 0 ? (Math.round((marge / ca) * 1000) / 10).toFixed(1) : 0} %{coutGratuits > 0 ? ", gratuits déduits" : ""})</span>}
+                {opcaEstim[pi] && <span style={{ fontSize: 11.5, color: C.textMuted, width: "100%" }}>N-1 : {opcaEstim[pi]}</span>}
+              </div>
+            );
+          })()}
           <div style={{ padding: "8px 16px 14px" }}>
-            {articlesValides.length === 0 ? (
+            {pal.opca && articlesValides.filter(a => !genereCA(a.typProd)).length === 0 ? (
+              <div style={{ fontSize: 12.5, color: C.textMuted, padding: "8px 0" }}>Palier OPCA : ajoute les produits offerts (type UG) dans les articles de la campagne ci-dessus. Les Produit Vente sont ignorés dans ce palier.</div>
+            ) : articlesValides.length === 0 ? (
               <div style={{ fontSize: 13, color: C.textMuted, padding: "8px 0" }}>Ajoute des articles à la campagne ci-dessus.</div>
             ) : (
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -931,7 +998,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                   </tr>
                 </thead>
                 <tbody>
-                  {articlesValides.map((a, ai) => {
+                  {(pal.opca ? articlesValides.filter(a => !genereCA(a.typProd)) : articlesValides).map((a, ai) => {
                     // Clé composite : distingue les doublons de réf (ex. stick vendu vs stick UG).
                     const k = qtyKey(a, articlesValides);
                     // Ventilation "N produits/pack" si le palier a un total saisi, sinon undefined.

@@ -5,6 +5,8 @@
 import { remiseAddLigne } from "@/lib/type-produit";
 
 export const TYPOLOGIES = ["Ambassadeur", "Compagnon", "Challenger", "Rose", "Prunelier", "Anthylide", "Calendula"];
+// Découpage Retail / Institut du gabarit Excel (bandeau ligne 6 : M-R = Retail, S+ = Institut).
+export const STATUTS_INSTITUT = ["Rose", "Prunelier", "Anthylide", "Calendula"];
 // Valeurs par défaut du gabarit (peuvent être surchargées par palier).
 export const DEFAULT_PCTS = [0.5, 0.1, 0.1, 0.1, 0.1, 0.05, 0.05];
 export const DEFAULT_REMISES = [0.17, 0.13, 0.08, 0.325, 0.3, 0.28, 0.25];

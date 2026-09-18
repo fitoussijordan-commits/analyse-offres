@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadCampagnesCreees, upsertCampagne, upsertCampagneCreee } from "@/lib/campaigns";
-import { CampagneCreee, PalierSaisi, ArticleCampagne, GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT, qtyParPack, qtyKeyLib, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse } from "@/lib/create-campaign";
+import { CampagneCreee, PalierSaisi, ArticleCampagne, GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT, qtyParPack, qtyKeyLib, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse, articlesPalier, qtyPalierOpca, REMISES_OPCA } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef, detailPalier, calcGrandsComptes,
@@ -28,6 +28,7 @@ interface Props {
 
 interface PalierEdit {
   code: string; label: string; nbPacks: number; descriptif?: string;
+  opca?: boolean; seuilOpca?: number;   // palier « offre produit contre achat » (seuil d'achat)
   pcts: number[]; remises: number[]; remiseAdd: number;
   produits: { ref: string; name: string; barcode: string; qtyParPack: number; standardPrice: number; listPrice: number; ppc: number; typProd?: string }[];
 }
@@ -37,23 +38,27 @@ function toPaliersEdit(camp: CampagneCreee): PalierEdit[] {
   const totalP = totalPacks(camp.paliers);
   return camp.paliers.map(pal => {
     const vent = ventilationPalier(arts, pal);
+    // Palier OPCA : ligne OPCA (seuil) + gratuits offerts, remises à 0.
+    const artsPal = articlesPalier(arts, pal);
     return {
     code: pal.code, label: pal.label, nbPacks: pal.nbPacks || 0, descriptif: pal.descriptif,
+    opca: pal.opca, seuilOpca: pal.seuilOpca,
     pcts: (pal as any).pctOffresReco && (pal as any).pctOffresReco.length === 7 ? [...(pal as any).pctOffresReco] : [...DEFAULT_PCTS],
     // Remises par typologie : (1) remisesTypo éditées dans l'Aperçu si présentes,
     // (2) sinon remise unique du palier répliquée, (3) sinon défauts du gabarit.
-    remises: (pal as any).remisesTypo && (pal as any).remisesTypo.length === 7
+    remises: pal.opca ? [...REMISES_OPCA]
+      : (pal as any).remisesTypo && (pal as any).remisesTypo.length === 7
       ? [...(pal as any).remisesTypo]
       : pal.remiseStandardTaux != null ? new Array(7).fill(pal.remiseStandardTaux) : [...DEFAULT_REMISES],
-    remiseAdd: pal.remiseAddTaux != null ? pal.remiseAddTaux : REMISE_ADD_DEFAUT,
-    produits: arts.map(a => {
+    remiseAdd: pal.opca ? 0 : (pal.remiseAddTaux != null ? pal.remiseAddTaux : REMISE_ADD_DEFAUT),
+    produits: artsPal.map(a => {
       // Réplique la gratuité : UG / Testeur / PLV / Échantillon → tarif de vente et PPC = 0
       // (aucun CA). Le coût reste réel. Même règle que l'export.
       const estVente = genereCA(a.typProd);
       const opca = estOpca(a.typProd);
       return {
         ref: a.ref.trim(), name: a.name || "", barcode: a.barcode || "",
-        qtyParPack: qtyParPack(a, pal, totalP, vent, arts),
+        qtyParPack: pal.opca ? qtyPalierOpca(a, pal, arts) : qtyParPack(a, pal, totalP, vent, arts),
         standardPrice: opca ? coutOpca(a.listPrice) : (a.standardPrice || 0),  // OPCA : 55 % du seuil
         listPrice: estVente ? (a.listPrice || 0) : 0,
         ppc: estVente && !opca ? (a.ppc || 0) : 0,
@@ -109,16 +114,27 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
     const nouveauxPaliers: PalierSaisi[] = paliers.map((pe, pi) => {
       const orig = camp.paliers[pi] || ({} as PalierSaisi);
       // Qtés/offre figées par clé article (réf seule si unique, sinon réf#type).
-      const qtyParPack: Record<string, number> = {};
-      arts.forEach((a, j) => {
-        const q = pe.produits[j]?.qtyParPack;
-        if (q != null) qtyParPack[qtyKeyLib(a, arts)] = q;
-      });
+      const qtyParPack: Record<string, number> = { ...(orig.qtyParPack || {}) };
+      if (pe.opca) {
+        // Palier OPCA : les lignes affichées sont la ligne OPCA + les gratuits. On réindexe
+        // par référence (les indices ne correspondent plus aux articles de la campagne).
+        for (const pr of pe.produits) {
+          if (estOpca(pr.typProd)) continue;
+          const art = arts.find(a => a.ref.trim() === pr.ref && (a.typProd || "Produit Vente") === (pr.typProd || "Produit Vente"));
+          if (art) qtyParPack[qtyKeyLib(art, arts)] = pr.qtyParPack;
+        }
+      } else {
+        arts.forEach((a, j) => {
+          const q = pe.produits[j]?.qtyParPack;
+          if (q != null) qtyParPack[qtyKeyLib(a, arts)] = q;
+        });
+      }
       // Remise unique si les 7 remises sont identiques, sinon on garde le détail par typo.
       const toutesEgales = pe.remises.every(r => Math.abs(r - pe.remises[0]) < 1e-9);
       return {
         ...orig,
         code: pe.code, label: pe.label, nbPacks: pe.nbPacks, descriptif: pe.descriptif,
+        opca: pe.opca, seuilOpca: pe.seuilOpca,
         qtyParPack,
         nbProduitsPack: undefined,           // les qtés sont désormais figées à la main
         pctOffresReco: [...pe.pcts],
@@ -356,6 +372,7 @@ function OffreTab({ paliers, calcPaliers, setPalier, setPct, setRemise, setQty, 
               <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{pal.label}</span>
               <span style={{ fontSize: 12, color: C.textMuted }}>Nb offres</span>
               <input type="number" style={{ ...input, width: 80 }} value={pal.nbPacks || ""} onChange={e => setPalier(pi, { nbPacks: parseInt(e.target.value) || 0 })} />
+              {pal.opca && <span title="Palier OPCA : CA = seuil × nb offres, coût 55 %, remises à 0" style={{ fontSize: 11, fontWeight: 800, color: "#b45309", background: "#fff7ed", border: "1px solid #b4530955", borderRadius: 5, padding: "2px 7px" }}>OPCA {pal.seuilOpca ? `${pal.seuilOpca} €` : ""}</span>}
               <span style={{ fontSize: 12, color: C.textMuted }}>Remise add.</span>
               <input type="number" step="0.1" style={{ ...input, width: 60 }} value={Math.round(pal.remiseAdd * 1000) / 10} onChange={e => setPalier(pi, { remiseAdd: (parseFloat(e.target.value) || 0) / 100 })} />
               <span style={{ fontSize: 12, color: C.textMuted }}>%</span>

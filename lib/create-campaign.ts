@@ -52,6 +52,15 @@ export interface PalierSaisi {
   // Descriptif libre du palier (saisi par l'utilisateur) → retranscrit dans l'Excel à côté
   // du nom du palier (colonne D de la ligne titre).
   descriptif?: string;
+  // ── Palier OPCA (offre produit contre achat) ───────────────────────────────
+  // Coché : le palier ne vend plus une composition d'articles mais un SEUIL d'achat
+  // (ex. 500 €). Sa composition devient « 1 ligne OPCA (tarif = seuil, coût 55 %) + les
+  // articles gratuits (UG/PLV/Testeur) offerts en échange ». Les remises sont forcées à 0
+  // (le seuil est un montant net). Les articles Produit Vente de la campagne sont ignorés
+  // pour CE palier : les instituts panachent librement dans le catalogue.
+  opca?: boolean;
+  seuilOpca?: number;        // montant du seuil en € (tarif revendeur HT)
+  opcaInstitutsSeuls?: boolean;  // estimation N-1 limitée aux statuts institut
 }
 
 export interface CampagneCreee {
@@ -296,6 +305,40 @@ export async function analyseCampagneCreee(session: odoo.OdooSession, camp: Camp
   return { ...camp, articles, paliers };
 }
 
+// ── Paliers OPCA ────────────────────────────────────────────────────────────
+/** Référence de la ligne OPCA d'un palier (article virtuel, hors Odoo). */
+export function refOpca(seuil?: number): string { return `OPCA${Math.round(seuil || 0)}`; }
+
+/** Ligne OPCA virtuelle d'un palier : tarif = seuil, coût = 55 % (marge 45 %). */
+export function ligneOpca(pal: PalierSaisi): ArticleCampagne {
+  const seuil = pal.seuilOpca || 0;
+  return {
+    ref: refOpca(seuil), name: `OPCA ${seuil} €`, typProd: TYP_OPCA, manuel: true,
+    listPrice: seuil, standardPrice: coutOpca(seuil), ppc: 0, barcode: "", productId: 0, consoN1: 0,
+  };
+}
+
+/**
+ * Articles réellement vendus dans un palier :
+ *  - palier classique → tous les articles de la campagne (comportement inchangé) ;
+ *  - palier OPCA      → la ligne OPCA (seuil) + les articles GRATUITS offerts en échange.
+ *    Les Produit Vente sont écartés : le panachage de l'institut n'est pas une composition figée.
+ */
+export function articlesPalier(articles: ArticleCampagne[], pal: PalierSaisi): ArticleCampagne[] {
+  if (!pal.opca) return articles;
+  return [ligneOpca(pal), ...articles.filter(a => a.ref.trim() && !genereCA(a.typProd))];
+}
+
+/** Qté/offre d'un article dans un palier OPCA : 1 pour la ligne OPCA, la saisie pour les gratuits. */
+export function qtyPalierOpca(art: ArticleCampagne, pal: PalierSaisi, articles: ArticleCampagne[]): number {
+  if (estOpca(art.typProd)) return 1;
+  const m = pal.qtyParPack[qtyKeyLib(art, articles)];
+  return m != null && m > 0 ? m : 0;
+}
+
+/** Remises d'un palier OPCA : toujours 0 (le seuil est un montant net facturé). */
+export const REMISES_OPCA = [0, 0, 0, 0, 0, 0, 0];
+
 /** Somme des packs de tous les paliers d'une campagne (dénominateur de la reco). */
 export function totalPacks(paliers: PalierSaisi[]): number {
   return paliers.reduce((s, p) => s + (p.nbPacks || 0), 0);
@@ -425,17 +468,19 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
     canauxNonB2B: camp.canauxNonB2B ?? CANAUX_NONB2B_DEFAUT,
     paliers: camp.paliers.map(pal => {
       const vent = ventilationPalier(arts, pal);
+      // Palier OPCA : composition = ligne OPCA (seuil) + gratuits, remises forcées à 0.
+      const artsPal = articlesPalier(arts, pal);
       return {
       code: pal.code,
       label: pal.label,
       qtyPacks: pal.nbPacks || 0,
       descriptif: pal.descriptif,
-      remiseStandard: pal.remiseStandard,
-      remiseStandardTaux: pal.remiseStandardTaux,
-      remiseAddTaux: pal.remiseAddTaux,
+      remiseStandard: pal.opca ? true : pal.remiseStandard,
+      remiseStandardTaux: pal.opca ? 0 : pal.remiseStandardTaux,
+      remiseAddTaux: pal.opca ? 0 : pal.remiseAddTaux,
       pctOffres: pal.pctOffresReco,
-      remises: pal.remisesTypo,
-      produits: arts.map(a => {
+      remises: pal.opca ? [...REMISES_OPCA] : pal.remisesTypo,
+      produits: artsPal.map(a => {
         // Tout ce qui n'est PAS "Produit Vente" (UG, Testeur, PLV, Échantillon) est gratuit :
         // prix de vente (listPrice) et PPC forcés à 0 → aucun CA généré. Le coût (standardPrice)
         // est conservé car ces produits ont un coût réel pour l'entreprise.
@@ -445,7 +490,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
           ref: a.ref.trim(),
           name: a.name || "",
           productId: a.productId || 0,
-          qtyParPack: qtyParPack(a, pal, totalP, vent, arts),
+          qtyParPack: pal.opca ? qtyPalierOpca(a, pal, arts) : qtyParPack(a, pal, totalP, vent, arts),
           barcode: a.barcode || "",
           // OPCA : coût = 55 % du seuil (marge 45 %), pas de PPC.
           standardPrice: estOpca(typ) ? coutOpca(a.listPrice) : (a.standardPrice || 0),

@@ -10,7 +10,7 @@
 
 import type ExcelJS from "exceljs";
 import type { CampagneCreee } from "@/lib/create-campaign";
-import { qtyParPack, totalPacks, ventilationPalier } from "@/lib/create-campaign";
+import { qtyParPack, totalPacks, ventilationPalier, articlesPalier, qtyPalierOpca } from "@/lib/create-campaign";
 import { estOpca } from "@/lib/type-produit";
 
 export const MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
@@ -154,16 +154,19 @@ export function repartirAbsolu(total: number, absDebut: number, absFin: number):
 /** Besoin total par référence d'une campagne = somme(qté/pack × nb packs) sur les paliers. */
 function besoinsCampagne(camp: CampagneCreee): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const art of camp.articles) {
-    const ref = art.ref.trim();
-    if (!ref || estOpca(art.typProd)) continue; // OPCA : panier virtuel, rien à approvisionner
-    let total = 0;
-    const totalP = totalPacks(camp.paliers);
-    for (const pal of camp.paliers) {
-      const vent = ventilationPalier(camp.articles, pal);
-      total += qtyParPack(art, pal, totalP, vent, camp.articles) * (pal.nbPacks || 0);
+  const totalP = totalPacks(camp.paliers);
+  for (const pal of camp.paliers) {
+    const vent = ventilationPalier(camp.articles, pal);
+    // Palier OPCA : seuls les gratuits offerts sont à approvisionner (le panachage de
+    // l'institut n'est pas une composition figée, la ligne OPCA n'est pas un produit).
+    for (const art of articlesPalier(camp.articles, pal)) {
+      const ref = art.ref.trim();
+      if (!ref || estOpca(art.typProd)) continue;
+      const qte = pal.opca
+        ? qtyPalierOpca(art, pal, camp.articles)
+        : qtyParPack(art, pal, totalP, vent, camp.articles);
+      out[ref] = (out[ref] || 0) + qte * (pal.nbPacks || 0);
     }
-    out[ref] = (out[ref] || 0) + total;
   }
   return out;
 }

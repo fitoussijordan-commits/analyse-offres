@@ -531,3 +531,54 @@ export async function getFieldNames(session: OdooSession, model: string): Promis
   const res = await call(session, "/web/dataset/call_kw", { model, method: "fields_get", args: [], kwargs: { attributes: ["type"] } });
   return new Set(Object.keys(res || {}));
 }
+
+// ── Estimation OPCA : commandes atteignant un seuil d'achat sur une période ───
+export interface StatsSeuil {
+  nbCommandes: number;   // commandes dont le montant HT est dans [seuilMin, seuilMax[
+  nbClients: number;     // clients distincts derrière ces commandes
+  caTotal: number;       // CA HT cumulé de ces commandes
+  panierMoyen: number;
+}
+
+/**
+ * Compte les commandes confirmées d'une période dont le montant HT atteint un seuil.
+ * Sert à estimer le nombre d'offres d'un palier OPCA à partir de N-1.
+ * @param seuilMax borne haute EXCLUE (une commande de 1 200 € ne déclenche que l'OPCA 1000).
+ * @param statuts  si fourni, ne garde que les clients ayant l'un de ces statuts (instituts).
+ */
+export async function compterCommandesSeuil(
+  session: OdooSession, dateFrom: string, dateTo: string,
+  seuilMin: number, seuilMax?: number | null, statuts?: string[] | null,
+): Promise<StatsSeuil> {
+  const vide: StatsSeuil = { nbCommandes: 0, nbClients: 0, caTotal: 0, panierMoyen: 0 };
+  if (!dateFrom || !dateTo || !(seuilMin > 0)) return vide;
+
+  const domain: any[] = [
+    ["state", "in", ["sale", "done"]],
+    ["date_order", ">=", `${dateFrom} 00:00:00`],
+    ["date_order", "<=", `${dateTo} 23:59:59`],
+    ["amount_untaxed", ">=", seuilMin],
+  ];
+  if (seuilMax && seuilMax > seuilMin) domain.push(["amount_untaxed", "<", seuilMax]);
+  const orders = await searchRead(session, "sale.order", domain, ["id", "partner_id", "amount_untaxed"], 0);
+  let retenues = (orders || []) as any[];
+  if (!retenues.length) return vide;
+
+  // Filtre statut client (instituts) : lu sur les partenaires des commandes trouvées.
+  if (statuts && statuts.length) {
+    const pids = [...new Set(retenues.map(o => (Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id)).filter(Boolean))] as number[];
+    const partners = await searchRead(session, "res.partner", [["id", "in", pids]], ["id", "x_statut_client_id"], 0);
+    const ok = new Set<number>();
+    const vouluBas = statuts.map(s => s.toLowerCase());
+    for (const p of (partners || []) as any[]) {
+      const nom = p.x_statut_client_id ? String(p.x_statut_client_id[1] || "").toLowerCase() : "";
+      if (nom && vouluBas.includes(nom)) ok.add(p.id);
+    }
+    retenues = retenues.filter(o => ok.has(Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id));
+  }
+  if (!retenues.length) return vide;
+
+  const caTotal = retenues.reduce((s, o) => s + (typeof o.amount_untaxed === "number" ? o.amount_untaxed : 0), 0);
+  const clients = new Set(retenues.map(o => (Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id)).filter(Boolean));
+  return { nbCommandes: retenues.length, nbClients: clients.size, caTotal, panierMoyen: caTotal / retenues.length };
+}
