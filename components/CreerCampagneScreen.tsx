@@ -779,6 +779,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                     setArticle(ai, patch);
                   }}>
                     {TYPES_PRODUIT.map(t => <option key={t} value={t}>{t}</option>)}
+                    {a.typProd && !TYPES_PRODUIT.includes(a.typProd) && <option value={a.typProd}>{a.typProd}</option>}
                   </select>
                 </td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>

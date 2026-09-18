@@ -26,7 +26,10 @@ export interface ArticleCampagne {
 }
 
 // Valeurs possibles du type de produit (liste déroulante).
-export const TYPES_PRODUIT = ["Produit Vente", TYP_OPCA, "Testeur", "Échantillon", "UG", "PLV"];
+// OPCA n'y figure pas : une offre produit contre achat se déclare en cochant OPCA sur le
+// PALIER (la ligne OPCA est alors générée avec son seuil). Le type reste géré partout pour
+// cette ligne virtuelle, et pour une éventuelle campagne saisie à la main avant ce choix.
+export const TYPES_PRODUIT = ["Produit Vente", "Testeur", "Échantillon", "UG", "PLV"];
 
 export interface PalierSaisi {
   code: string;           // ex. "REGE1"
