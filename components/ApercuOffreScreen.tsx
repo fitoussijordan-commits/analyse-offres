@@ -233,24 +233,41 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
     finally { setExporting(false); }
   };
 
-  // Gros export annuel : les campagnes de l'année choisie → 1 onglet/campagne + synthèse
-  // logistique cumulée + synthèse CA annuelle. Utilise les campagnes SAUVEGARDÉES
-  // (pas les éditions non enregistrées).
+  // Export annuel PAR SÉLECTION : une fenêtre liste les campagnes sauvegardées, filtrables par
+  // année, et l'utilisateur coche celles à exporter (ex. écarter un scénario non retenu).
+  // → 1 onglet/campagne + synthèse logistique cumulée + synthèse CA. Utilise les campagnes
+  // SAUVEGARDÉES (pas les éditions non enregistrées).
   // Année de rangement : champ « Année / cycle » saisi, sinon l'année de la date de début.
   const yearOf = (c: CampagneCreee): string => (c.annee || "").trim() || (c.dateDebut || "").slice(0, 4) || "—";
   const anneesDispo = useMemo(() => [...new Set(saved.map(yearOf))].sort((a, b) => b.localeCompare(a)), [saved]);
+  const [exportOuvert, setExportOuvert] = useState(false);
   const [exportYear, setExportYear] = useState<string>("all");
-  const campagnesAnnee = useMemo(
-    () => exportYear === "all" ? saved : saved.filter(c => yearOf(c) === exportYear),
+  const [exportSel, setExportSel] = useState<Set<string>>(new Set());
+  const campagnesVisibles = useMemo(
+    () => (exportYear === "all" ? saved : saved.filter(c => yearOf(c) === exportYear))
+      .slice().sort((a, b) => (a.dateDebut || "").localeCompare(b.dateDebut || "") || (a.nom || "").localeCompare(b.nom || "")),
     [saved, exportYear],
   );
+  // Choisir une année coche d'office toutes ses campagnes : il ne reste qu'à décocher.
+  const choisirAnnee = (y: string) => {
+    setExportYear(y);
+    setExportSel(new Set((y === "all" ? saved : saved.filter(c => yearOf(c) === y)).map(c => c.id)));
+  };
+  const ouvrirExport = () => { choisirAnnee(camp ? yearOf(camp) : (anneesDispo[0] || "all")); setExportOuvert(true); };
+  const toggleExport = (id: string) => setExportSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toutesCochees = campagnesVisibles.length > 0 && campagnesVisibles.every(c => exportSel.has(c.id));
+  const toutCocher = (oui: boolean) => setExportSel(s => { const n = new Set(s); for (const c of campagnesVisibles) oui ? n.add(c.id) : n.delete(c.id); return n; });
+  // Seules les campagnes cochées ET visibles partent : changer d'année ne garde pas de sélection cachée.
+  const selectionExport = campagnesVisibles.filter(c => exportSel.has(c.id));
+
   const [exportingAnnuel, setExportingAnnuel] = useState(false);
   const exporterAnnuel = async () => {
-    if (!campagnesAnnee.length) { onToast(exportYear === "all" ? "Aucune campagne à exporter" : `Aucune campagne pour ${exportYear}`, "error"); return; }
+    const choisies = selectionExport;
+    if (!choisies.length) { onToast("Coche au moins une campagne", "error"); return; }
     setExportingAnnuel(true);
     try {
-      const campagnes = campagnesAnnee.map(c => toExportPayload(c));
-      const logistique = buildSyntheseLogistique(campagnesAnnee);
+      const campagnes = choisies.map(c => toExportPayload(c));
+      const logistique = buildSyntheseLogistique(choisies);
       const body: any = { campagnes, logistique };
       // Mapping catalogue (une seule fois pour tout le classeur).
       try {
@@ -260,10 +277,14 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
       const res = await fetch("/api/export-multi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = `campagnes_${exportYear === "all" ? "toutes_annees" : exportYear.replace(/[^0-9A-Za-z_-]+/g, "_")}.xlsx`; a.click(); URL.revokeObjectURL(url);
+      // Nom de fichier : année entière → campagnes_2027 ; sélection partielle → campagnes_2027_selection.
+      const suffixeAnnee = exportYear === "all" ? "toutes_annees" : exportYear.replace(/[^0-9A-Za-z_-]+/g, "_");
+      const partiel = choisies.length < campagnesVisibles.length;
+      const a = document.createElement("a"); a.href = url; a.download = `campagnes_${suffixeAnnee}${partiel ? "_selection" : ""}.xlsx`; a.click(); URL.revokeObjectURL(url);
+      setExportOuvert(false);
       if (logistique.ignorees?.length) onToast(`Exporté, mais NON comptée(s) dans la logistique (dates invalides) : ${logistique.ignorees.join(", ")}`, "error");
-      else onToast(`Export ${exportYear === "all" ? "annuel" : exportYear} : ${campagnesAnnee.length} campagne(s)`, "success");
-    } catch (e: any) { onToast("Erreur export annuel : " + e.message, "error"); }
+      else onToast(`Export : ${choisies.length} campagne(s)`, "success");
+    } catch (e: any) { onToast("Erreur export : " + e.message, "error"); }
     finally { setExportingAnnuel(false); }
   };
 
@@ -295,11 +316,45 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
         <button onClick={sauvegarder} disabled={saving} style={{ padding: "8px 16px", background: C.white, border: `1px solid ${C.blue}`, borderRadius: 8, cursor: saving ? "default" : "pointer", fontSize: 13, fontWeight: 600, color: C.blueDark, fontFamily: "inherit", opacity: saving ? 0.6 : 1 }}>{saving ? "Enregistrement…" : "Enregistrer les modifications"}</button>
         <button onClick={validerPourAnalyse} style={{ padding: "8px 16px", background: C.teal, border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit" }}>✓ Valider → suivre la progression</button>
         <button onClick={exporter} disabled={exporting} style={{ padding: "8px 16px", background: C.blue, border: "none", borderRadius: 8, cursor: exporting ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exporting ? 0.6 : 1 }}>{exporting ? "Export…" : "Exporter Excel"}</button>
-        <select value={exportYear} onChange={e => setExportYear(e.target.value)} title="Année à exporter" style={{ ...input, width: 130, textAlign: "left", fontSize: 13, padding: "7px 10px" }}>
-          <option value="all">Toutes années</option>
-          {anneesDispo.map(y => <option key={y} value={y}>{`Année ${y}`}</option>)}
-        </select>
-        <button onClick={exporterAnnuel} disabled={exportingAnnuel || !campagnesAnnee.length} title={`${campagnesAnnee.length} campagne(s) ${exportYear === "all" ? "(toutes années)" : `de ${exportYear}`} : 1 onglet par campagne + synthèse logistique cumulée + synthèse CA annuelle`} style={{ padding: "8px 16px", background: campagnesAnnee.length ? C.blueDark : C.border, border: "none", borderRadius: 8, cursor: exportingAnnuel || !campagnesAnnee.length ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingAnnuel ? 0.6 : 1 }}>{exportingAnnuel ? "Export…" : `📚 Export annuel (${exportYear === "all" ? "toutes campagnes" : exportYear} · ${campagnesAnnee.length})`}</button>
+        <button onClick={ouvrirExport} title="Choisir les campagnes à exporter : 1 onglet par campagne + synthèse logistique cumulée + synthèse CA" style={{ padding: "8px 16px", background: C.blueDark, border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit" }}>Export multi-campagnes…</button>
+        {exportOuvert && (
+          <div onClick={() => !exportingAnnuel && setExportOuvert(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,20,28,0.35)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+            <div onClick={e => e.stopPropagation()} role="dialog" aria-label="Export multi-campagnes" style={{ background: C.white, borderRadius: 12, boxShadow: C.shadowMd, width: "min(560px, 100%)", maxHeight: "80vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              <div style={{ padding: "16px 20px 12px", borderBottom: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Exporter des campagnes</div>
+                <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>Un onglet par campagne, avec la synthèse logistique et la synthèse CA des campagnes cochées.</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+                  <select value={exportYear} onChange={e => choisirAnnee(e.target.value)} style={{ ...input, width: 150, textAlign: "left", fontSize: 13, padding: "6px 10px" }}>
+                    <option value="all">Toutes années</option>
+                    {anneesDispo.map(y => <option key={y} value={y}>{`Année ${y}`}</option>)}
+                  </select>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: C.textSec, cursor: "pointer" }}>
+                    <input type="checkbox" checked={toutesCochees} onChange={e => toutCocher(e.target.checked)} />
+                    Tout cocher
+                  </label>
+                  <div style={{ flex: 1 }} />
+                  <span style={{ fontSize: 12, color: C.textMuted }}>{selectionExport.length} / {campagnesVisibles.length} cochée(s)</span>
+                </div>
+              </div>
+              <div style={{ overflowY: "auto", padding: "6px 8px" }}>
+                {campagnesVisibles.length === 0 && <div style={{ padding: 20, fontSize: 13, color: C.textMuted, textAlign: "center" }}>Aucune campagne pour cette année.</div>}
+                {campagnesVisibles.map(c => (
+                  <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, cursor: "pointer", background: exportSel.has(c.id) ? C.blueSoft : "transparent" }}>
+                    <input type="checkbox" checked={exportSel.has(c.id)} onChange={() => toggleExport(c.id)} />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.nom || "(sans nom)"}</span>
+                      <span style={{ display: "block", fontSize: 11.5, color: C.textMuted }}>{fmtDate(c.dateDebut)} → {fmtDate(c.dateFin)} · {c.paliers.length} palier{c.paliers.length > 1 ? "s" : ""}{exportYear === "all" ? ` · ${yearOf(c)}` : ""}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button onClick={() => setExportOuvert(false)} disabled={exportingAnnuel} style={{ padding: "8px 14px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.textSec, fontFamily: "inherit" }}>Annuler</button>
+                <button onClick={exporterAnnuel} disabled={exportingAnnuel || !selectionExport.length} style={{ padding: "8px 16px", background: selectionExport.length ? C.blueDark : C.border, border: "none", borderRadius: 8, cursor: exportingAnnuel || !selectionExport.length ? "default" : "pointer", fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "inherit", opacity: exportingAnnuel ? 0.6 : 1 }}>{exportingAnnuel ? "Export…" : `Exporter ${selectionExport.length} campagne${selectionExport.length > 1 ? "s" : ""}`}</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bannière : nom + dates de campagne */}
