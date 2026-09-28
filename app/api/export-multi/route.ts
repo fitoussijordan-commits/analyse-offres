@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
+import "@/lib/server/excel-notes"; // bulles de survol dimensionnées selon leur texte
 import path from "path";
 import { fillPropositionSheet, fillMapping, PROP_SHEET, MAPPING_SHEET, PropPayload, MapRow } from "@/lib/fill-proposition";
 import { writeSyntheseLogistiqueSheet, SyntheseLogistique } from "@/lib/logistique";
