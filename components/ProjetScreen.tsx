@@ -55,6 +55,12 @@ async function dbUpdate(p: ProjetKit, userLogin: string): Promise<void> {
   if (error) throw error;
 }
 
+// Suppression DÉFINITIVE (la table n'a pas de corbeille) : confirmée dans l'écran.
+async function dbDelete(id: string): Promise<void> {
+  const { error } = await supabase.from("projets_kits").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // Migration localStorage → Supabase (one-shot)
 const LS_MIGRATE_KEY = "ao_kits_migrated_v1";
 async function migrateFromLocalStorage(userLogin: string): Promise<number> {
@@ -287,9 +293,9 @@ function FormulaireProjet({ projet, onSave, onCancel, onToast }: {
 }
 
 // ─── DÉTAIL PROJET ─────────────────────────────────────────────────────────────
-function DetailProjet({ projet, session, onBack, onUpdate, onToast }: {
+function DetailProjet({ projet, session, onBack, onUpdate, onDelete, onToast }: {
   projet: ProjetKit; session: odoo.OdooSession;
-  onBack: () => void; onUpdate: (p: ProjetKit) => void; onToast: Props["onToast"];
+  onBack: () => void; onUpdate: (p: ProjetKit) => void; onDelete: (p: ProjetKit) => void; onToast: Props["onToast"];
 }) {
   const [stock, setStock] = useState<StockInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -366,6 +372,10 @@ function DetailProjet({ projet, session, onBack, onUpdate, onToast }: {
           <button onClick={() => setEditing(true)} style={{ height:32, padding:"0 14px", display:"flex", alignItems:"center", gap:6, background:C.bg, border:`1px solid ${C.border}`, borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600, color:C.textSec, fontFamily:"inherit" }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             Modifier
+          </button>
+          <button onClick={() => onDelete(projet)} title="Supprimer définitivement ce projet" style={{ height:32, padding:"0 14px", display:"flex", alignItems:"center", gap:6, background:C.surface, border:`1px solid ${C.red}55`, borderRadius:8, cursor:"pointer", fontSize:12, fontWeight:600, color:C.red, fontFamily:"inherit" }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
+            Supprimer
           </button>
         </div>
 
@@ -704,6 +714,17 @@ export default function ProjetScreen({ session, onToast }: Props) {
       onToast("Erreur sauvegarde : " + e.message, "error");
     }
   };
+  const handleDelete = async (p: ProjetKit) => {
+    if (!window.confirm(`Supprimer définitivement le projet « ${p.nom} » ?\n\nCette action est irréversible.`)) return;
+    try {
+      await dbDelete(p.id);
+      setProjets(prev => prev.filter(x => x.id !== p.id));
+      setSelectedId(null); setView("liste");
+      onToast(`Projet « ${p.nom} » supprimé`, "success");
+    } catch (e: any) {
+      onToast("Erreur suppression : " + e.message, "error");
+    }
+  };
   const handleUpdate = async (p: ProjetKit) => {
     try {
       await dbUpdate(p, session.login);
@@ -733,7 +754,7 @@ export default function ProjetScreen({ session, onToast }: Props) {
         : <>
             {view==="liste" && <ListeProjets projets={projets} onSelect={p=>{ setSelectedId(p.id); setView("detail"); }} onNew={()=>setView("nouveau")} />}
             {view==="nouveau" && <FormulaireProjet onSave={handleSave} onCancel={()=>setView("liste")} onToast={onToast} />}
-            {view==="detail" && selected && <DetailProjet projet={selected} session={session} onBack={()=>setView("liste")} onUpdate={handleUpdate} onToast={onToast} />}
+            {view==="detail" && selected && <DetailProjet projet={selected} session={session} onBack={()=>setView("liste")} onUpdate={handleUpdate} onDelete={handleDelete} onToast={onToast} />}
           </>
       }
     </div>
