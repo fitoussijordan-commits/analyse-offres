@@ -181,11 +181,10 @@ export default function Home() {
       <div style={{ minHeight: "100vh", background: D.sidebar, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
         <div style={{ width: "100%", maxWidth: 380 }}>
           <div style={{ textAlign: "center", marginBottom: 32 }}>
-            <div style={{ width: 52, height: 52, borderRadius: 14, background: D.accent, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo-drhauschka-blanc.png" alt="Dr. Hauschka" width={56} height={56} style={{ display: "block", margin: "0 auto 18px", objectFit: "contain" }} />
             <div style={{ fontSize: 24, fontWeight: 800, color: "#fff", letterSpacing: "-0.02em" }}>ANALYSE</div>
-            <div style={{ fontSize: 13, color: D.sidebarText, marginTop: 6 }}>Connexion à votre instance Odoo</div>
+            <div style={{ fontSize: 13, color: D.sidebarText, marginTop: 6 }}>Dr. Hauschka · Connexion à votre instance Odoo</div>
           </div>
           <form onSubmit={handleLogin} style={{ background: "#262933", borderRadius: 16, padding: "28px 24px", border: "1px solid #3a3d47", display: "flex", flexDirection: "column", gap: 14 }}>
             {[
@@ -233,12 +232,12 @@ export default function Home() {
         {/* Logo */}
         <div style={{ padding: "18px 16px 14px", borderBottom: "1px solid #262933" }}>
           <button onClick={() => setView("hub")} style={{ display: "flex", alignItems: "center", gap: 10, background: "transparent", border: "none", cursor: "pointer", padding: 0, width: "100%", textAlign: "left" as const }}>
-            <div style={{ width: 28, height: 28, background: D.accent, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-            </div>
-            <div>
+            {/* Symbole Dr. Hauschka détouré, version blanche pour le fond sombre */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo-drhauschka-blanc.png" alt="Dr. Hauschka" width={30} height={30} style={{ opacity: 0.94, flexShrink: 0, display: "block", objectFit: "contain" }} />
+            <div style={{ borderLeft: "1px solid #33363f", paddingLeft: 10 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: "#f2f2f4", letterSpacing: "0.03em" }}>ANALYSE</div>
-              <div style={{ fontSize: 10, color: "#565b6b", marginTop: 1 }}>Gestion campagnes</div>
+              <div style={{ fontSize: 10, color: "#6b7080", marginTop: 1, letterSpacing: "0.02em" }}>Dr. Hauschka · Campagnes</div>
             </div>
           </button>
         </div>
