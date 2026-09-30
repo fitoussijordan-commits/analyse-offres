@@ -50,12 +50,37 @@ export interface CampaignResult {
 }
 
 // ── Domaines ──────────────────────────────────────────────────────────────────
+// ── Clients exclus de l'analyse ─────────────────────────────────────────────
+// Ex. les comptes internes « WALA France Réservation Grand Compte » : commandes de
+// réservation (stock mis de côté, souvent à 0 €) qui ne sont pas de vraies ventes et
+// faussent CA, quantités et marge. Filtre sur le nom du client ET de sa société mère
+// (couvre les contacts rattachés), insensible à la casse, avec et sans accents.
+const sansAccents = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+function exclusionClients(motifs: string[], champPartenaire: string): any[] {
+  const out: any[] = [];
+  for (const m of motifs.map(x => x.trim()).filter(Boolean)) {
+    for (const v of [...new Set([m, sansAccents(m)])]) {
+      out.push([`${champPartenaire}.name`, "not ilike", v]);
+      out.push([`${champPartenaire}.commercial_partner_id.name`, "not ilike", v]);
+    }
+  }
+  return out;
+}
+// Motifs actifs pendant une analyse (fixés par fetchCampaign, lus par les domaines).
+let clientsExclus: string[] = [];
+
 function orderLineDomain(f: StateFilter): any[] {
+  return [...orderLineDomainEtat(f), ...exclusionClients(clientsExclus, "order_id.partner_id")];
+}
+function orderDomain(f: StateFilter): any[] {
+  return [...orderDomainEtat(f), ...exclusionClients(clientsExclus, "partner_id")];
+}
+function orderLineDomainEtat(f: StateFilter): any[] {
   if (f === "avenir") return [["order_id.state", "=", "sale"], ["order_id.invoice_status", "!=", "invoiced"]];
   if (f === "valide") return [["order_id.state", "in", ["sale", "done"]], ["order_id.invoice_status", "=", "invoiced"]];
   return [["order_id.state", "in", ["sale", "done"]]];
 }
-function orderDomain(f: StateFilter): any[] {
+function orderDomainEtat(f: StateFilter): any[] {
   if (f === "avenir") return [["state", "=", "sale"], ["invoice_status", "!=", "invoiced"]];
   if (f === "valide") return [["state", "in", ["sale", "done"]], ["invoice_status", "=", "invoiced"]];
   return [["state", "in", ["sale", "done"]]];
@@ -286,7 +311,8 @@ async function analyseStandalone(session: odoo.OdooSession, refs: string[], filt
 /** Étape d'avancement de l'analyse : libellé + plage de progression [de, a] en %. */
 export interface EtapeAnalyse { label: string; detail?: string; de: number; a: number; }
 
-export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagne, configOffres: Offre[], filter: StateFilter = "all", onEtape?: (e: EtapeAnalyse) => void): Promise<CampaignResult> {
+export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagne, configOffres: Offre[], filter: StateFilter = "all", onEtape?: (e: EtapeAnalyse) => void, exclus: string[] = []): Promise<CampaignResult> {
+  clientsExclus = exclus;
   const etape = (e: EtapeAnalyse) => { try { onEtape?.(e); } catch { /* affichage seulement */ } };
   const offresCfg = campagne.offres
     .map(code => configOffres.find(o => o.code.toLowerCase() === code.toLowerCase()))

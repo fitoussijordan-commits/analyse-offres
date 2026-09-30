@@ -298,6 +298,23 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
   const [filter, setFilter] = useState<StateFilter>("all");
   const [result, setResult] = useState<CampaignResult | null>(null);
   const [etape, setEtape] = useState<EtapeAnalyse | null>(null);
+  // Clients exclus de l'analyse (ex. comptes internes de réservation), mémorisés dans le
+  // navigateur. Un motif exclut tout client dont le nom le contient.
+  const CLE_EXCLUS = "ao_clients_exclus";
+  const [exclus, setExclus] = useState<string[]>(["Réservation"]);
+  const [nouvelExclu, setNouvelExclu] = useState("");
+  useEffect(() => {
+    try { const v = localStorage.getItem(CLE_EXCLUS); if (v) setExclus(JSON.parse(v)); } catch { /* défaut */ }
+  }, []);
+  const majExclus = (liste: string[]) => {
+    setExclus(liste);
+    try { localStorage.setItem(CLE_EXCLUS, JSON.stringify(liste)); } catch { /* non bloquant */ }
+  };
+  const ajouterExclu = () => {
+    const m = nouvelExclu.trim();
+    if (m && !exclus.some(x => x.toLowerCase() === m.toLowerCase())) majExclus([...exclus, m]);
+    setNouvelExclu("");
+  };
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<Tab>("produits");
@@ -323,7 +340,7 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
     if (!selected) { onToast("Sélectionne une campagne", "error"); return; }
     setLoading(true); setResult(null); setEtape(null);
     try {
-      const res = await fetchCampaign(session, selected, offres, filter, setEtape);
+      const res = await fetchCampaign(session, selected, offres, filter, setEtape, exclus);
       setResult(res); setTab("produits");
       onToast(`Analyse terminée : ${fmtEur(res.caTotal)}`, "success");
     } catch (e: any) { onToast("Erreur analyse : " + e.message, "error"); }
@@ -391,6 +408,17 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
         </div>
         <button onClick={analyser} disabled={!selected || loading} style={{ padding: "9px 20px", background: !selected || loading ? C.border : C.teal, color: !selected || loading ? C.textMuted : "#fff", border: "none", borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: !selected || loading ? "default" : "pointer", fontFamily: "inherit" }}>{loading ? "Analyse…" : "Analyser"}</button>
         {result && <button onClick={exportExcel} disabled={exporting} style={{ padding: "9px 16px", background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 9, fontSize: 13, fontWeight: 600, color: C.green, cursor: exporting ? "default" : "pointer", fontFamily: "inherit" }}>{exporting ? "Export…" : "⬇ Export Excel"}</button>}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginLeft: 6 }} title="Les commandes de ces clients sont ignorées (CA, quantités, marge). Un motif exclut tout client dont le nom le contient.">
+          <span style={{ fontSize: 12, color: C.textMuted }}>Clients exclus :</span>
+          {exclus.map(m => (
+            <span key={m} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, color: C.textSec, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 4px 3px 8px" }}>
+              {m}
+              <button onClick={() => majExclus(exclus.filter(x => x !== m))} aria-label={`Ne plus exclure ${m}`} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 13, lineHeight: 1, padding: "0 3px" }}>×</button>
+            </span>
+          ))}
+          <input value={nouvelExclu} onChange={e => setNouvelExclu(e.target.value)} onKeyDown={e => { if (e.key === "Enter") ajouterExclu(); }} onBlur={ajouterExclu}
+            placeholder="+ ajouter" style={{ width: 90, fontSize: 12, padding: "4px 8px", border: `1px dashed ${C.border}`, borderRadius: 6, fontFamily: "inherit", color: C.text, background: "transparent", outline: "none" }} />
+        </div>
       </div>
 
       {/* Contenu */}
