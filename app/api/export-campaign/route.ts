@@ -65,7 +65,7 @@ function buildRecap(wb: ExcelJS.Workbook, p: Payload) {
   s.font = { italic: true, size: 10, color: { argb: "FF" + GRAY } }; s.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL_S } }; s.alignment = { horizontal: "center" };
 
   let r = 4;
-  const kpis: [string, number, boolean][] = [["CA total (sans doublons)", Math.round(p.caTotal), true], ["Offres / unités vendues", p.qtyTotal, false], ["Nb commandes", p.nbCommandes, false]];
+  const kpis: [string, number, boolean][] = [["CA total (sans doublons)", Math.round(p.caTotal), true], ["Unités vendues", Math.round((p.produits || []).reduce((s, x) => s + (x.qtyVendue || 0), 0)), false], ["Nb commandes", p.nbCommandes, false]];
   if (p.split) { kpis.push(["CA validé (facturé)", Math.round(p.split.valide.ca), true]); kpis.push(["CA à venir", Math.round(p.split.avenir.ca), true]); }
   if (p.margeTotal != null) kpis.push(["Marge €", Math.round(p.margeTotal), true]);
   for (const [label, val, isEur] of kpis) {

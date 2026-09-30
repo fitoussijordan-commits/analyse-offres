@@ -408,7 +408,7 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
             {/* KPIs */}
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
               {kpi("CA total", fmtEur(result.caTotal), C.teal)}
-              {kpi("Quantité", fmtNum(result.qtyTotal), C.blue)}
+              {kpi("Unités vendues", fmtNum(result.produits.reduce((s, p) => s + p.qtyVendue, 0)), C.blue)}
               {kpi("Commandes", fmtNum(result.nbCommandes), C.purple)}
               {result.margeTotal != null && kpi("Marge €", fmtEur(result.margeTotal), C.green)}
               {result.margeTotal != null && kpi("Marge %", `${(Math.round((result.margePct || 0) * 1000) / 10).toFixed(1)} %`, C.green)}
@@ -471,11 +471,35 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
               <PrecoTab result={result} onToast={onToast} session={session} onTransferToCreer={onTransferToCreer} />
             ) : (
               <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
-                {tab === "produits" && <Tbl
-                  head={["Réf", "Produit", "Qté", "CA", "% CA"]} aligns={["left", "left", "right", "right", "right"]}
-                  rows={result.produits.map(p => [p.ref, p.name, fmtNum(p.qtyVendue), fmtEur(p.ca), pctOf(p.ca, result.caTotal)])}
-                  total={["TOTAL", "", fmtNum(result.produits.reduce((s, p) => s + p.qtyVendue, 0)), fmtEur(result.caTotal), "100,0 %"]}
-                />}
+                {tab === "produits" && (() => {
+                  // Marge par produit : sert à repérer ce qui tire la marge vers le bas
+                  // (unités vendues à 0 €, coût élevé, coût repris de la fiche produit actuelle).
+                  const pct = (m: number, ca: number) => ca > 0 ? `${(Math.round((m / ca) * 1000) / 10).toFixed(1).replace(".", ",")} %` : "—";
+                  const rouge = (v: string, neg: boolean) => neg ? <span style={{ color: C.red, fontWeight: 700 }}>{v}</span> : v;
+                  const coutTot = result.produits.reduce((s, p) => s + (p.cout || 0), 0);
+                  const gratuitTot = result.produits.reduce((s, p) => s + (p.qtyGratuite || 0), 0);
+                  const actuelTot = result.produits.reduce((s, p) => s + (p.qtyCoutActuel || 0), 0);
+                  const qteTot = result.produits.reduce((s, p) => s + p.qtyVendue, 0);
+                  return (<>
+                    <div style={{ padding: "10px 14px", fontSize: 12, color: C.textMuted, borderBottom: `1px solid ${C.border}`, lineHeight: 1.6 }}>
+                      Marge = CA − coût des unités vendues. « À 0 € » = unités sur des lignes de commande sans CA (offertes, ou prix porté par une autre ligne) : leur coût est compté sans recette.
+                      {actuelTot > 0 && <> Coût repris de la fiche produit actuelle pour {fmtNum(actuelTot)} unité(s), faute de coût enregistré sur la commande.</>}
+                    </div>
+                    <Tbl
+                      head={["Réf", "Produit", "Qté", "Dont à 0 €", "CA", "Coût", "Marge", "Marge %", "% CA"]}
+                      aligns={["left", "left", "right", "right", "right", "right", "right", "right", "right"]}
+                      rows={result.produits.map(p => {
+                        const m = p.ca - (p.cout || 0);
+                        return [p.ref, p.name, fmtNum(p.qtyVendue),
+                          p.qtyGratuite ? rouge(fmtNum(p.qtyGratuite), true) : "—",
+                          fmtEur(p.ca), fmtEur(p.cout || 0), rouge(fmtEur(m), m < 0), rouge(pct(m, p.ca), m < 0),
+                          pctOf(p.ca, result.caTotal)];
+                      })}
+                      total={["TOTAL", "", fmtNum(qteTot), gratuitTot ? fmtNum(gratuitTot) : "—", fmtEur(result.caTotal), fmtEur(coutTot),
+                        fmtEur(result.caTotal - coutTot), pct(result.caTotal - coutTot, result.caTotal), "100,0 %"]}
+                    />
+                  </>);
+                })()}
                 {tab === "delegues" && <Tbl
                   head={["Délégué", "Qté", "CA", "% CA"]} aligns={["left", "right", "right", "right"]}
                   rows={result.delegues.map(d => [d.name, fmtNum(d.qtyVendue), fmtEur(d.ca), pctOf(d.ca, result.caTotal)])}
@@ -718,7 +742,7 @@ function pctOf(val: number, total: number): string {
 }
 
 // Petit composant table (avec ligne TOTAL optionnelle)
-function Tbl({ head, aligns, rows, total }: { head: string[]; aligns: ("left" | "right" | "center")[]; rows: (string | number)[][]; total?: (string | number)[] }) {
+function Tbl({ head, aligns, rows, total }: { head: string[]; aligns: ("left" | "right" | "center")[]; rows: React.ReactNode[][]; total?: React.ReactNode[] }) {
   if (!rows.length) return <div style={{ padding: 30, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucune donnée</div>;
   return (
     <table style={{ width: "100%", borderCollapse: "collapse" }}>

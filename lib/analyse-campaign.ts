@@ -6,7 +6,13 @@ import type { Campagne, Offre } from "@/lib/campaigns";
 
 export type StateFilter = "all" | "avenir" | "valide";
 
-export interface ProduitCA { ref: string; name: string; productId: number; qtyVendue: number; ca: number; }
+export interface ProduitCA {
+  ref: string; name: string; productId: number; qtyVendue: number; ca: number;
+  // Diagnostic de marge : coût des unités vendues, unités vendues à 0 € (offertes ou prix
+  // porté par une autre ligne), et unités dont le coût vient de la fiche produit actuelle
+  // (faute de coût figé à la vente sur la ligne de commande).
+  cout?: number; qtyGratuite?: number; qtyCoutActuel?: number;
+}
 export interface DelegueCA { userId: number; name: string; qtyVendue: number; ca: number; }
 export interface ClientStat { id: number; name: string; qtyVendue: number; ca: number; nbCommandes: number; }
 // Perf d'un produit ventilée par statut client : { statutName -> { qty, ca } }
@@ -60,7 +66,7 @@ function noteDomain(notes: string[]): any[] {
   return [...Array(conds.length - 1).fill("|"), ...conds];
 }
 
-interface LineRec { id: number; orderId: number; productId: number; productName: string; ref: string; qty: number; subtotal: number; cost?: number; }
+interface LineRec { id: number; orderId: number; productId: number; productName: string; ref: string; qty: number; subtotal: number; cost?: number; costActuel?: boolean; }
 
 // Champs lus sur sale.order.line. purchase_price n'existe que si le module sale_margin est
 // installé : on le détecte une fois par base Odoo (fields_get) pour ne pas faire échouer la requête.
@@ -80,7 +86,13 @@ async function completerCouts(session: odoo.OdooSession, recs: LineRec[]): Promi
   const prods = await odoo.searchRead(session, "product.product", [["id", "in", manquants]], ["id", "standard_price"], 0);
   const cout: Record<number, number> = {};
   for (const p of prods as any[]) cout[p.id] = typeof p.standard_price === "number" ? p.standard_price : 0;
-  for (const r of recs) if (r.cost == null) r.cost = cout[r.productId] || 0;
+  for (const r of recs) if (r.cost == null) { r.cost = cout[r.productId] || 0; r.costActuel = true; }
+}
+/** Ajoute à un produit le coût et les indicateurs de diagnostic d'une ligne. */
+function cumulDiag(p: ProduitCA, r: LineRec) {
+  p.cout = (p.cout || 0) + r.qty * (r.cost || 0);
+  if (Math.abs(r.subtotal) < 0.005) p.qtyGratuite = (p.qtyGratuite || 0) + r.qty;
+  if (r.costActuel) p.qtyCoutActuel = (p.qtyCoutActuel || 0) + r.qty;
 }
 const coutDe = (recs: LineRec[]) => recs.reduce((s, r) => s + r.qty * (r.cost || 0), 0);
 
@@ -161,7 +173,7 @@ async function analyseOffre(session: odoo.OdooSession, offre: Offre, filter: Sta
     recs = toRecs(compLines, refByPid);
     await completerCouts(session, recs);
     const pm: Record<number, ProduitCA> = {};
-    for (const r of recs) { if (!pm[r.productId]) pm[r.productId] = { productId: r.productId, ref: r.ref, name: r.productName, qtyVendue: 0, ca: 0 }; pm[r.productId].qtyVendue += r.qty; pm[r.productId].ca += r.subtotal; }
+    for (const r of recs) { if (!pm[r.productId]) pm[r.productId] = { productId: r.productId, ref: r.ref, name: r.productName, qtyVendue: 0, ca: 0 }; pm[r.productId].qtyVendue += r.qty; pm[r.productId].ca += r.subtotal; cumulDiag(pm[r.productId], r); }
     produits = Object.values(pm).sort((a, b) => b.ca - a.ca);
     caTotal = produits.reduce((s, p) => s + p.ca, 0);
   }
@@ -215,7 +227,7 @@ async function analyseNote(session: odoo.OdooSession, note: string, excludeOrder
   const caTotal = recs.reduce((s, r) => s + r.subtotal, 0);
 
   const pm: Record<number, ProduitCA> = {};
-  for (const r of recs) { if (!pm[r.productId]) pm[r.productId] = { productId: r.productId, ref: r.ref || "", name: r.productName, qtyVendue: 0, ca: 0 }; pm[r.productId].qtyVendue += r.qty; pm[r.productId].ca += r.subtotal; }
+  for (const r of recs) { if (!pm[r.productId]) pm[r.productId] = { productId: r.productId, ref: r.ref || "", name: r.productName, qtyVendue: 0, ca: 0 }; pm[r.productId].qtyVendue += r.qty; pm[r.productId].ca += r.subtotal; cumulDiag(pm[r.productId], r); }
   const produits = Object.values(pm).sort((a, b) => b.ca - a.ca);
 
   // On ne retient que les commandes ayant au moins une ligne dans le périmètre campagne :
@@ -249,7 +261,7 @@ async function analyseStandalone(session: odoo.OdooSession, refs: string[], filt
   await completerCouts(session, recs);
 
   const pm: Record<number, ProduitCA> = {};
-  for (const r of recs) { if (!pm[r.productId]) pm[r.productId] = { productId: r.productId, ref: r.ref, name: r.productName, qtyVendue: 0, ca: 0 }; pm[r.productId].qtyVendue += r.qty; pm[r.productId].ca += r.subtotal; }
+  for (const r of recs) { if (!pm[r.productId]) pm[r.productId] = { productId: r.productId, ref: r.ref, name: r.productName, qtyVendue: 0, ca: 0 }; pm[r.productId].qtyVendue += r.qty; pm[r.productId].ca += r.subtotal; cumulDiag(pm[r.productId], r); }
   const produits = Object.values(pm).sort((a, b) => b.ca - a.ca);
   const caTotal = produits.reduce((s, p) => s + p.ca, 0);
   const qtyTotal = produits.reduce((s, p) => s + p.qtyVendue, 0);
@@ -387,7 +399,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   for (const l of lines) {
     caTotal += l.subtotal;
     if (!prodMap[l.productId]) prodMap[l.productId] = { productId: l.productId, ref: l.ref, name: l.productName, qtyVendue: 0, ca: 0 };
-    prodMap[l.productId].qtyVendue += l.qty; prodMap[l.productId].ca += l.subtotal;
+    prodMap[l.productId].qtyVendue += l.qty; prodMap[l.productId].ca += l.subtotal; cumulDiag(prodMap[l.productId], l);
     const u = orderUser[l.orderId];
     if (u) { if (!delMap[u.id]) delMap[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; delMap[u.id].qtyVendue += l.qty; delMap[u.id].ca += l.subtotal; }
     const pid = orderPartner[l.orderId];
@@ -448,7 +460,11 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     caTotal += c.data.caTotal;
     for (const p of c.data.produits) {
       if (!prodMap[p.productId]) prodMap[p.productId] = { productId: p.productId, ref: p.ref, name: p.name, qtyVendue: 0, ca: 0 };
-      prodMap[p.productId].qtyVendue += p.qtyVendue; prodMap[p.productId].ca += p.ca;
+      const pp = prodMap[p.productId];
+      pp.qtyVendue += p.qtyVendue; pp.ca += p.ca;
+      pp.cout = (pp.cout || 0) + (p.cout || 0);
+      pp.qtyGratuite = (pp.qtyGratuite || 0) + (p.qtyGratuite || 0);
+      pp.qtyCoutActuel = (pp.qtyCoutActuel || 0) + (p.qtyCoutActuel || 0);
     }
     for (const d of c.data.delegues) {
       if (!delMap[d.userId]) delMap[d.userId] = { userId: d.userId, name: d.name, qtyVendue: 0, ca: 0 };
