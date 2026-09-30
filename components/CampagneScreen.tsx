@@ -394,7 +394,7 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
       </div>
 
       {/* Contenu */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", ...(loading ? { display: "flex", flexDirection: "column" } : {}) }}>
         {loading ? (
           <AnalyseLoader etape={etape} nom={selected?.nom} />
         ) : !result ? (

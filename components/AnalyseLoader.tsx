@@ -52,7 +52,7 @@ export default function AnalyseLoader({ etape, nom }: { etape: EtapeAnalyse | nu
   }, []);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "calc(100vh - 200px)", padding: "20px" }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, minHeight: 440, padding: "20px" }}>
       <style>{`
         @keyframes aoTubeJump {
           0%   { transform: translateY(0) scale(1.12, 0.86); }
