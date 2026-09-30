@@ -275,10 +275,14 @@ async function analyseNote(session: odoo.OdooSession, note: string, excludeOrder
 }
 
 // ── Produits autonomes (réfs campagne hors offres/notes) ──────────────────────
-async function analyseStandalone(session: odoo.OdooSession, refs: string[], filter: StateFilter, excludeLineIds: Set<number>): Promise<{ res: OffreAnalyse | null; recs: LineRec[] }> {
+async function analyseStandalone(session: odoo.OdooSession, refs: string[], filter: StateFilter, excludeLineIds: Set<number>, periode?: { debut?: string; fin?: string }): Promise<{ res: OffreAnalyse | null; recs: LineRec[] }> {
   const { ids, refByPid } = await resolveRefs(session, refs);
   if (!ids.length) return { res: null, recs: [] };
-  const lineDom = orderLineDomain(filter);
+  // Période de la campagne : sans elle, TOUTES les ventes de ces réfs seraient comptées.
+  const dateDom: any[] = [];
+  if (periode?.debut) dateDom.push(["order_id.date_order", ">=", `${periode.debut} 00:00:00`]);
+  if (periode?.fin) dateDom.push(["order_id.date_order", "<=", `${periode.fin} 23:59:59`]);
+  const lineDom = [...orderLineDomain(filter), ...dateDom];
   const lines = await odoo.searchRead(session, "sale.order.line", [["product_id", "in", ids], ...lineDom, ["display_type", "=", false], ["is_downpayment", "=", false]], await lineFields(session, ["order_id", "product_id", "product_uom_qty", "price_subtotal", "state"]), 0);
   // exclure les lignes déjà comptées dans une offre (dédoublonnage "hors offre")
   const recs = toRecs(lines, refByPid).filter(r => !excludeLineIds.has(r.id));
@@ -340,7 +344,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   // 2. Produits autonomes (en excluant les lignes déjà comptées dans une offre)
   etape({ label: "Produits hors offre", de: 55, a: 65 });
   const offerLineIds = new Set<number>(allRecs.map(r => r.id));
-  const { res: standalone, recs: standaloneRecs } = await analyseStandalone(session, campagne.produits, filter, offerLineIds);
+  const { res: standalone, recs: standaloneRecs } = await analyseStandalone(session, campagne.produits, filter, offerLineIds, { debut: campagne.dateDebut, fin: campagne.dateFin });
   if (standalone) { results.push(standalone); allRecs.push(...standaloneRecs); }
 
   // 3. Notes : CA des commandes rattachées par note interne (hors commandes déjà comptées

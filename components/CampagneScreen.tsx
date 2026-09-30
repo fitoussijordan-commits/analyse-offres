@@ -168,12 +168,13 @@ function CampagnePanel({ onClose, onToast, offres, onChanged }: { onClose: () =>
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [nom, setNom] = useState(""); const [selOffres, setSelOffres] = useState<string[]>([]); const [produits, setProduits] = useState(""); const [notes, setNotes] = useState("");
+  const [dateDebut, setDateDebut] = useState(""); const [dateFin, setDateFin] = useState("");
 
   const reload = () => cp.loadCampagnes().then(setCampagnes).catch(e => onToast("Erreur : " + e.message, "error"));
   useEffect(() => { reload(); }, []);
 
-  const openNew = () => { setEditId(null); setNom(""); setSelOffres([]); setProduits(""); setNotes(""); setShowForm(true); };
-  const openEdit = (c: cp.Campagne) => { setEditId(c.id); setNom(c.nom); setSelOffres(c.offres); setProduits(c.produits.join("\n")); setNotes(c.notes.join("\n")); setShowForm(true); };
+  const openNew = () => { setEditId(null); setNom(""); setSelOffres([]); setProduits(""); setNotes(""); setDateDebut(""); setDateFin(""); setShowForm(true); };
+  const openEdit = (c: cp.Campagne) => { setEditId(c.id); setNom(c.nom); setSelOffres(c.offres); setProduits(c.produits.join("\n")); setNotes(c.notes.join("\n")); setDateDebut(c.dateDebut || ""); setDateFin(c.dateFin || ""); setShowForm(true); };
   const toggleOffre = (code: string) => setSelOffres(p => p.includes(code) ? p.filter(c => c !== code) : [...p, code]);
 
   const save = async () => {
@@ -181,7 +182,10 @@ function CampagnePanel({ onClose, onToast, offres, onChanged }: { onClose: () =>
     const refs = produits.split(/[\n\r,;]+/).map(r => r.trim()).filter(Boolean);
     const nts = notes.split(/[\n\r]+/).map(r => r.trim()).filter(Boolean);
     if (!selOffres.length && !refs.length && !nts.length) { onToast("Ajoute au moins une offre, un produit ou une note", "error"); return; }
-    const c: cp.Campagne = { id: editId || cp.genId(), nom: n, offres: selOffres, produits: refs, notes: nts };
+    // Articles seuls : la période est obligatoire, sinon tout l'historique de ventes de la réf est compté.
+    if (refs.length && (!dateDebut || !dateFin)) { onToast("Renseigne la période (début et fin) : elle borne les ventes des articles seuls", "error"); return; }
+    if (dateDebut && dateFin && dateFin < dateDebut) { onToast("La date de fin est avant la date de début", "error"); return; }
+    const c: cp.Campagne = { id: editId || cp.genId(), nom: n, offres: selOffres, produits: refs, notes: nts, dateDebut: dateDebut || undefined, dateFin: dateFin || undefined };
     try { await cp.upsertCampagne(c); setShowForm(false); reload(); onChanged(); onToast("Campagne enregistrée", "success"); }
     catch (e: any) { onToast("Erreur : " + e.message, "error"); }
   };
@@ -220,6 +224,25 @@ function CampagnePanel({ onClose, onToast, offres, onChanged }: { onClose: () =>
                 <label style={labelStyle}>Références produits autonomes — une par ligne</label>
                 <textarea value={produits} onChange={e => setProduits(e.target.value)} onPaste={e => { const refs = extractRefs(e.clipboardData.getData("text")); if (refs.length >= 2) { e.preventDefault(); setProduits(refs.join("\n")); } }} rows={4} placeholder={"Coffrets saisis sans offre…\n1099001"} style={{ ...inputStyle, fontFamily: "monospace", fontSize: 12, resize: "vertical" }} />
               </div>
+              {(() => {
+                const avecArticles = produits.split(/[\n\r,;]+/).some(r => r.trim());
+                const manque = avecArticles && (!dateDebut || !dateFin);
+                return (
+                  <div>
+                    <label style={labelStyle}>Période de la campagne{avecArticles ? " *" : ""}</label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input type="date" min="2000-01-01" max="2100-12-31" value={dateDebut} onChange={e => setDateDebut(e.target.value)} style={{ ...inputStyle, borderColor: manque && !dateDebut ? C.red : undefined }} />
+                      <span style={{ color: C.textMuted }}>→</span>
+                      <input type="date" min="2000-01-01" max="2100-12-31" value={dateFin} onChange={e => setDateFin(e.target.value)} style={{ ...inputStyle, borderColor: manque && !dateFin ? C.red : undefined }} />
+                    </div>
+                    <div style={{ fontSize: 11, color: manque ? C.red : C.textMuted, marginTop: 4 }}>
+                      {avecArticles
+                        ? "Obligatoire avec des articles seuls : seules leurs ventes passées dans cette période sont comptées (date de commande)."
+                        : "Facultative : elle ne sert qu'à borner les articles seuls. Offres MEA et notes ne sont pas concernées."}
+                    </div>
+                  </div>
+                );
+              })()}
               <div>
                 <label style={labelStyle}>Notes internes — une par ligne</label>
                 <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} placeholder={"Noel\nNoël 2026"} style={{ ...inputStyle, fontSize: 12, resize: "vertical" }} />
@@ -236,7 +259,8 @@ function CampagnePanel({ onClose, onToast, offres, onChanged }: { onClose: () =>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{c.nom}</div>
-                          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>{c.offres.length} offre(s) · {c.produits.length} produit(s) · {c.notes.length} note(s)</div>
+                          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>{c.offres.length} offre(s) · {c.produits.length} produit(s) · {c.notes.length} note(s){c.dateDebut && c.dateFin ? ` · ${c.dateDebut.split("-").reverse().join("/")} → ${c.dateFin.split("-").reverse().join("/")}` : ""}</div>
+                          {c.produits.length > 0 && (!c.dateDebut || !c.dateFin) && <div style={{ fontSize: 11, color: C.red, fontWeight: 600, marginTop: 3 }}>⚠ Période manquante : toutes les ventes des articles seuls sont comptées</div>}
                         </div>
                         <div style={{ display: "flex", gap: 5 }}>
                           <button onClick={() => openEdit(c)} style={{ padding: "5px 9px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 7, cursor: "pointer", fontSize: 11 }}>✏️</button>
@@ -433,6 +457,16 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
           </div>
         ) : (
           <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+            {selected && selected.produits.length > 0 && (!selected.dateDebut || !selected.dateFin) && (
+              <div style={{ marginBottom: 14, padding: "10px 14px", background: C.redSoft, border: `1px solid ${C.red}33`, borderRadius: 10, fontSize: 12.5, color: C.red, fontWeight: 600 }}>
+                ⚠ Cette campagne a {selected.produits.length} article(s) seul(s) mais pas de période : toutes leurs ventes, tous temps confondus, sont comptées. Renseigne la période dans « Gérer les campagnes ».
+              </div>
+            )}
+            {selected && selected.produits.length > 0 && selected.dateDebut && selected.dateFin && (
+              <div style={{ marginBottom: 14, fontSize: 12, color: C.textMuted }}>
+                Articles seuls comptés du {selected.dateDebut.split("-").reverse().join("/")} au {selected.dateFin.split("-").reverse().join("/")} (date de commande).
+              </div>
+            )}
             {/* KPIs */}
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
               {kpi("CA total", fmtEur(result.caTotal), C.teal)}

@@ -15,6 +15,10 @@ export interface Campagne {
   offres: string[];   // codes d'offres (référencent analyse_offres.code)
   produits: string[]; // références produits autonomes
   notes: string[];    // notes internes (x_note_interne)
+  // Période d'analyse (AAAA-MM-JJ). Obligatoire dès qu'il y a des produits autonomes :
+  // elle borne leurs ventes (sinon tout l'historique de la réf serait compté).
+  dateDebut?: string;
+  dateFin?: string;
   createdAt?: string;
 }
 
@@ -61,6 +65,8 @@ function rowToCampagne(row: any): Campagne {
     offres: row.offres || [],
     produits: row.produits || [],
     notes: row.notes || [],
+    dateDebut: row.date_debut || undefined,
+    dateFin: row.date_fin || undefined,
     createdAt: row.created_at,
   };
 }
@@ -71,6 +77,8 @@ function campagneToRow(c: Campagne) {
     offres: c.offres,
     produits: c.produits,
     notes: c.notes,
+    date_debut: c.dateDebut || null,
+    date_fin: c.dateFin || null,
   };
 }
 

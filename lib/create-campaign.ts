@@ -129,7 +129,7 @@ export function genId(): string {
 }
 
 // Forme de campagne d'analyse (lib/campaigns.ts) pour le pont vers l'outil Analyse, sans dépendance.
-export interface CampagneAnalyseLike { id: string; nom: string; offres: string[]; produits: string[]; notes: string[]; }
+export interface CampagneAnalyseLike { id: string; nom: string; offres: string[]; produits: string[]; notes: string[]; dateDebut?: string; dateFin?: string; }
 
 /**
  * Convertit une campagne CRÉÉE en campagne d'ANALYSE pour suivre sa progression :
@@ -141,7 +141,8 @@ export interface CampagneAnalyseLike { id: string; nom: string; offres: string[]
 export function campagneCreeeToAnalyse(camp: CampagneCreee): CampagneAnalyseLike {
   const offres = [...new Set(camp.paliers.map(p => (p.code || "").trim()).filter(Boolean))];
   const produits = [...new Set(camp.articles.map(a => (a.ref || "").trim()).filter(Boolean))];
-  return { id: genId(), nom: camp.nom || "Campagne", offres, produits, notes: [] };
+  // Période = dates de la campagne : bornent les ventes des produits suivis hors offre.
+  return { id: genId(), nom: camp.nom || "Campagne", offres, produits, notes: [], dateDebut: camp.dateDebut || undefined, dateFin: camp.dateFin || undefined };
 }
 
 // Forme minimale d'une préco (lib/preco.ts) pour la conversion, sans dépendance circulaire.
