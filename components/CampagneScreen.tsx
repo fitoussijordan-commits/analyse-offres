@@ -2,7 +2,8 @@
 import { useState, useEffect, useRef } from "react";
 import * as odoo from "@/lib/odoo";
 import * as cp from "@/lib/campaigns";
-import { fetchCampaign, type CampaignResult, type StateFilter } from "@/lib/analyse-campaign";
+import { fetchCampaign, type CampaignResult, type StateFilter, type EtapeAnalyse } from "@/lib/analyse-campaign";
+import AnalyseLoader from "@/components/AnalyseLoader";
 import { buildPreco } from "@/lib/preco";
 import { precoToCampagne } from "@/lib/create-campaign";
 import { ChartCard, HBarChart, PieChart, SplitBar, fmtEurShort } from "./CampagneCharts";
@@ -296,6 +297,7 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
   const [selId, setSelId] = useState<string>("");
   const [filter, setFilter] = useState<StateFilter>("all");
   const [result, setResult] = useState<CampaignResult | null>(null);
+  const [etape, setEtape] = useState<EtapeAnalyse | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<Tab>("produits");
@@ -319,9 +321,9 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
 
   const analyser = async () => {
     if (!selected) { onToast("Sélectionne une campagne", "error"); return; }
-    setLoading(true); setResult(null);
+    setLoading(true); setResult(null); setEtape(null);
     try {
-      const res = await fetchCampaign(session, selected, offres, filter);
+      const res = await fetchCampaign(session, selected, offres, filter, setEtape);
       setResult(res); setTab("produits");
       onToast(`Analyse terminée : ${fmtEur(res.caTotal)}`, "success");
     } catch (e: any) { onToast("Erreur analyse : " + e.message, "error"); }
@@ -394,11 +396,7 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
       {/* Contenu */}
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
         {loading ? (
-          <div style={{ textAlign: "center", padding: 60, color: C.textMuted }}>
-            <div style={{ width: 24, height: 24, border: `3px solid ${C.teal}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 14px" }} />
-            Analyse de la campagne en cours…
-            <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-          </div>
+          <AnalyseLoader etape={etape} nom={selected?.nom} />
         ) : !result ? (
           <div style={{ textAlign: "center", padding: "60px 20px", color: C.textMuted }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>📊</div>

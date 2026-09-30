@@ -271,7 +271,11 @@ async function analyseStandalone(session: odoo.OdooSession, refs: string[], filt
 }
 
 // ── Analyse complète de la campagne ───────────────────────────────────────────
-export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagne, configOffres: Offre[], filter: StateFilter = "all"): Promise<CampaignResult> {
+/** Étape d'avancement de l'analyse : libellé + plage de progression [de, a] en %. */
+export interface EtapeAnalyse { label: string; detail?: string; de: number; a: number; }
+
+export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagne, configOffres: Offre[], filter: StateFilter = "all", onEtape?: (e: EtapeAnalyse) => void): Promise<CampaignResult> {
+  const etape = (e: EtapeAnalyse) => { try { onEtape?.(e); } catch { /* affichage seulement */ } };
   const offresCfg = campagne.offres
     .map(code => configOffres.find(o => o.code.toLowerCase() === code.toLowerCase()))
     .filter(Boolean) as Offre[];
@@ -284,7 +288,10 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   //    partenaires et leurs statuts chargés), ventiler CHAQUE offre par statut client.
   const offerOrderIds = new Set<number>();
   const lineIdsByOffre = new Map<OffreAnalyse, Set<number>>();
-  for (const offre of offresCfg) {
+  for (const [i, offre] of offresCfg.entries()) {
+    // Offres : la partie la plus longue (0 → 55 %), découpée par offre.
+    const n = offresCfg.length;
+    etape({ label: "Lecture des offres", detail: `${offre.label || offre.code} (${i + 1}/${n})`, de: 3 + (52 * i) / n, a: 3 + (52 * (i + 1)) / n });
     const { res, recs } = await analyseOffre(session, offre, filter);
     results.push(res);
     allRecs.push(...recs);
@@ -293,6 +300,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   }
 
   // 2. Produits autonomes (en excluant les lignes déjà comptées dans une offre)
+  etape({ label: "Produits hors offre", de: 55, a: 65 });
   const offerLineIds = new Set<number>(allRecs.map(r => r.id));
   const { res: standalone, recs: standaloneRecs } = await analyseStandalone(session, campagne.produits, filter, offerLineIds);
   if (standalone) { results.push(standalone); allRecs.push(...standaloneRecs); }
@@ -303,6 +311,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   //    produits hors périmètre présents dans ces commandes.
   const campaignRefs = [...new Set([...campagne.offres, ...campagne.produits].map(r => r.trim()).filter(Boolean))];
   const catchalls: CatchallResult[] = [];
+  etape({ label: "Commandes rattachées par note", de: 65, a: 78 });
   for (const note of campagne.notes) {
     const { res, recs } = await analyseNote(session, note, [...offerOrderIds], campagne.offres, filter, campaignRefs);
     catchalls.push(res);
@@ -324,6 +333,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     return { nom: campagne.nom, caTotal: 0, qtyTotal: 0, nbCommandes: 0, margeTotal: 0, margePct: 0, produits: [], delegues: [], categories: [], adherents: [], statuts: [], produitsParStatut: [], perOffre, results, catchalls, split: { valide: { qty: 0, ca: 0 }, avenir: { qty: 0, ca: 0 } }, error: null };
   }
 
+  etape({ label: "Clients et facturation", de: 78, a: 96 });
   // 5. Commandes → user / partner / invoice
   const orderIds = [...new Set(lines.map(l => l.orderId))];
   const orders = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "user_id", "partner_id", "invoice_status"], 0);
