@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       const log = payload.logistique && payload.logistique.lignes?.length
         ? payload.logistique
         : { lignes: [], totalParMois: [], totalGeneral: 0, moisLabels: [] };
-      writeSyntheseLogistiqueSheet(wb, log, nameByRef, coutsAchatParRef(payload.mapping, payload.paliers));
+      writeSyntheseLogistiqueSheet(wb, log, nameByRef, coutsAchatParRef(payload.mapping, payload.paliers, log?.prixComposants));
     }
 
     // Renommer l'onglet "Proposition template" par le nom de la campagne (nettoyé : Excel

@@ -17,9 +17,11 @@ export const MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "
 
 /** Prix d'achat unitaire par réf pour l'export : catalogue Odoo (Mapping), complété par les
  *  prix saisis dans les campagnes (réfs hors Odoo). Une réf de campagne prime sur le catalogue. */
-export function coutsAchatParRef(mapping: { ref: string; standardPrice?: number }[] | undefined, paliers: { produits: { ref: string; standardPrice?: number; typProd?: string }[] }[]): Record<string, number> {
+export function coutsAchatParRef(mapping: { ref: string; standardPrice?: number }[] | undefined, paliers: { produits: { ref: string; standardPrice?: number; typProd?: string }[] }[], prixComposants: Record<string, number> = {}): Record<string, number> {
   const out: Record<string, number> = {};
+  // Ordre de priorité croissante : catalogue Odoo < prix des composants de kits < articles de campagne.
   for (const m of mapping || []) { const r = (m.ref || "").trim(); if (r && (m.standardPrice || 0) > 0) out[r] = m.standardPrice!; }
+  for (const [r, c] of Object.entries(prixComposants)) if (c > 0) out[r] = c;
   for (const pal of paliers) for (const p of pal.produits || []) {
     const r = (p.ref || "").trim();
     if (r && p.typProd !== "OPCA" && (p.standardPrice || 0) > 0) out[r] = p.standardPrice!;
@@ -275,6 +277,8 @@ export interface SyntheseLogistique {
   // Références des kits (trousses assemblées) : pas achetées en tant que telles, ce sont leurs
   // composants qui le sont → exclues du total d'achat pour ne pas compter deux fois.
   refsKit?: string[];
+  // Prix d'achat saisis sur les composants de kits (produits hors Odoo notamment).
+  prixComposants?: Record<string, number>;
   // Composants de kits : besoin total à M-2, par composant (détail par kit dans `detail`).
   // Campagnes exclues faute de dates exploitables (manquantes, invalides ou fin < début).
   // Remontées à l'utilisateur : sans ça, leurs besoins disparaissaient en silence.
@@ -362,6 +366,7 @@ export function buildSyntheseLogistique(campagnes: CampagneCreee[]): SyntheseLog
   let minAbs = Infinity, maxAbs = -Infinity;
   const ignorees: string[] = [];
   const refsKit = new Set<string>();
+  const prixComposants: Record<string, number> = {};
 
   for (const camp of campagnes) {
     const ad = absMonth(camp.dateDebut);
@@ -380,8 +385,10 @@ export function buildSyntheseLogistique(campagnes: CampagneCreee[]): SyntheseLog
       const kit = kitParRef.get(b.ref);
       if (kit) {
         for (const comp of kit.composants || []) {
-          const ref = (comp.ref || "").trim(), qte = b.qte * (comp.qty || 0);
+          // Produit saisi à la main sans code : la désignation sert de référence.
+          const ref = (comp.ref || "").trim() || (comp.name || "").trim(), qte = b.qte * (comp.qty || 0);
           if (!ref || qte <= 0) continue;
+          if ((comp.cout || 0) > 0) prixComposants[ref] = comp.cout!;
           const mois = ad - MOIS_AVANCE_KIT;
           const rep = new Map([[mois, qte]]);
           if (!accum[ref]) accum[ref] = { name: comp.name || nameByRef[ref] || "", parMoisAbs: new Map() };
@@ -428,5 +435,5 @@ export function buildSyntheseLogistique(campagnes: CampagneCreee[]): SyntheseLog
   for (const l of lignes) for (let i = 0; i < nbMois; i++) totalParMois[i] += l.parMois[i];
   const totalGeneral = totalParMois.reduce((s, x) => s + x, 0);
 
-  return { lignes, totalParMois, totalGeneral, moisLabels, ignorees, detail, refsKit: [...refsKit] };
+  return { lignes, totalParMois, totalGeneral, moisLabels, ignorees, detail, refsKit: [...refsKit], prixComposants };
 }

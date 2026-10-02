@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
     }
     // Toujours réécrit (même vide) pour ne jamais laisser le contenu résiduel du gabarit.
     writeSyntheseLogistiqueSheet(wb, payload.logistique?.lignes?.length ? payload.logistique
-      : { lignes: [], totalParMois: [], totalGeneral: 0, moisLabels: [] }, nameByRef, coutsAchatParRef(payload.mapping, campagnes.flatMap(c => c.paliers)));
+      : { lignes: [], totalParMois: [], totalGeneral: 0, moisLabels: [] }, nameByRef, coutsAchatParRef(payload.mapping, campagnes.flatMap(c => c.paliers), payload.logistique?.prixComposants));
 
     // 2bis) Onglet Synthèse CA annuelle : CA/marge par campagne + total année.
     writeSyntheseAnnuelleSheet(wb, campagnes.map(c => ({ nom: c.nom, paliers: c.paliers })));

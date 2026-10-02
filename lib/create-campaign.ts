@@ -34,6 +34,10 @@ export interface ComposantKit {
   ref: string;
   name?: string;
   qty: number;        // quantité de ce composant dans UN kit
+  // Prix d'achat unitaire : repris d'Odoo à la sélection, ou saisi à la main pour un produit
+  // hors Odoo (pochette, carte…). Prime sur le catalogue dans la valorisation des achats.
+  cout?: number;
+  manuel?: boolean;   // saisi à la main (hors catalogue Odoo)
 }
 
 // Valeurs possibles du type de produit (liste déroulante).

@@ -797,7 +797,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                   </select>
                   <label title="Trousse / coffret assemblé : ses composants ressortent en logistique à M-2 du début de campagne" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, color: a.kit ? C.blueDark : C.textMuted, fontWeight: a.kit ? 700 : 500, marginTop: 4, cursor: "pointer", whiteSpace: "nowrap" }}>
                     <input type="checkbox" checked={!!a.kit} onChange={e => setArticle(ai, { kit: e.target.checked, composants: e.target.checked ? (a.composants?.length ? a.composants : [{ ref: "", qty: 1 }]) : a.composants })} style={{ cursor: "pointer" }} />
-                    Kit{a.kit ? ` (${(a.composants || []).filter(c => c.ref.trim()).length})` : ""}
+                    Kit{a.kit ? ` (${(a.composants || []).filter(c => c.ref.trim() || (c.name || "").trim()).length})` : ""}
                   </label>
                 </td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
@@ -815,21 +815,28 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 <tr>
                   <td colSpan={9} style={{ padding: "0 6px 10px 28px", borderBottom: `1px solid ${C.border}`, background: C.blueSoft + "66" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.blueDark, textTransform: "uppercase", letterSpacing: "0.05em", padding: "8px 0 6px" }}>
-                      Composants du kit {a.name || a.ref} — qté par kit · besoin logistique à M-2 du début de campagne
+                      Composants du kit {a.name || a.ref} — produit Odoo ou saisi à la main · besoin logistique à M-2 du début de campagne
                     </div>
                     {(a.composants || []).map((comp, ci) => {
                       const majComp = (patch: Partial<ComposantKit>) => setArticle(ai, { composants: (a.composants || []).map((x, j) => j === ci ? { ...x, ...patch } : x) });
                       return (
                         <div key={ci} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                          {/* Code et désignation : recherche Odoo OU saisie libre (produit hors Odoo).
+                              Taper ne vide plus l'autre champ ; choisir dans la liste reprend le prix Odoo. */}
                           <ArticleAutocomplete session={session} value={comp.ref} width={110} mono placeholder="Code"
-                            onType={ref => majComp({ ref, name: undefined })}
-                            onPick={p => majComp({ ref: p.ref, name: p.name })} />
-                          <ArticleAutocomplete session={session} value={comp.name ?? ""} width={260} placeholder="Désignation"
-                            onType={name => majComp({ name })}
-                            onPick={p => majComp({ ref: p.ref, name: p.name })} />
+                            onType={ref => majComp({ ref, manuel: true })}
+                            onPick={p => majComp({ ref: p.ref, name: p.name, cout: p.standardPrice || undefined, manuel: false })} />
+                          <ArticleAutocomplete session={session} value={comp.name ?? ""} width={250} placeholder="Désignation (Odoo ou libre)"
+                            onType={name => majComp({ name, manuel: true })}
+                            onPick={p => majComp({ ref: p.ref, name: p.name, cout: p.standardPrice || undefined, manuel: false })} />
                           <span style={{ fontSize: 12, color: C.textMuted }}>× qté par kit</span>
                           <input type="number" min={0} step="1" value={comp.qty || ""} onChange={e => majComp({ qty: parseFloat(e.target.value) || 0 })}
                             style={{ ...inputStyle, width: 64, padding: "5px 6px", textAlign: "right" }} placeholder="1" />
+                          <span style={{ fontSize: 12, color: C.textMuted }}>prix achat</span>
+                          <input type="number" min={0} step="0.01" value={comp.cout ?? ""} onChange={e => majComp({ cout: e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0) })}
+                            title="Prix d'achat unitaire (repris d'Odoo à la sélection, modifiable)"
+                            style={{ ...inputStyle, width: 76, padding: "5px 6px", textAlign: "right" }} placeholder="€" />
+                          {comp.manuel && (comp.ref || comp.name) && <span title="Produit saisi à la main, hors catalogue Odoo" style={{ fontSize: 10.5, fontWeight: 700, color: "#b45309", background: "#fef3c7", borderRadius: 4, padding: "2px 6px" }}>hors Odoo</span>}
                           <button onClick={() => setArticle(ai, { composants: (a.composants || []).filter((_, j) => j !== ci) })} aria-label="Retirer ce composant"
                             style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 15 }}>×</button>
                         </div>
