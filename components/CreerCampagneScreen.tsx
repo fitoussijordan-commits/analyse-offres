@@ -1,10 +1,10 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import * as odoo from "@/lib/odoo";
 import { genereCA, estOpca, coutOpca, TYP_OPCA } from "@/lib/type-produit";
 import { STATUTS_INSTITUT, TYPOLOGIES } from "@/lib/calc-offre";
 import {
-  CampagneCreee, PalierSaisi, ArticleCampagne, genId,
+  CampagneCreee, PalierSaisi, ArticleCampagne, ComposantKit, genId,
   analyseCampagneCreee, toExportPayload, qtyParPack, totalPacks, ventilationPalier, TYPES_PRODUIT,
   GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT, erreurDatesCampagne,
 } from "@/lib/create-campaign";
@@ -748,7 +748,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                 );
               };
               return (
-              <tr key={ai} style={{ background: inconnue ? C.amberSoft : "transparent" }}>
+              <Fragment key={ai}>
+              <tr style={{ background: inconnue ? C.amberSoft : "transparent" }}>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
                   <ArticleAutocomplete
                     session={session}
@@ -788,6 +789,10 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                     {TYPES_PRODUIT.map(t => <option key={t} value={t}>{t}</option>)}
                     {a.typProd && !TYPES_PRODUIT.includes(a.typProd) && <option value={a.typProd}>{a.typProd}</option>}
                   </select>
+                  <label title="Trousse / coffret assemblé : ses composants ressortent en logistique à M-2 du début de campagne" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, color: a.kit ? C.blueDark : C.textMuted, fontWeight: a.kit ? 700 : 500, marginTop: 4, cursor: "pointer", whiteSpace: "nowrap" }}>
+                    <input type="checkbox" checked={!!a.kit} onChange={e => setArticle(ai, { kit: e.target.checked, composants: e.target.checked ? (a.composants?.length ? a.composants : [{ ref: "", qty: 1 }]) : a.composants })} style={{ cursor: "pointer" }} />
+                    Kit{a.kit ? ` (${(a.composants || []).filter(c => c.ref.trim()).length})` : ""}
+                  </label>
                 </td>
                 <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
                   <input style={{ ...inputStyle, width: 120, padding: "5px 6px", fontFamily: "monospace" }} value={a.barcode ?? ""} onChange={e => setArticle(ai, { manuel: true, barcode: e.target.value })} placeholder="EAN" />
@@ -800,6 +805,36 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
                   {camp.articles.length > 1 && <button onClick={() => removeArticle(ai)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 15 }}>×</button>}
                 </td>
               </tr>
+              {a.kit && (
+                <tr>
+                  <td colSpan={9} style={{ padding: "0 6px 10px 28px", borderBottom: `1px solid ${C.border}`, background: C.blueSoft + "66" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.blueDark, textTransform: "uppercase", letterSpacing: "0.05em", padding: "8px 0 6px" }}>
+                      Composants du kit {a.name || a.ref} — qté par kit · besoin logistique à M-2 du début de campagne
+                    </div>
+                    {(a.composants || []).map((comp, ci) => {
+                      const majComp = (patch: Partial<ComposantKit>) => setArticle(ai, { composants: (a.composants || []).map((x, j) => j === ci ? { ...x, ...patch } : x) });
+                      return (
+                        <div key={ci} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                          <ArticleAutocomplete session={session} value={comp.ref} width={110} mono placeholder="Code"
+                            onType={ref => majComp({ ref, name: undefined })}
+                            onPick={p => majComp({ ref: p.ref, name: p.name })} />
+                          <ArticleAutocomplete session={session} value={comp.name ?? ""} width={260} placeholder="Désignation"
+                            onType={name => majComp({ name })}
+                            onPick={p => majComp({ ref: p.ref, name: p.name })} />
+                          <span style={{ fontSize: 12, color: C.textMuted }}>× qté par kit</span>
+                          <input type="number" min={0} step="1" value={comp.qty || ""} onChange={e => majComp({ qty: parseFloat(e.target.value) || 0 })}
+                            style={{ ...inputStyle, width: 64, padding: "5px 6px", textAlign: "right" }} placeholder="1" />
+                          <button onClick={() => setArticle(ai, { composants: (a.composants || []).filter((_, j) => j !== ci) })} aria-label="Retirer ce composant"
+                            style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 15 }}>×</button>
+                        </div>
+                      );
+                    })}
+                    <button onClick={() => setArticle(ai, { composants: [...(a.composants || []), { ref: "", qty: 1 }] })}
+                      style={{ padding: "4px 10px", background: C.white, border: `1px dashed ${C.blue}`, borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>+ Ajouter un composant</button>
+                  </td>
+                </tr>
+              )}
+              </Fragment>
               );
             })}
           </tbody>

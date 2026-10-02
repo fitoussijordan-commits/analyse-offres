@@ -23,6 +23,17 @@ export interface ArticleCampagne {
   manuel?: boolean;
   // Type de produit (colonne D du template) : Produit Vente / Testeur / Échantillon / UG / PLV.
   typProd?: string;
+  // Kit (trousse, coffret assemblé) : l'article contient d'autres produits. En logistique,
+  // chaque composant ressort en besoin à M-2 du début de campagne (assemblage avant lancement),
+  // quantité = nb de kits × qté par kit. Le kit garde sa propre ligne (livraison clients).
+  kit?: boolean;
+  composants?: ComposantKit[];
+}
+
+export interface ComposantKit {
+  ref: string;
+  name?: string;
+  qty: number;        // quantité de ce composant dans UN kit
 }
 
 // Valeurs possibles du type de produit (liste déroulante).

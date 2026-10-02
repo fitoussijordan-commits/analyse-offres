@@ -100,7 +100,7 @@ export function writeSyntheseLogistiqueSheet(wb: ExcelJS.Workbook, log: Synthese
     if (col >= 3) { c.numFmt = numFmt; c.alignment = { horizontal: "right" }; }
   });
   sw.addRow([]);
-  const note = sw.addRow(["Profil de livraison : 40 % le mois précédant le début de l'offre, puis 60 % lissé à parts égales jusqu'à 1 mois avant la fin. Les mois s'étendent sur l'année suivante si une offre déborde."]);
+  const note = sw.addRow(["Profil de livraison : 40 % le mois précédant le début de l'offre, puis 60 % lissé à parts égales jusqu'à 1 mois avant la fin. Les mois s'étendent sur l'année suivante si une offre déborde. Composants de kits : 100 % à M-2 du début de campagne (assemblage avant lancement)."]);
   sw.mergeCells(note.number, 1, note.number, nbCols);
   sw.getCell(note.number, 1).font = { italic: true, size: 9, color: { argb: "FF6B7280" }, name: "Calibri" };
   if ((log.detail || []).length) {
@@ -187,12 +187,14 @@ export interface SyntheseLogistique {
   totalParMois: number[];   // aligné sur moisLabels
   totalGeneral: number;
   moisLabels: string[];     // libellés des mois (peut déborder sur N+1 : "Janvier 2027"…)
+  // Composants de kits : besoin total à M-2, par composant (détail par kit dans `detail`).
   // Campagnes exclues faute de dates exploitables (manquantes, invalides ou fin < début).
   // Remontées à l'utilisateur : sans ça, leurs besoins disparaissaient en silence.
   ignorees?: string[];
 }
 
 const PART_VAGUE = 0.4; // 40% le mois -1
+const MOIS_AVANCE_KIT = 2; // composants de kit : besoin à M-2 du début de campagne
 
 // Index de mois ABSOLU d'une date "YYYY-MM-DD" = année*12 + (mois-1). Permet de gérer un axe
 // temporel qui déborde d'une année sur l'autre. Renvoie null si invalide.
@@ -281,7 +283,25 @@ export function buildSyntheseLogistique(campagnes: CampagneCreee[]): SyntheseLog
 
     // On répartit OFFRE PAR OFFRE, puis on agrège par référence : le total par réf est
     // inchangé, et chaque case de la synthèse devient explicable (onglet Détail + survol).
+    // Kits : leurs composants sont à approvisionner en une fois à M-2 du début de campagne
+    // (assemblage avant lancement), au prorata du nombre de kits de chaque offre.
+    const kitParRef = new Map(camp.articles.filter(a => a.kit && a.ref.trim() && (a.composants || []).length).map(a => [a.ref.trim(), a]));
     for (const b of besoinsParOffre(camp)) {
+      const kit = kitParRef.get(b.ref);
+      if (kit) {
+        for (const comp of kit.composants || []) {
+          const ref = (comp.ref || "").trim(), qte = b.qte * (comp.qty || 0);
+          if (!ref || qte <= 0) continue;
+          const mois = ad - MOIS_AVANCE_KIT;
+          const rep = new Map([[mois, qte]]);
+          if (!accum[ref]) accum[ref] = { name: comp.name || nameByRef[ref] || "", parMoisAbs: new Map() };
+          if (!accum[ref].name && comp.name) accum[ref].name = comp.name;
+          detailAbs.push({ ref, name: comp.name || nameByRef[ref] || "", campagne: camp.nom || "(sans nom)", palier: `${b.palier} — composant du kit ${kit.name || kit.ref}`, parMoisAbs: rep });
+          accum[ref].parMoisAbs.set(mois, (accum[ref].parMoisAbs.get(mois) || 0) + qte);
+          if (mois < minAbs) minAbs = mois;
+          if (mois > maxAbs) maxAbs = mois;
+        }
+      }
       const rep = repartirAbsolu(b.qte, ad, af);
       if (!accum[b.ref]) accum[b.ref] = { name: nameByRef[b.ref] || "", parMoisAbs: new Map() };
       if (!accum[b.ref].name && nameByRef[b.ref]) accum[b.ref].name = nameByRef[b.ref];
