@@ -388,7 +388,13 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
       }
       const campagnes = enriched.map(c => toExportPayload(c)).map((p, i) => ({ nom: enriched[i].nom, paliers: p.paliers }));
       const logistique = buildSyntheseLogistique(enriched);
-      const res = await fetch("/api/export-multi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campagnes, logistique }) });
+      // Catalogue Odoo : libellés + prix d'achat (dont composants de kits) pour la logistique.
+      let mapping: any[] | undefined;
+      try {
+        const catalogue = await odoo.getAllProducts(session);
+        mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc }));
+      } catch { /* prix limités aux articles des campagnes */ }
+      const res = await fetch("/api/export-multi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campagnes, logistique, mapping }) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = `campagnes_annee.xlsx`; a.click(); URL.revokeObjectURL(url);

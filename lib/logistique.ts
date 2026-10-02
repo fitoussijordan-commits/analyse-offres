@@ -15,152 +15,237 @@ import { estOpca } from "@/lib/type-produit";
 
 export const MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 
+/** Prix d'achat unitaire par réf pour l'export : catalogue Odoo (Mapping), complété par les
+ *  prix saisis dans les campagnes (réfs hors Odoo). Une réf de campagne prime sur le catalogue. */
+export function coutsAchatParRef(mapping: { ref: string; standardPrice?: number }[] | undefined, paliers: { produits: { ref: string; standardPrice?: number; typProd?: string }[] }[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const m of mapping || []) { const r = (m.ref || "").trim(); if (r && (m.standardPrice || 0) > 0) out[r] = m.standardPrice!; }
+  for (const pal of paliers) for (const p of pal.produits || []) {
+    const r = (p.ref || "").trim();
+    if (r && p.typProd !== "OPCA" && (p.standardPrice || 0) > 0) out[r] = p.standardPrice!;
+  }
+  return out;
+}
+
+/** Lettre de colonne Excel (1 → A, 27 → AA). */
+function col(n: number): string { let t = ""; while (n > 0) { const r = (n - 1) % 26; t = String.fromCharCode(65 + r) + t; n = (n - 1 - r) / 26; } return t; }
+
+const FMT_UNITES = "#,##0;-#,##0;\"\"";
+const FMT_EUR = "#,##0 \"€\";-#,##0 \"€\";\"\"";
+const FMT_PRIX = "#,##0.00 \"€\"";
+
+/** Prix d'achat unitaire d'une réf : null pour un kit (assemblé, coût porté par ses
+ *  composants) ou si le prix est inconnu (à compléter à la main dans Excel). */
+function prixAchat(ref: string, coutByRef: Record<string, number>, kits: Set<string>): number | null {
+  if (kits.has(ref)) return null;
+  const c = coutByRef[ref];
+  return typeof c === "number" && c > 0 ? Math.round(c * 100) / 100 : null;
+}
+
 /** Écrit un onglet "Synthèse logistique" (réf × mois) dans le classeur. Partagé entre les
- *  exports simple et multi. nameByRef : libellés de secours par réf. */
-export function writeSyntheseLogistiqueSheet(wb: ExcelJS.Workbook, log: SyntheseLogistique, nameByRef: Record<string, string> = {}) {
-  const TEAL = "0D9488", DARK = "1A1A2E", WHITE = "FFFFFF";
-  const mois = log.moisLabels && log.moisLabels.length ? log.moisLabels : MOIS_FR;
-  const nbCols = 2 + mois.length + 1;               // Réf + Produit + N mois + Total
-  const totalCol = nbCols;                          // index colonne "Total"
-  // Le template peut déjà contenir un onglet "Synthèse logistique" → on le retire d'abord
-  // pour éviter l'erreur "Worksheet name already exists", puis on le (re)crée proprement.
+ *  exports simple et multi. nameByRef : libellés de secours ; coutByRef : prix d'achat
+ *  unitaire (coût Odoo) par réf.
+ *  Mise en page calquée sur le planning achats : quantités par mois, puis montant d'achat
+ *  par mois (prix × qté), « Total réf », et en bas « Total mois » + « Total année ». */
+export function writeSyntheseLogistiqueSheet(wb: ExcelJS.Workbook, log: SyntheseLogistique, nameByRef: Record<string, string> = {}, coutByRef: Record<string, number> = {}) {
   const existant = wb.getWorksheet("Synthèse logistique");
   if (existant) wb.removeWorksheet(existant.id);
-  const sw = wb.addWorksheet("Synthèse logistique", { views: [{ showGridLines: false }] });
-  sw.columns = [{ width: 16 }, { width: 42 }, ...mois.map(() => ({ width: 12 })), { width: 12 }];
+  const sw = wb.addWorksheet("Synthèse logistique", { views: [{ state: "frozen", xSplit: 3, ySplit: 4, showGridLines: false }] });
+  ecrireTableauLogistique(sw, log, {
+    titre: "Synthèse besoins logistiques — par référence et par mois",
+    colonnesTexte: [{ titre: "Réf", largeur: 16 }, { titre: "Produit", largeur: 40 }],
+    lignes: log.lignes.map(l => ({ textes: [l.ref, l.name || nameByRef[l.ref] || ""], ref: l.ref, parMois: l.parMois, total: l.total })),
+    notesSurvol: true,
+    filtres: false,
+  }, coutByRef);
+  writeDetailLogistiqueSheet(wb, log, nameByRef, coutByRef);
+}
 
-  const titleRow = sw.addRow(["Synthèse besoins logistiques — par référence et par mois"]);
-  sw.mergeCells(titleRow.number, 1, titleRow.number, nbCols);
-  const tc = sw.getCell(titleRow.number, 1);
+/** Onglet « Détail logistique » : une ligne par référence × campagne × offre, même mise en
+ *  page que la synthèse. Filtres automatiques : les totaux du bas suivent le filtre
+ *  (ex. achats d'une seule campagne). */
+function writeDetailLogistiqueSheet(wb: ExcelJS.Workbook, log: SyntheseLogistique, nameByRef: Record<string, string>, coutByRef: Record<string, number>) {
+  const NOM = "Détail logistique";
+  const existant = wb.getWorksheet(NOM);
+  if (existant) wb.removeWorksheet(existant.id);
+  const detail = log.detail || [];
+  if (!detail.length) return;
+  // Ordre : références dans l'ordre de la synthèse (plus gros besoin d'abord), puis offres.
+  const rang = new Map(log.lignes.map((l, i) => [l.ref, i]));
+  const tri = [...detail].sort((a, b) => ((rang.get(a.ref) ?? 1e9) - (rang.get(b.ref) ?? 1e9)) || (b.total - a.total));
+  const ws = wb.addWorksheet(NOM, { views: [{ state: "frozen", xSplit: 5, ySplit: 4, showGridLines: false }] });
+  ecrireTableauLogistique(ws, log, {
+    titre: "Détail des besoins logistiques — par référence, campagne et offre",
+    colonnesTexte: [{ titre: "Réf", largeur: 14 }, { titre: "Produit", largeur: 36 }, { titre: "Campagne", largeur: 28 }, { titre: "Offre", largeur: 28 }],
+    lignes: tri.map(d => ({ textes: [d.ref, d.name || nameByRef[d.ref] || "", d.campagne, d.palier], ref: d.ref, parMois: d.parMois, total: d.total })),
+    notesSurvol: false,
+    filtres: true,
+  }, coutByRef);
+}
+
+interface LigneTableau { textes: string[]; ref: string; parMois: number[]; total: number; }
+
+/**
+ * Tableau commun aux deux onglets :
+ *   [textes…] | Prix achat | Quantités : mois… | Total qté | Achats € : mois… | Total réf €
+ * Achat du mois = prix × qté du mois (formule : un prix complété à la main met tout à jour).
+ * Lignes de pied : TOTAL UNITÉS, TOTAL MOIS (€), TOTAL ANNÉE. Avec filtres, les pieds
+ * utilisent SUBTOTAL : ils ne comptent que les lignes visibles.
+ */
+function ecrireTableauLogistique(ws: ExcelJS.Worksheet, log: SyntheseLogistique, o: {
+  titre: string; colonnesTexte: { titre: string; largeur: number }[]; lignes: LigneTableau[];
+  notesSurvol: boolean; filtres: boolean;
+}, coutByRef: Record<string, number>) {
+  const TEAL = "0D9488", TEAL_DARK = "0F766E", BLEU = "1F4E79", BLEU_SOFT = "EAF1F8", DARK = "1A1A2E", WHITE = "FFFFFF";
+  const mois = log.moisLabels && log.moisLabels.length ? log.moisLabels : MOIS_FR;
+  const kits = new Set(log.refsKit || []);
+  const nT = o.colonnesTexte.length, nM = mois.length;
+  const C_PRIX = nT + 1, C_Q1 = nT + 2, C_QTOT = C_Q1 + nM, C_E1 = C_QTOT + 1, C_ETOT = C_E1 + nM;
+  const nbCols = C_ETOT;
+  ws.columns = [...o.colonnesTexte.map(c => ({ width: c.largeur })), { width: 10 }, ...mois.map(() => ({ width: 10 })), { width: 11 }, ...mois.map(() => ({ width: 12 })), { width: 14 }];
+  const remplir = (cell: ExcelJS.Cell, couleur: string) => { cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + couleur } }; };
+
+  // Titre (+ alerte campagnes ignorées)
+  const titre = ws.addRow([o.titre]);
+  ws.mergeCells(titre.number, 1, titre.number, nbCols);
+  const tc = ws.getCell(titre.number, 1);
   tc.font = { bold: true, size: 13, color: { argb: "FF" + WHITE }, name: "Calibri" };
-  tc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
-  tc.alignment = { horizontal: "left", vertical: "middle", indent: 1 };
-  titleRow.height = 24;
-  if (log.ignorees && log.ignorees.length) {
-    const warn = sw.addRow([`⚠ Campagne(s) NON comptée(s), dates de début/fin manquantes ou invalides : ${log.ignorees.join(", ")}`]);
-    sw.mergeCells(warn.number, 1, warn.number, nbCols);
-    const wc = sw.getCell(warn.number, 1);
+  remplir(tc, TEAL); tc.alignment = { horizontal: "left", vertical: "middle", indent: 1 };
+  titre.height = 24;
+  const avert = log.ignorees && log.ignorees.length
+    ? `⚠ Campagne(s) NON comptée(s), dates de début/fin manquantes ou invalides : ${log.ignorees.join(", ")}` : "";
+  const ligneAvert = ws.addRow([avert]);
+  if (avert) {
+    ws.mergeCells(ligneAvert.number, 1, ligneAvert.number, nbCols);
+    const wc = ws.getCell(ligneAvert.number, 1);
     wc.font = { bold: true, size: 10, color: { argb: "FFB91C1C" }, name: "Calibri" };
-    wc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
-    wc.alignment = { wrapText: true, vertical: "middle", indent: 1 };
-    warn.height = 30;
+    remplir(wc, "FEE2E2"); wc.alignment = { wrapText: true, vertical: "middle", indent: 1 };
+    ligneAvert.height = 28;
   }
-  sw.addRow([]);
 
-  const head = sw.addRow(["Réf", "Produit", ...mois, "Total"]);
-  head.height = 20;
-  head.eachCell(c => {
+  // Bandeau de groupes : Quantités | Achats €
+  const bande = ws.addRow([]);
+  ws.mergeCells(bande.number, C_Q1, bande.number, C_QTOT);
+  ws.mergeCells(bande.number, C_E1, bande.number, C_ETOT);
+  const bq = ws.getCell(bande.number, C_Q1), be = ws.getCell(bande.number, C_E1);
+  bq.value = "Quantités (unités)"; be.value = "Achats (€) = prix × quantité";
+  for (const [c, coul] of [[bq, TEAL], [be, BLEU]] as const) {
+    c.font = { bold: true, size: 10, color: { argb: "FF" + WHITE }, name: "Calibri" };
+    remplir(c, coul); c.alignment = { horizontal: "center", vertical: "middle" };
+  }
+  const head = ws.addRow([...o.colonnesTexte.map(c => c.titre), "Prix achat", ...mois, "Total", ...mois, "Total réf"]);
+  head.height = 30;
+  head.eachCell((c, ci) => {
     c.font = { bold: true, color: { argb: "FF" + WHITE }, size: 10, name: "Calibri" };
-    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
-    c.alignment = { horizontal: "center", vertical: "middle" };
+    remplir(c, ci >= C_E1 ? BLEU : TEAL);
+    c.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   });
 
-  const numFmt = "#,##0";
-  // Détail regroupé par réf, pour les notes de survol.
+  // Notes de survol (synthèse) : offres qui composent chaque case de quantité.
   const detailParRef = new Map<string, LigneDetailLogistique[]>();
   for (const d of log.detail || []) {
     if (!detailParRef.has(d.ref)) detailParRef.set(d.ref, []);
     detailParRef.get(d.ref)!.push(d);
   }
   const fmt = (n: number) => Math.round(n).toLocaleString("fr-FR");
-  // Texte de note : une ligne par offre contributrice (campagne / offre : qté), triée.
   const noteOffres = (parts: { d: LigneDetailLogistique; q: number }[]) => parts
     .filter(p => p.q > 0).sort((a, b) => b.q - a.q)
     .map(p => `${p.d.campagne} / ${p.d.palier} : ${fmt(p.q)}`).join("\n");
 
-  for (const l of log.lignes) {
-    const libelle = l.name || nameByRef[l.ref] || "";
-    const row = sw.addRow([l.ref, libelle, ...l.parMois, l.total]);
-    row.eachCell((c, col) => {
-      c.font = { size: 10, name: "Calibri", color: { argb: "FF" + DARK }, bold: col === totalCol };
-      c.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
-      if (col >= 3) { c.numFmt = numFmt; c.alignment = { horizontal: "right" }; }
-      if (col === 1) c.font = { ...c.font, name: "Consolas" };
-    });
-    const parts = detailParRef.get(l.ref) || [];
-    if (parts.length) {
-      l.parMois.forEach((q, i) => {
-        if (q > 0) { const t = noteOffres(parts.map(d => ({ d, q: d.parMois[i] || 0 }))); if (t) row.getCell(3 + i).note = t; }
-      });
-      const tTot = noteOffres(parts.map(d => ({ d, q: d.total })));
-      if (tTot) row.getCell(totalCol).note = tTot;
+  const premiere = ws.rowCount + 1;
+  let prixManquants = 0, refPrec = "", bandeau = false;
+  const refsSansPrix = new Set<string>();
+  for (const l of o.lignes) {
+    if (l.ref !== refPrec) { bandeau = !bandeau; refPrec = l.ref; }
+    const estKit = kits.has(l.ref);
+    const prix = prixAchat(l.ref, coutByRef, kits);
+    if (prix == null && !estKit) refsSansPrix.add(l.ref);
+    const row = ws.addRow([...l.textes, estKit ? "kit" : prix, ...l.parMois, l.total]);
+    const r = row.number, P = `$${col(C_PRIX)}${r}`;
+    for (let i = 0; i < nM; i++) {
+      row.getCell(C_E1 + i).value = { formula: `IF(ISNUMBER(${P}),${P}*${col(C_Q1 + i)}${r},0)` };
+    }
+    row.getCell(C_ETOT).value = { formula: `SUM(${col(C_E1)}${r}:${col(C_E1 + nM - 1)}${r})` };
+    for (let c = 1; c <= nbCols; c++) {
+      const cell = row.getCell(c);
+      cell.font = { size: 10, name: c === 1 ? "Consolas" : "Calibri", color: { argb: "FF" + DARK }, bold: c === C_QTOT || c === C_ETOT };
+      if (c >= C_E1) remplir(cell, BLEU_SOFT); else if (bandeau && o.filtres) remplir(cell, "F5F7FA");
+      cell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+      if (c >= C_PRIX) cell.alignment = { horizontal: "right" };
+      if (c >= C_Q1 && c <= C_QTOT) cell.numFmt = FMT_UNITES;
+      if (c >= C_E1) cell.numFmt = FMT_EUR;
+    }
+    ws.getCell(r, 1).numFmt = "@";
+    const cp = row.getCell(C_PRIX);
+    cp.numFmt = FMT_PRIX;
+    if (estKit) { cp.font = { size: 9, italic: true, name: "Calibri", color: { argb: "FF6B7280" } }; cp.note = "Kit assemblé : pas acheté en tant que tel, ses composants sont comptés à part."; }
+    else if (prix == null) remplir(cp, "FEF3C7");
+    if (o.notesSurvol) {
+      const parts = detailParRef.get(l.ref) || [];
+      if (parts.length) {
+        l.parMois.forEach((q, i) => {
+          if (q > 0) { const t = noteOffres(parts.map(d => ({ d, q: d.parMois[i] || 0 }))); if (t) row.getCell(C_Q1 + i).note = t; }
+        });
+        const tTot = noteOffres(parts.map(d => ({ d, q: d.total })));
+        if (tTot) row.getCell(C_QTOT).note = tTot;
+      }
     }
   }
-  // Aucun besoin calculable (dates de campagne manquantes) : on l'indique clairement
-  // plutôt que de laisser un tableau vide qu'on pourrait confondre avec un bug.
-  if (!log.lignes.length) {
-    const empty = sw.addRow(["", "Aucun besoin calculé — renseigne les dates de début et de fin de campagne."]);
-    sw.mergeCells(empty.number, 2, empty.number, nbCols);
-    sw.getCell(empty.number, 2).font = { italic: true, size: 10, color: { argb: "FF6B7280" }, name: "Calibri" };
+  prixManquants = refsSansPrix.size;
+  const derniere = ws.rowCount;
+  if (!o.lignes.length) {
+    const empty = ws.addRow(["", "Aucun besoin calculé — renseigne les dates de début et de fin de campagne."]);
+    ws.mergeCells(empty.number, 2, empty.number, nbCols);
+    ws.getCell(empty.number, 2).font = { italic: true, size: 10, color: { argb: "FF6B7280" }, name: "Calibri" };
   }
-  const totRow = sw.addRow(["", "TOTAL", ...log.totalParMois, log.totalGeneral]);
-  totRow.eachCell((c, col) => {
-    c.font = { bold: true, size: 10, name: "Calibri", color: { argb: "FF" + WHITE } };
-    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
-    if (col >= 3) { c.numFmt = numFmt; c.alignment = { horizontal: "right" }; }
-  });
-  sw.addRow([]);
-  const note = sw.addRow(["Profil de livraison : 40 % le mois précédant le début de l'offre, puis 60 % lissé à parts égales jusqu'à 1 mois avant la fin. Les mois s'étendent sur l'année suivante si une offre déborde. Composants de kits : 100 % à M-2 du début de campagne (assemblage avant lancement)."]);
-  sw.mergeCells(note.number, 1, note.number, nbCols);
-  sw.getCell(note.number, 1).font = { italic: true, size: 9, color: { argb: "FF6B7280" }, name: "Calibri" };
-  if ((log.detail || []).length) {
-    const aide = sw.addRow(["Survole une case pour voir les offres qui la composent. Le détail complet (filtrable) est dans l'onglet « Détail logistique »."]);
-    sw.mergeCells(aide.number, 1, aide.number, nbCols);
-    sw.getCell(aide.number, 1).font = { italic: true, size: 9, color: { argb: "FF6B7280" }, name: "Calibri" };
-  }
+  if (o.filtres && o.lignes.length) ws.autoFilter = { from: { row: head.number, column: 1 }, to: { row: derniere, column: nbCols } };
 
-  writeDetailLogistiqueSheet(wb, log, nameByRef);
-}
-
-/** Onglet « Détail logistique » : une ligne par référence × campagne × offre, mêmes colonnes
- *  de mois que la synthèse. Trié par référence (plus gros besoin d'abord) puis par quantité,
- *  avec filtres automatiques pour isoler une campagne ou une offre. */
-function writeDetailLogistiqueSheet(wb: ExcelJS.Workbook, log: SyntheseLogistique, nameByRef: Record<string, string>) {
-  const NOM = "Détail logistique";
-  const existant = wb.getWorksheet(NOM);
-  if (existant) wb.removeWorksheet(existant.id);
-  const detail = log.detail || [];
-  if (!detail.length) return;
-
-  const TEAL = "0D9488", DARK = "1A1A2E", WHITE = "FFFFFF";
-  const mois = log.moisLabels && log.moisLabels.length ? log.moisLabels : MOIS_FR;
-  const nbCols = 4 + mois.length + 1;
-  const ws = wb.addWorksheet(NOM, { views: [{ state: "frozen", xSplit: 4, ySplit: 3, showGridLines: false }] });
-  ws.columns = [{ width: 14 }, { width: 38 }, { width: 30 }, { width: 28 }, ...mois.map(() => ({ width: 11 })), { width: 11 }];
-
-  const titre = ws.addRow(["Détail des besoins logistiques — par référence, campagne et offre"]);
-  ws.mergeCells(titre.number, 1, titre.number, nbCols);
-  const tc = ws.getCell(titre.number, 1);
-  tc.font = { bold: true, size: 13, color: { argb: "FF" + WHITE }, name: "Calibri" };
-  tc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
-  tc.alignment = { horizontal: "left", vertical: "middle", indent: 1 };
-  titre.height = 24;
+  // Pieds de tableau. Avec filtres : SUBTOTAL(109) ne somme que les lignes visibles.
+  const somme = (c: number) => o.filtres
+    ? { formula: `SUBTOTAL(109,${col(c)}${premiere}:${col(c)}${derniere})` }
+    : { formula: `SUM(${col(c)}${premiere}:${col(c)}${derniere})` };
+  const suffixe = o.filtres ? " (lignes filtrées)" : "";
+  const pied = (libelle: string, couleur: string, cols: number[], fmtCell: string) => {
+    const row = ws.addRow([]);
+    row.getCell(Math.min(2, nT)).value = libelle;
+    for (let c = 1; c <= nbCols; c++) {
+      const cell = row.getCell(c);
+      if (cols.includes(c) && o.lignes.length) { cell.value = somme(c); cell.numFmt = fmtCell; cell.alignment = { horizontal: "right" }; }
+      cell.font = { bold: true, size: 10, name: "Calibri", color: { argb: "FF" + WHITE } };
+      remplir(cell, couleur);
+    }
+    return row;
+  };
+  const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
   ws.addRow([]);
+  pied(`TOTAL UNITÉS${suffixe}`, TEAL, range(C_Q1, C_QTOT), FMT_UNITES);
+  const piedMois = pied(`TOTAL MOIS (€)${suffixe}`, BLEU, range(C_E1, C_ETOT), FMT_EUR);
+  // Total année : une seule case, sous « Total réf », comme dans le planning achats.
+  const annee = ws.addRow([]);
+  annee.getCell(Math.min(2, nT)).value = `TOTAL ANNÉE (€)${suffixe}`;
+  annee.getCell(Math.min(2, nT)).font = { bold: true, size: 11, name: "Calibri", color: { argb: "FF" + BLEU } };
+  const ca = annee.getCell(C_ETOT);
+  ca.value = { formula: `${col(C_ETOT)}${piedMois.number}` };
+  ca.numFmt = FMT_EUR; ca.alignment = { horizontal: "right" };
+  ca.font = { bold: true, size: 12, name: "Calibri", color: { argb: "FF" + WHITE } };
+  remplir(ca, BLEU);
+  annee.height = 22;
 
-  const head = ws.addRow(["Réf", "Produit", "Campagne", "Offre", ...mois, "Total"]);
-  head.height = 20;
-  head.eachCell(c => {
-    c.font = { bold: true, color: { argb: "FF" + WHITE }, size: 10, name: "Calibri" };
-    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + TEAL } };
-    c.alignment = { horizontal: "center", vertical: "middle" };
-  });
-
-  // Ordre : références dans l'ordre de la synthèse (plus gros besoin d'abord), puis offres.
-  const rang = new Map(log.lignes.map((l, i) => [l.ref, i]));
-  const tri = [...detail].sort((a, b) => ((rang.get(a.ref) ?? 1e9) - (rang.get(b.ref) ?? 1e9)) || (b.total - a.total));
-  let refPrec = "", bande = false;
-  for (const d of tri) {
-    if (d.ref !== refPrec) { bande = !bande; refPrec = d.ref; }
-    const row = ws.addRow([d.ref, d.name || nameByRef[d.ref] || "", d.campagne, d.palier, ...d.parMois, d.total]);
-    row.eachCell({ includeEmpty: true }, (c, col) => {
-      c.font = { size: 10, name: col === 1 ? "Consolas" : "Calibri", color: { argb: "FF" + DARK }, bold: col === nbCols };
-      if (bande) c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5F7FA" } };
-      c.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
-      if (col >= 5) { c.numFmt = "#,##0;-#,##0;\"\""; c.alignment = { horizontal: "right" }; }
-    });
-    ws.getCell(row.number, 1).numFmt = "@";
+  // Notes de bas de tableau
+  ws.addRow([]);
+  const notes = [
+    "Profil de livraison : 40 % le mois précédant le début de l'offre, puis 60 % lissé à parts égales jusqu'à 1 mois avant la fin. Les mois s'étendent sur l'année suivante si une offre déborde. Composants de kits : 100 % à M-2 du début de campagne (assemblage avant lancement).",
+    "Prix d'achat = coût unitaire Odoo. Les kits ne sont pas valorisés (leurs composants le sont). Modifier un prix met à jour les achats et les totaux.",
+  ];
+  if (prixManquants) notes.push(`⚠ ${prixManquants} référence(s) sans prix d'achat (cases jaunes) : non comptées dans les achats. Complète le prix pour les inclure.`);
+  if (o.notesSurvol && (log.detail || []).length) notes.push("Survole une quantité pour voir les offres qui la composent. Le détail complet (filtrable) est dans l'onglet « Détail logistique ».");
+  for (const t of notes) {
+    const n = ws.addRow([t]);
+    ws.mergeCells(n.number, 1, n.number, Math.min(nbCols, nT + 2 + nM));
+    ws.getCell(n.number, 1).font = { italic: true, size: 9, color: { argb: t.startsWith("⚠") ? "FFB45309" : "FF6B7280" }, name: "Calibri" };
+    ws.getCell(n.number, 1).alignment = { wrapText: true, vertical: "top" };
+    n.height = 26;
   }
-  ws.autoFilter = { from: { row: head.number, column: 1 }, to: { row: head.number, column: nbCols } };
 }
 
 export interface LigneLogistique {
@@ -187,6 +272,9 @@ export interface SyntheseLogistique {
   totalParMois: number[];   // aligné sur moisLabels
   totalGeneral: number;
   moisLabels: string[];     // libellés des mois (peut déborder sur N+1 : "Janvier 2027"…)
+  // Références des kits (trousses assemblées) : pas achetées en tant que telles, ce sont leurs
+  // composants qui le sont → exclues du total d'achat pour ne pas compter deux fois.
+  refsKit?: string[];
   // Composants de kits : besoin total à M-2, par composant (détail par kit dans `detail`).
   // Campagnes exclues faute de dates exploitables (manquantes, invalides ou fin < début).
   // Remontées à l'utilisateur : sans ça, leurs besoins disparaissaient en silence.
@@ -273,6 +361,7 @@ export function buildSyntheseLogistique(campagnes: CampagneCreee[]): SyntheseLog
   const detailAbs: { ref: string; name: string; campagne: string; palier: string; parMoisAbs: Map<number, number> }[] = [];
   let minAbs = Infinity, maxAbs = -Infinity;
   const ignorees: string[] = [];
+  const refsKit = new Set<string>();
 
   for (const camp of campagnes) {
     const ad = absMonth(camp.dateDebut);
@@ -286,6 +375,7 @@ export function buildSyntheseLogistique(campagnes: CampagneCreee[]): SyntheseLog
     // Kits : leurs composants sont à approvisionner en une fois à M-2 du début de campagne
     // (assemblage avant lancement), au prorata du nombre de kits de chaque offre.
     const kitParRef = new Map(camp.articles.filter(a => a.kit && a.ref.trim() && (a.composants || []).length).map(a => [a.ref.trim(), a]));
+    for (const r of kitParRef.keys()) refsKit.add(r);
     for (const b of besoinsParOffre(camp)) {
       const kit = kitParRef.get(b.ref);
       if (kit) {
@@ -338,5 +428,5 @@ export function buildSyntheseLogistique(campagnes: CampagneCreee[]): SyntheseLog
   for (const l of lignes) for (let i = 0; i < nbMois; i++) totalParMois[i] += l.parMois[i];
   const totalGeneral = totalParMois.reduce((s, x) => s + x, 0);
 
-  return { lignes, totalParMois, totalGeneral, moisLabels, ignorees, detail };
+  return { lignes, totalParMois, totalGeneral, moisLabels, ignorees, detail, refsKit: [...refsKit] };
 }
