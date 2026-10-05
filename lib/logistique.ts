@@ -10,7 +10,7 @@
 
 import type ExcelJS from "exceljs";
 import type { CampagneCreee } from "@/lib/create-campaign";
-import { qtyParPack, totalPacks, ventilationPalier, articlesPalier, qtyPalierOpca } from "@/lib/create-campaign";
+import { qtyParPack, totalPacks, ventilationPalier, articlesPalier, qtyPalierOpca, qtyKeyLib } from "@/lib/create-campaign";
 import { estOpca } from "@/lib/type-produit";
 
 export const MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
@@ -335,7 +335,8 @@ export function repartirAbsolu(total: number, absDebut: number, absFin: number):
   return out;
 }
 
-/** Besoin d'une campagne détaillé par OFFRE : { ref, libellé du palier, quantité totale }.
+/** Besoin d'une campagne détaillé par OFFRE : { ref, libellé du palier, quantité totale },
+ *  paliers puis Grands Comptes et canaux non B2B.
  *  Le total par référence (somme sur les paliers) reste identique à avant. */
 function besoinsParOffre(camp: CampagneCreee): { ref: string; palier: string; qte: number }[] {
   const out: { ref: string; palier: string; qte: number }[] = [];
@@ -352,6 +353,20 @@ function besoinsParOffre(camp: CampagneCreee): { ref: string; palier: string; qt
         ? qtyPalierOpca(art, pal, camp.articles)
         : qtyParPack(art, pal, totalP, vent, camp.articles)) * (pal.nbPacks || 0);
       if (qte > 0) out.push({ ref, palier: libelle, qte });
+    }
+  }
+  // Grands Comptes et Besoins non B2B (Maison Dr Hauschka, Eshop…) : quantités saisies par
+  // enseigne / canal, à approvisionner en plus des paliers (même profil de livraison).
+  const canaux = [
+    ...(camp.gcEnseignes || []).map(e => ({ e, groupe: "Grands comptes" })),
+    ...(camp.canauxNonB2B || []).map(e => ({ e, groupe: "Non B2B" })),
+  ];
+  for (const { e, groupe } of canaux) {
+    for (const art of camp.articles) {
+      const ref = art.ref.trim();
+      if (!ref || estOpca(art.typProd)) continue;
+      const qte = (e.qties || {})[qtyKeyLib(art, camp.articles)] || 0;
+      if (qte > 0) out.push({ ref, palier: `${groupe} — ${e.nom || "(sans nom)"}`, qte });
     }
   }
   return out;

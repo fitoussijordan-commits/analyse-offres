@@ -193,16 +193,25 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
   // Besoin logistique par mois (réutilise la logique testée, avec les qtés éditées + dates campagne).
   const logistique = useMemo(() => {
     if (!camp) return null;
+    // Articles de la campagne (avec kits et composants) ; quantités et nb d'offres édités
+    // dans l'aperçu, rangés par clé article ; GC et canaux non B2B tels qu'édités ici.
+    const arts = camp.articles.filter(a => a.ref.trim());
+    const cle = (ref: string, typ?: string) => {
+      const art = arts.find(a => a.ref.trim() === ref && (a.typProd || "Produit Vente") === (typ || "Produit Vente")) || arts.find(a => a.ref.trim() === ref);
+      return art ? qtyKeyLib(art, arts) : ref;
+    };
     const virtual: CampagneCreee = {
       ...camp,
-      articles: (paliers[0]?.produits || []).map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, typProd: p.typProd })),
+      // Conso N-1 neutralisée : les quantités de l'aperçu sont déjà finales (pas de reco).
+      articles: arts.map(a => ({ ...a, consoN1: 0 })),
+      gcEnseignes, canauxNonB2B: canauxNb,
       paliers: paliers.map(p => ({
-        code: p.code, label: p.label, nbPacks: p.nbPacks,
-        qtyParPack: Object.fromEntries(p.produits.map(pr => [pr.ref, pr.qtyParPack])),
+        code: p.code, label: p.label, nbPacks: p.nbPacks, opca: p.opca, seuilOpca: p.seuilOpca,
+        qtyParPack: Object.fromEntries(p.produits.filter(pr => pr.typProd !== "OPCA").map(pr => [cle(pr.ref, pr.typProd), pr.qtyParPack])),
       })) as any,
     };
     return buildSyntheseLogistique([virtual]);
-  }, [camp, paliers]);
+  }, [camp, paliers, gcEnseignes, canauxNb]);
 
   // ── Export ─────────────────────────────────────────────────────────────────
   const exporter = async () => {
