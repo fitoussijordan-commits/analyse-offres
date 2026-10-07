@@ -292,7 +292,7 @@ function odooOrderUrl(baseUrl: string, orderId: number): string {
 }
 
 // Construit la liste dédoublonnée des commandes (offres + notes), comme l'onglet Excel "Toutes Commandes"
-interface CmdRow { id: number; name: string; partner: string; code: string; label: string; type: "Offre" | "Note"; ca: number; avenir: boolean; orderTotal: number; dateExpedition?: string; }
+interface CmdRow { id: number; name: string; partner: string; code: string; label: string; type: "Offre" | "Note"; ca: number; avenir: boolean; orderTotal: number; dateExpedition?: string; qty: number; typeCommande?: string; reassort: boolean; }
 function buildCommandes(result: CampaignResult): CmdRow[] {
   const seen = new Set<string>();
   const rows: CmdRow[] = [];
@@ -301,7 +301,7 @@ function buildCommandes(result: CampaignResult): CmdRow[] {
       const n = o.name.replace(" (note)", "");
       if (seen.has(n)) continue;
       seen.add(n);
-      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", ca: o.ca ?? 0, avenir: !o.invoiced, orderTotal: o.orderTotal ?? 0, dateExpedition: o.dateExpedition });
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: r.offre.code, label: r.offre.label, type: "Offre", ca: o.ca ?? 0, avenir: !o.invoiced, orderTotal: o.orderTotal ?? 0, dateExpedition: o.dateExpedition, qty: o.qty ?? 0, typeCommande: o.typeCommande, reassort: !!o.reassort });
     }
   }
   for (const c of result.catchalls) {
@@ -309,7 +309,7 @@ function buildCommandes(result: CampaignResult): CmdRow[] {
       const n = o.name.replace(" (note)", "");
       if (seen.has(n)) continue;
       seen.add(n);
-      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", ca: o.ca ?? 0, avenir: !o.invoiced, orderTotal: o.orderTotal ?? 0, dateExpedition: o.dateExpedition });
+      rows.push({ id: o.id, name: n, partner: o.partnerName ?? "", code: c.codeInterne, label: "Note interne", type: "Note", ca: o.ca ?? 0, avenir: !o.invoiced, orderTotal: o.orderTotal ?? 0, dateExpedition: o.dateExpedition, qty: o.qty ?? 0, typeCommande: o.typeCommande, reassort: !!o.reassort });
     }
   }
   return rows.sort((a, b) => a.name.localeCompare(b.name));
@@ -471,6 +471,23 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
               {kpi("CA total", fmtEur(result.caTotal), C.teal)}
               {kpi("Unités vendues", fmtNum(result.produits.reduce((s, p) => s + p.qtyVendue, 0)), C.blue)}
+              {result.reassort && result.reassort.nbCommandes > 0 && (() => {
+                // Part réassort DANS les totaux (pas en plus) : unités, commandes, CA et poids.
+                const r = result.reassort!;
+                const part = result.caTotal > 0 ? Math.round((r.ca / result.caTotal) * 1000) / 10 : 0;
+                return (
+                  <div style={{ flex: 1, minWidth: 190, background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: C.shadow, position: "relative", overflow: "hidden" }}
+                    title="Commandes dont le type Odoo est « Réassort ». Déjà incluses dans le CA et les unités ci-contre.">
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Dont réassort</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: C.purple, background: C.purpleSoft, borderRadius: 4, padding: "1px 6px" }}>{String(part).replace(".", ",")} % du CA</span>
+                    </div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: C.purple, marginTop: 4 }}>{fmtNum(r.qty)} <span style={{ fontSize: 13, fontWeight: 600, color: C.textMuted }}>unités</span></div>
+                    <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{fmtNum(r.nbCommandes)} commande{r.nbCommandes > 1 ? "s" : ""} · {fmtEur(r.ca)}</div>
+                    <div style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${Math.min(100, part)}%`, background: C.purple, opacity: 0.6 }} />
+                  </div>
+                );
+              })()}
               {kpi("Commandes", fmtNum(result.nbCommandes), C.purple)}
               {result.margeTotal != null && kpi("Marge €", fmtEur(result.margeTotal), C.green)}
               {result.margeTotal != null && kpi("Marge %", `${(Math.round((result.margePct || 0) * 1000) / 10).toFixed(1)} %`, C.green)}
@@ -885,8 +902,12 @@ function OffresDrillDown({ result }: { result: CampaignResult }) {
 // ── Onglet "Commandes" : liste dédoublonnée avec lien Odoo ─────────────────────
 function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: string }) {
   const [q, setQ] = useState("");
+  const [filtreType, setFiltreType] = useState<"tout" | "reassort" | "autre">("tout");
   const all = buildCommandes(result);
-  const filtered = q.trim() ? all.filter(r => (r.name + " " + r.partner + " " + r.code + " " + r.label).toLowerCase().includes(q.trim().toLowerCase())) : all;
+  const parTexte = q.trim() ? all.filter(r => (r.name + " " + r.partner + " " + r.code + " " + r.label + " " + (r.typeCommande || "")).toLowerCase().includes(q.trim().toLowerCase())) : all;
+  const filtered = filtreType === "tout" ? parTexte : parTexte.filter(r => filtreType === "reassort" ? r.reassort : !r.reassort);
+  const nbReassort = all.filter(r => r.reassort).length;
+  const aDesTypes = all.some(r => r.typeCommande);
   const nbOffre = all.filter(r => r.type === "Offre").length;
   const nbNote = all.filter(r => r.type === "Note").length;
   const avenir = all.filter(r => r.avenir).sort((a, b) => b.ca - a.ca);
@@ -897,6 +918,15 @@ function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: st
       <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Rechercher (commande, client, offre…)" style={{ flex: "1 1 240px", maxWidth: 360, padding: "7px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit", outline: "none", color: C.text }} />
         <span style={{ fontSize: 12, color: C.textMuted }}>{fmtNum(filtered.length)} commande(s) · <span style={{ color: C.teal, fontWeight: 600 }}>{fmtNum(nbOffre)} offre</span> · <span style={{ color: "#f97316", fontWeight: 600 }}>{fmtNum(nbNote)} note</span></span>
+        {aDesTypes && (
+          <div style={{ display: "flex", gap: 4, marginLeft: "auto", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 3 }}>
+            {([["tout", `Toutes (${all.length})`], ["reassort", `Réassort (${nbReassort})`], ["autre", `Hors réassort (${all.length - nbReassort})`]] as const).map(([k, l]) => (
+              <button key={k} onClick={() => setFiltreType(k)} style={{ padding: "4px 10px", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit",
+                background: filtreType === k ? C.white : "transparent", color: filtreType === k ? (k === "reassort" ? C.purple : C.text) : C.textMuted,
+                boxShadow: filtreType === k ? C.shadow : "none" }}>{l}</button>
+            ))}
+          </div>
+        )}
       </div>
       {filtered.length === 0 ? (
         <div style={{ padding: 30, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Aucune commande</div>
@@ -905,7 +935,7 @@ function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: st
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
               <tr style={{ background: C.bg }}>
-                {["Commande", "Client", "Source", "Libellé", "CA offre", "Total cmd", "Poids", "Type", ""].map((h, i) => <th key={i} style={{ padding: "10px 14px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: (i >= 4 && i <= 6) || i === 7 ? (i === 7 ? "center" : "right") : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
+                {["Commande", "Client", "Source", "Libellé", "Type de cde", "Unités", "CA offre", "Total cmd", "Poids", "Type", ""].map((h, i) => <th key={i} style={{ padding: "10px 14px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: i >= 5 && i <= 8 ? "right" : i === 9 ? "center" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -917,6 +947,12 @@ function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: st
                     <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{r.partner || "—"}</td>
                     <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: isNote ? "#f97316" : C.teal, borderBottom: `1px solid ${C.border}`, fontFamily: "monospace" }}>{r.code}</td>
                     <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{r.label}</td>
+                    <td style={{ padding: "9px 14px", fontSize: 12, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>
+                      {r.reassort
+                        ? <span style={{ fontWeight: 700, color: C.purple, background: C.purpleSoft, border: `1px solid ${C.purple}33`, borderRadius: 5, padding: "2px 8px" }}>↻ {r.typeCommande}</span>
+                        : <span style={{ color: C.textMuted }}>{r.typeCommande || "—"}</span>}
+                    </td>
+                    <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, textAlign: "right", borderBottom: `1px solid ${C.border}`, fontVariantNumeric: "tabular-nums" }}>{fmtNum(r.qty)}</td>
                     <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: C.text, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtEur(r.ca)}</td>
                     <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{r.orderTotal > 0 ? fmtEur(r.orderTotal) : "—"}</td>
                     <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 700, textAlign: "right", borderBottom: `1px solid ${C.border}`, color: r.orderTotal > 0 ? (r.ca / r.orderTotal >= 0.999 ? C.teal : C.textSec) : C.textMuted }}>{r.orderTotal > 0 ? pctOf(r.ca, r.orderTotal) : "—"}</td>

@@ -19,7 +19,10 @@ export interface ClientStat { id: number; name: string; qtyVendue: number; ca: n
 export interface ProduitStatut { ref: string; name: string; productId: number; qtyVendue: number; ca: number; parStatut: Record<string, { qty: number; ca: number }>; }
 export interface DebugOrder { id: number; name: string; partnerName?: string; invoiceStatus?: string; ca?: number; invoiced?: boolean; orderTotal?: number;
   // Date d'expédition prévue (champ Odoo studio x_studio_date_dexpdition_prvue, "YYYY-MM-DD").
-  dateExpedition?: string; }
+  dateExpedition?: string;
+  // Unités de la campagne dans cette commande, type de commande Odoo (x_type_de_commande_id)
+  // et drapeau réassort (type « Réassort », avec ou sans accent).
+  qty?: number; typeCommande?: string; reassort?: boolean; }
 
 export interface OffreAnalyse {
   offre: { code: string; label: string };
@@ -46,6 +49,8 @@ export interface CampaignResult {
   results: OffreAnalyse[];        // détail par offre (+ produits autonomes)
   catchalls: CatchallResult[];    // détail par note
   split?: { valide: { qty: number; ca: number }; avenir: { qty: number; ca: number } };
+  // Part des commandes de type « Réassort » DANS les totaux ci-dessus (pas en plus).
+  reassort?: { nbCommandes: number; qty: number; ca: number };
   error: string | null;
 }
 
@@ -102,6 +107,27 @@ async function lineFields(session: odoo.OdooSession, base: string[]): Promise<st
     purchasePriceDispo.set(key, odoo.getFieldNames(session, "sale.order.line").then(f => f.has("purchase_price")).catch(() => false));
   }
   return (await purchasePriceDispo.get(key)) ? [...base, "purchase_price"] : base;
+}
+
+// Champs lus sur sale.order. Le type de commande (champ studio) n'existe que sur certaines
+// bases : détecté une fois par base, comme purchase_price.
+const BASE_ORDER_FIELDS = ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed", "x_studio_date_dexpdition_prvue"];
+const typeCommandeDispo = new Map<string, Promise<boolean>>();
+async function orderFields(session: odoo.OdooSession): Promise<string[]> {
+  const key = `${session.config.url}|${session.config.db}`;
+  if (!typeCommandeDispo.has(key)) {
+    typeCommandeDispo.set(key, odoo.getFieldNames(session, "sale.order").then(f => f.has("x_type_de_commande_id")).catch(() => false));
+  }
+  return (await typeCommandeDispo.get(key)) ? [...BASE_ORDER_FIELDS, "x_type_de_commande_id"] : BASE_ORDER_FIELDS;
+}
+/** « Réassort », « Reassort », « RÉ-ASSORT »… : accents, casse et ponctuation ignorés. */
+export function estReassort(type?: string): boolean {
+  return !!type && type.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z]/g, "").includes("reassort");
+}
+/** Champs commune à tous les debugOrders : unités de la campagne et type de commande. */
+function infosCommande(o: any, qtyByOrder: Record<number, number>) {
+  const typeCommande = Array.isArray(o.x_type_de_commande_id) ? String(o.x_type_de_commande_id[1] || "") : undefined;
+  return { qty: qtyByOrder[o.id] || 0, typeCommande, reassort: estReassort(typeCommande) };
 }
 
 /** Complète le coût unitaire des lignes sans purchase_price avec le coût actuel du produit. */
@@ -205,11 +231,13 @@ async function analyseOffre(session: odoo.OdooSession, offre: Offre, filter: Sta
 
   const caByOrder: Record<number, number> = {};
   for (const r of recs) caByOrder[r.orderId] = (caByOrder[r.orderId] || 0) + r.subtotal;
-  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed", "x_studio_date_dexpdition_prvue"], 0);
+  const qtyByOrder: Record<number, number> = {};
+  for (const r of recs) qtyByOrder[r.orderId] = (qtyByOrder[r.orderId] || 0) + r.qty;
+  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], await orderFields(session), 0);
   const userByOrder: Record<number, { id: number; name: string }> = {};
   const debugOrders: DebugOrder[] = ords.map((o: any) => {
     if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0, dateExpedition: o.x_studio_date_dexpdition_prvue || undefined };
+    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0, dateExpedition: o.x_studio_date_dexpdition_prvue || undefined, ...infosCommande(o, qtyByOrder) };
   });
 
   // délégués : qté depuis les packs, CA depuis les composants
@@ -224,7 +252,7 @@ async function analyseOffre(session: odoo.OdooSession, offre: Offre, filter: Sta
 // ── Analyse d'une note interne (catchall historique) ──────────────────────────
 async function analyseNote(session: odoo.OdooSession, note: string, excludeOrderIds: number[], excludeOfferCodes: string[], filter: StateFilter, produitRefs: string[]): Promise<{ res: CatchallResult; recs: LineRec[] }> {
   const oDom = orderDomain(filter);
-  const noteOrders = await odoo.searchRead(session, "sale.order", [["x_note_interne", "ilike", note.trim()], ...oDom], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed", "x_studio_date_dexpdition_prvue"], 0);
+  const noteOrders = await odoo.searchRead(session, "sale.order", [["x_note_interne", "ilike", note.trim()], ...oDom], await orderFields(session), 0);
   const exclude = new Set(excludeOrderIds);
   let orphans = noteOrders.filter((o: any) => !exclude.has(o.id));
   if (orphans.length && excludeOfferCodes.length) {
@@ -260,12 +288,14 @@ async function analyseNote(session: odoo.OdooSession, note: string, excludeOrder
   const matchedOrderIds = new Set(recs.map(r => r.orderId));
   const caByOrder: Record<number, number> = {};
   for (const r of recs) caByOrder[r.orderId] = (caByOrder[r.orderId] || 0) + r.subtotal;
+  const qtyByOrder: Record<number, number> = {};
+  for (const r of recs) qtyByOrder[r.orderId] = (qtyByOrder[r.orderId] || 0) + r.qty;
   const userByOrder: Record<number, { id: number; name: string }> = {};
   const debugOrders: DebugOrder[] = orphans
     .filter((o: any) => matchedOrderIds.has(o.id))
     .map((o: any) => {
       if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-      return { id: o.id, name: `${o.name} (note)`, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0, dateExpedition: o.x_studio_date_dexpdition_prvue || undefined };
+      return { id: o.id, name: `${o.name} (note)`, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0, dateExpedition: o.x_studio_date_dexpdition_prvue || undefined, ...infosCommande(o, qtyByOrder) };
     });
   const um: Record<number, DelegueCA> = {};
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].qtyVendue += r.qty; um[u.id].ca += r.subtotal; }
@@ -298,11 +328,13 @@ async function analyseStandalone(session: odoo.OdooSession, refs: string[], filt
   const orderIds = [...new Set(recs.map(r => r.orderId))];
   const caByOrder: Record<number, number> = {};
   for (const r of recs) caByOrder[r.orderId] = (caByOrder[r.orderId] || 0) + r.subtotal;
-  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], ["id", "name", "user_id", "partner_id", "invoice_status", "amount_untaxed", "x_studio_date_dexpdition_prvue"], 0);
+  const qtyByOrder: Record<number, number> = {};
+  for (const r of recs) qtyByOrder[r.orderId] = (qtyByOrder[r.orderId] || 0) + r.qty;
+  const ords = await odoo.searchRead(session, "sale.order", [["id", "in", orderIds]], await orderFields(session), 0);
   const userByOrder: Record<number, { id: number; name: string }> = {};
   const debugOrders: DebugOrder[] = ords.map((o: any) => {
     if (o.user_id) userByOrder[o.id] = { id: o.user_id[0], name: o.user_id[1] };
-    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0, dateExpedition: o.x_studio_date_dexpdition_prvue || undefined };
+    return { id: o.id, name: o.name, partnerName: o.partner_id ? o.partner_id[1] : undefined, invoiceStatus: o.invoice_status, ca: caByOrder[o.id] || 0, orderTotal: o.amount_untaxed || 0, dateExpedition: o.x_studio_date_dexpdition_prvue || undefined, ...infosCommande(o, qtyByOrder) };
   });
   const um: Record<number, DelegueCA> = {};
   for (const r of recs) { const u = userByOrder[r.orderId]; if (!u) continue; if (!um[u.id]) um[u.id] = { userId: u.id, name: u.name, qtyVendue: 0, ca: 0 }; um[u.id].qtyVendue += r.qty; um[u.id].ca += r.subtotal; }
@@ -532,6 +564,20 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) tally(o);
   }
 
+  // Réassort : même découpage que le CA total (CA propre de chaque commande, par source),
+  // donc inclus dans les totaux, jamais ajouté. Une commande n'est comptée qu'une fois.
+  const reassort = { nbCommandes: 0, qty: 0, ca: 0 };
+  {
+    const vues = new Set<number>();
+    const compter = (o: DebugOrder) => {
+      if (!o.reassort) return;
+      reassort.ca += o.ca ?? 0; reassort.qty += o.qty ?? 0;
+      if (!vues.has(o.id)) { vues.add(o.id); reassort.nbCommandes += 1; }
+    };
+    for (const r of results) for (const o of r.debugOrders) compter(o);
+    for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) compter(o);
+  }
+
   // Quantité campagne = offres vendues (packs) + unités produits autonomes + commandes notées
   // (et NON la somme des unités de composants, qui gonfle le chiffre)
   const qtyOffres = results.reduce((s, r) => s + (r.qtyTotal || 0), 0) + catchalls.reduce((s, c) => s + (c.data?.qtyTotal || 0), 0);
@@ -544,6 +590,6 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     delegues: Object.values(delMap).sort((a, b) => b.ca - a.ca),
     categories: finalize(catMap), adherents: finalize(adhMap), statuts: finalize(statMap),
     produitsParStatut: Object.values(prodStatMap).sort((a, b) => b.ca - a.ca),
-    perOffre, results, catchalls, split, error: null,
+    perOffre, results, catchalls, split, reassort, error: null,
   };
 }
