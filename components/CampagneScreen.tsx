@@ -388,11 +388,19 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
     finally { setExporting(false); }
   };
 
-  const kpi = (label: string, value: string, color: string) => (
+  // `sous` : ligne complémentaire sous le chiffre (ex. « dont 212 en réassort »).
+  const kpi = (label: string, value: string, color: string, sous?: React.ReactNode) => (
     <div style={{ flex: 1, minWidth: 150, background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: C.shadow }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 800, color, marginTop: 4 }}>{value}</div>
+      {sous && <div style={{ fontSize: 12, color: C.textSec, marginTop: 3 }}>{sous}</div>}
     </div>
+  );
+  // Part réassort DANS chaque total (pas en plus) : « dont X en réassort ».
+  const dontReassort = (texte: string) => (
+    <span title="Commandes dont le type Odoo est « Réassort » : déjà incluses dans le chiffre au-dessus.">
+      dont <strong style={{ color: C.purple }}>{texte}</strong> en réassort
+    </span>
   );
 
   const TABS: [Tab, string][] = [["produits", "Produits"], ["delegues", "Délégués"], ["categories", "Catégorie statistique"], ["adherents", "Adhérent réseau"], ["statuts", "Statut client"], ["offres", "Par offre"], ["commandes", "Commandes"], ["preco", "Préco N+1"]];
@@ -469,26 +477,10 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
             )}
             {/* KPIs */}
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
-              {kpi("CA total", fmtEur(result.caTotal), C.teal)}
-              {kpi("Unités vendues", fmtNum(result.produits.reduce((s, p) => s + p.qtyVendue, 0)), C.blue)}
-              {result.reassort && result.reassort.nbCommandes > 0 && (() => {
-                // Part réassort DANS les totaux (pas en plus) : unités, commandes, CA et poids.
-                const r = result.reassort!;
-                const part = result.caTotal > 0 ? Math.round((r.ca / result.caTotal) * 1000) / 10 : 0;
-                return (
-                  <div style={{ flex: 1, minWidth: 190, background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: C.shadow, position: "relative", overflow: "hidden" }}
-                    title="Commandes dont le type Odoo est « Réassort ». Déjà incluses dans le CA et les unités ci-contre.">
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Dont réassort</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: C.purple, background: C.purpleSoft, borderRadius: 4, padding: "1px 6px" }}>{String(part).replace(".", ",")} % du CA</span>
-                    </div>
-                    <div style={{ fontSize: 22, fontWeight: 800, color: C.purple, marginTop: 4 }}>{fmtNum(r.qty)} <span style={{ fontSize: 13, fontWeight: 600, color: C.textMuted }}>unités</span></div>
-                    <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{fmtNum(r.nbCommandes)} commande{r.nbCommandes > 1 ? "s" : ""} · {fmtEur(r.ca)}</div>
-                    <div style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${Math.min(100, part)}%`, background: C.purple, opacity: 0.6 }} />
-                  </div>
-                );
-              })()}
-              {kpi("Commandes", fmtNum(result.nbCommandes), C.purple)}
+              {kpi("CA total", fmtEur(result.caTotal), C.teal, result.reassort && result.reassort.nbCommandes > 0
+                ? dontReassort(`${fmtEur(result.reassort!.ca)} (${String(result.caTotal > 0 ? Math.round((result.reassort!.ca / result.caTotal) * 1000) / 10 : 0).replace(".", ",")} %)`) : undefined)}
+              {kpi("Unités vendues", fmtNum(result.produits.reduce((s, p) => s + p.qtyVendue, 0)), C.blue, result.reassort && result.reassort.nbCommandes > 0 ? dontReassort(fmtNum(result.reassort!.qty)) : undefined)}
+              {kpi("Commandes", fmtNum(result.nbCommandes), C.purple, result.reassort && result.reassort.nbCommandes > 0 ? dontReassort(fmtNum(result.reassort!.nbCommandes)) : undefined)}
               {result.margeTotal != null && kpi("Marge €", fmtEur(result.margeTotal), C.green)}
               {result.margeTotal != null && kpi("Marge %", `${(Math.round((result.margePct || 0) * 1000) / 10).toFixed(1)} %`, C.green)}
               {result.split && filter === "all" && kpi("CA validé", fmtEur(result.split.valide.ca), C.green)}
