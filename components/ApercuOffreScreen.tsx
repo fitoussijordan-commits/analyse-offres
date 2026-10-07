@@ -231,7 +231,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
       if (logistique) payload.logistique = logistique;
       try {
         const catalogue = await odoo.getAllProducts(session);
-        payload.mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc }));
+        payload.mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc, typProd: p.typProd }));
       } catch { /* mapping limité */ }
       const res = await fetch("/api/export-template", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
@@ -281,7 +281,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
       // Mapping catalogue (une seule fois pour tout le classeur).
       try {
         const catalogue = await odoo.getAllProducts(session);
-        body.mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc }));
+        body.mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc, typProd: p.typProd }));
       } catch { /* mapping limité */ }
       const res = await fetch("/api/export-multi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);

@@ -29,6 +29,18 @@ export function coutsAchatParRef(mapping: { ref: string; standardPrice?: number 
   return out;
 }
 
+/** Type de produit par réf pour l'export : type Odoo (Produit Vente, Miniature, Testeur…)
+ *  quand le champ existe, sinon le type saisi dans la campagne. */
+export function typesParRef(mapping: { ref: string; typProd?: string }[] | undefined, paliers: { produits: { ref: string; typProd?: string }[] }[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const pal of paliers) for (const p of pal.produits || []) {
+    const r = (p.ref || "").trim();
+    if (r && p.typProd && p.typProd !== "OPCA") out[r] = p.typProd;
+  }
+  for (const m of mapping || []) { const r = (m.ref || "").trim(); if (r && m.typProd) out[r] = m.typProd; }
+  return out;
+}
+
 /** Lettre de colonne Excel (1 → A, 27 → AA). */
 function col(n: number): string { let t = ""; while (n > 0) { const r = (n - 1) % 26; t = String.fromCharCode(65 + r) + t; n = (n - 1 - r) / 26; } return t; }
 
@@ -49,7 +61,7 @@ function prixAchat(ref: string, coutByRef: Record<string, number>, kits: Set<str
  *  unitaire (coût Odoo) par réf.
  *  Mise en page calquée sur le planning achats : quantités par mois, puis montant d'achat
  *  par mois (prix × qté), « Total réf », et en bas « Total mois » + « Total année ». */
-export function writeSyntheseLogistiqueSheet(wb: ExcelJS.Workbook, log: SyntheseLogistique, nameByRef: Record<string, string> = {}, coutByRef: Record<string, number> = {}) {
+export function writeSyntheseLogistiqueSheet(wb: ExcelJS.Workbook, log: SyntheseLogistique, nameByRef: Record<string, string> = {}, coutByRef: Record<string, number> = {}, typeByRef: Record<string, string> = {}) {
   const existant = wb.getWorksheet("Synthèse logistique");
   if (existant) wb.removeWorksheet(existant.id);
   const sw = wb.addWorksheet("Synthèse logistique", { views: [{ state: "frozen", xSplit: 3, ySplit: 4, showGridLines: false }] });
@@ -59,14 +71,14 @@ export function writeSyntheseLogistiqueSheet(wb: ExcelJS.Workbook, log: Synthese
     lignes: log.lignes.map(l => ({ textes: [l.ref, l.name || nameByRef[l.ref] || ""], ref: l.ref, parMois: l.parMois, total: l.total })),
     notesSurvol: true,
     filtres: false,
-  }, coutByRef);
-  writeDetailLogistiqueSheet(wb, log, nameByRef, coutByRef);
+  }, coutByRef, typeByRef);
+  writeDetailLogistiqueSheet(wb, log, nameByRef, coutByRef, typeByRef);
 }
 
 /** Onglet « Détail logistique » : une ligne par référence × campagne × offre, même mise en
  *  page que la synthèse. Filtres automatiques : les totaux du bas suivent le filtre
  *  (ex. achats d'une seule campagne). */
-function writeDetailLogistiqueSheet(wb: ExcelJS.Workbook, log: SyntheseLogistique, nameByRef: Record<string, string>, coutByRef: Record<string, number>) {
+function writeDetailLogistiqueSheet(wb: ExcelJS.Workbook, log: SyntheseLogistique, nameByRef: Record<string, string>, coutByRef: Record<string, number>, typeByRef: Record<string, string>) {
   const NOM = "Détail logistique";
   const existant = wb.getWorksheet(NOM);
   if (existant) wb.removeWorksheet(existant.id);
@@ -82,7 +94,7 @@ function writeDetailLogistiqueSheet(wb: ExcelJS.Workbook, log: SyntheseLogistiqu
     lignes: tri.map(d => ({ textes: [d.ref, d.name || nameByRef[d.ref] || "", d.campagne, d.palier], ref: d.ref, parMois: d.parMois, total: d.total })),
     notesSurvol: false,
     filtres: true,
-  }, coutByRef);
+  }, coutByRef, typeByRef);
 }
 
 interface LigneTableau { textes: string[]; ref: string; parMois: number[]; total: number; }
@@ -97,14 +109,14 @@ interface LigneTableau { textes: string[]; ref: string; parMois: number[]; total
 function ecrireTableauLogistique(ws: ExcelJS.Worksheet, log: SyntheseLogistique, o: {
   titre: string; colonnesTexte: { titre: string; largeur: number }[]; lignes: LigneTableau[];
   notesSurvol: boolean; filtres: boolean;
-}, coutByRef: Record<string, number>) {
+}, coutByRef: Record<string, number>, typeByRef: Record<string, string> = {}) {
   const TEAL = "0D9488", TEAL_DARK = "0F766E", BLEU = "1F4E79", BLEU_SOFT = "EAF1F8", DARK = "1A1A2E", WHITE = "FFFFFF";
   const mois = log.moisLabels && log.moisLabels.length ? log.moisLabels : MOIS_FR;
   const kits = new Set(log.refsKit || []);
   const nT = o.colonnesTexte.length, nM = mois.length;
-  const C_PRIX = nT + 1, C_Q1 = nT + 2, C_QTOT = C_Q1 + nM, C_E1 = C_QTOT + 1, C_ETOT = C_E1 + nM;
+  const C_PRIX = nT + 1, C_TYPE = nT + 2, C_Q1 = nT + 3, C_QTOT = C_Q1 + nM, C_E1 = C_QTOT + 1, C_ETOT = C_E1 + nM;
   const nbCols = C_ETOT;
-  ws.columns = [...o.colonnesTexte.map(c => ({ width: c.largeur })), { width: 10 }, ...mois.map(() => ({ width: 10 })), { width: 11 }, ...mois.map(() => ({ width: 12 })), { width: 14 }];
+  ws.columns = [...o.colonnesTexte.map(c => ({ width: c.largeur })), { width: 10 }, { width: 15 }, ...mois.map(() => ({ width: 10 })), { width: 11 }, ...mois.map(() => ({ width: 12 })), { width: 14 }];
   const remplir = (cell: ExcelJS.Cell, couleur: string) => { cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + couleur } }; };
 
   // Titre (+ alerte campagnes ignorées)
@@ -135,7 +147,7 @@ function ecrireTableauLogistique(ws: ExcelJS.Worksheet, log: SyntheseLogistique,
     c.font = { bold: true, size: 10, color: { argb: "FF" + WHITE }, name: "Calibri" };
     remplir(c, coul); c.alignment = { horizontal: "center", vertical: "middle" };
   }
-  const head = ws.addRow([...o.colonnesTexte.map(c => c.titre), "Prix achat", ...mois, "Total", ...mois, "Total réf"]);
+  const head = ws.addRow([...o.colonnesTexte.map(c => c.titre), "Prix achat", "Type", ...mois, "Total", ...mois, "Total réf"]);
   head.height = 30;
   head.eachCell((c, ci) => {
     c.font = { bold: true, color: { argb: "FF" + WHITE }, size: 10, name: "Calibri" };
@@ -162,7 +174,8 @@ function ecrireTableauLogistique(ws: ExcelJS.Worksheet, log: SyntheseLogistique,
     const estKit = kits.has(l.ref);
     const prix = prixAchat(l.ref, coutByRef, kits);
     if (prix == null && !estKit) refsSansPrix.add(l.ref);
-    const row = ws.addRow([...l.textes, estKit ? "kit" : prix, ...l.parMois, l.total]);
+    const type = estKit ? "Kit" : (typeByRef[l.ref] || "");
+    const row = ws.addRow([...l.textes, estKit ? "kit" : prix, type, ...l.parMois, l.total]);
     const r = row.number, P = `$${col(C_PRIX)}${r}`;
     for (let i = 0; i < nM; i++) {
       row.getCell(C_E1 + i).value = { formula: `IF(ISNUMBER(${P}),${P}*${col(C_Q1 + i)}${r},0)` };
@@ -173,7 +186,7 @@ function ecrireTableauLogistique(ws: ExcelJS.Worksheet, log: SyntheseLogistique,
       cell.font = { size: 10, name: c === 1 ? "Consolas" : "Calibri", color: { argb: "FF" + DARK }, bold: c === C_QTOT || c === C_ETOT };
       if (c >= C_E1) remplir(cell, BLEU_SOFT); else if (bandeau && o.filtres) remplir(cell, "F5F7FA");
       cell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
-      if (c >= C_PRIX) cell.alignment = { horizontal: "right" };
+      if (c >= C_PRIX && c !== C_TYPE) cell.alignment = { horizontal: "right" };
       if (c >= C_Q1 && c <= C_QTOT) cell.numFmt = FMT_UNITES;
       if (c >= C_E1) cell.numFmt = FMT_EUR;
     }

@@ -356,7 +356,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
       // Charger tout le catalogue Odoo pour remplir l'onglet Mapping (VLOOKUP sur n'importe quelle réf).
       try {
         const catalogue = await odoo.getAllProducts(session);
-        payload.mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc }));
+        payload.mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc, typProd: p.typProd }));
       } catch { /* si le catalogue échoue, le Mapping se limite aux articles de la campagne */ }
       // Synthèse logistique (réf × mois) de cette campagne → onglet dans le même fichier.
       payload.logistique = buildSyntheseLogistique([camp]);
@@ -392,7 +392,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
       let mapping: any[] | undefined;
       try {
         const catalogue = await odoo.getAllProducts(session);
-        mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc }));
+        mapping = catalogue.map(p => ({ ref: p.ref, name: p.name, barcode: p.barcode, standardPrice: p.standardPrice, listPrice: p.listPrice, ppc: p.ppc, typProd: p.typProd }));
       } catch { /* prix limités aux articles des campagnes */ }
       const res = await fetch("/api/export-multi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campagnes, logistique, mapping }) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);

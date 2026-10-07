@@ -7,7 +7,7 @@ import ExcelJS from "exceljs";
 import "@/lib/server/excel-notes"; // bulles de survol dimensionnées selon leur texte
 import path from "path";
 import { fillPropositionWorkbook, PROP_SHEET, PropPayload } from "@/lib/fill-proposition";
-import { writeSyntheseLogistiqueSheet, SyntheseLogistique, coutsAchatParRef } from "@/lib/logistique";
+import { writeSyntheseLogistiqueSheet, SyntheseLogistique, coutsAchatParRef, typesParRef } from "@/lib/logistique";
 import { writeSyntheseDetailleeSheet } from "@/lib/synthese-detaillee";
 
 export const maxDuration = 60;
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       const log = payload.logistique && payload.logistique.lignes?.length
         ? payload.logistique
         : { lignes: [], totalParMois: [], totalGeneral: 0, moisLabels: [] };
-      writeSyntheseLogistiqueSheet(wb, log, nameByRef, coutsAchatParRef(payload.mapping, payload.paliers, log?.prixComposants));
+      writeSyntheseLogistiqueSheet(wb, log, nameByRef, coutsAchatParRef(payload.mapping, payload.paliers, log?.prixComposants), typesParRef(payload.mapping, payload.paliers));
     }
 
     // Renommer l'onglet "Proposition template" par le nom de la campagne (nettoyé : Excel

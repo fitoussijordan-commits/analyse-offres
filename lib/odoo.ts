@@ -85,6 +85,32 @@ export interface ProductPricing {
   listPrice: number;      // tarif revendeur unitaire
   ppc: number;            // PPC
   description?: string;   // description commerciale (description_sale), pour l'aperçu recherche
+  typProd?: string;       // type de produit Odoo (Produit Vente, Miniature, Testeur…) si le champ existe
+}
+
+// ── Type de produit Odoo (champ personnalisé, nom variable selon la base) ──────
+// Détecté par son LIBELLÉ (« Type de produit », « Typ. Prod »…) parmi les champs de
+// product.product. Renvoie le nom du champ, son type et, pour une sélection, les libellés.
+const typeProduitCache = new Map<string, Promise<{ champ: string; type: string; libelles: Record<string, string> } | null>>();
+export function champTypeProduit(session: OdooSession) {
+  const key = `${session.config.url}|${session.config.db}`;
+  if (!typeProduitCache.has(key)) {
+    typeProduitCache.set(key, (async () => {
+      const champs = await call(session, "/web/dataset/call_kw", { model: "product.product", method: "fields_get", args: [], kwargs: { attributes: ["string", "type", "selection"] } });
+      const norm = (t: string) => (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z]/g, "");
+      const candidats = Object.entries(champs || {})
+        .filter(([, f]: any) => ["char", "selection", "many2one"].includes(f.type))
+        .map(([nom, f]: any) => ({ nom, f, l: norm(f.string) }))
+        // « Type de produit », « Type produit », « Typ. Prod » ; exclut le type technique Odoo (detailed_type…).
+        .filter(c => /^typ(e)?(de)?prod/.test(c.l) && !["type", "detailed_type", "product_type"].includes(c.nom));
+      const choix = candidats.find(c => c.nom.startsWith("x_")) || candidats[0];
+      if (!choix) return null;
+      const libelles: Record<string, string> = {};
+      for (const [v, l] of (choix.f.selection || []) as [string, string][]) libelles[v] = l;
+      return { champ: choix.nom, type: choix.f.type, libelles };
+    })().catch(() => null));
+  }
+  return typeProduitCache.get(key)!;
 }
 
 /**
@@ -222,15 +248,21 @@ export async function getStatutDistributionByOffer(session: OdooSession, offerCo
 
 /** Catalogue complet : tous les product.product ayant un default_code (pour l'onglet Mapping). */
 export async function getAllProducts(session: OdooSession): Promise<ProductPricing[]> {
+  const typ = await champTypeProduit(session);
   const prods = await searchRead(
     session, "product.product",
     [["default_code", "!=", false]],
-    ["id", "default_code", "name", "barcode", "standard_price", "list_price", "x_ppc"],
+    ["id", "default_code", "name", "barcode", "standard_price", "list_price", "x_ppc", ...(typ ? [typ.champ] : [])],
     0, "default_code"
   );
   const out: ProductPricing[] = [];
   for (const p of (prods || []) as any[]) {
     if (!p.default_code) continue;
+    let typProd: string | undefined;
+    if (typ) {
+      const v = p[typ.champ];
+      typProd = Array.isArray(v) ? String(v[1] || "") : v ? String(typ.libelles[v] ?? v) : undefined;
+    }
     out.push({
       productId: p.id,
       ref: p.default_code,
@@ -239,6 +271,7 @@ export async function getAllProducts(session: OdooSession): Promise<ProductPrici
       standardPrice: typeof p.standard_price === "number" ? p.standard_price : 0,
       listPrice: typeof p.list_price === "number" ? p.list_price : 0,
       ppc: typeof p.x_ppc === "number" ? p.x_ppc : 0,
+      typProd: typProd || undefined,
     });
   }
   return out;

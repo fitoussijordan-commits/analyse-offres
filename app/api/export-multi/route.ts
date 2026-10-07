@@ -7,7 +7,7 @@ import ExcelJS from "exceljs";
 import "@/lib/server/excel-notes"; // bulles de survol dimensionnées selon leur texte
 import path from "path";
 import { fillPropositionSheet, fillMapping, PROP_SHEET, MAPPING_SHEET, PropPayload, MapRow } from "@/lib/fill-proposition";
-import { writeSyntheseLogistiqueSheet, SyntheseLogistique, coutsAchatParRef } from "@/lib/logistique";
+import { writeSyntheseLogistiqueSheet, SyntheseLogistique, coutsAchatParRef, typesParRef } from "@/lib/logistique";
 import { writeSyntheseAnnuelleSheet } from "@/lib/synthese-detaillee";
 
 export const maxDuration = 120;
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
     }
     // Toujours réécrit (même vide) pour ne jamais laisser le contenu résiduel du gabarit.
     writeSyntheseLogistiqueSheet(wb, payload.logistique?.lignes?.length ? payload.logistique
-      : { lignes: [], totalParMois: [], totalGeneral: 0, moisLabels: [] }, nameByRef, coutsAchatParRef(payload.mapping, campagnes.flatMap(c => c.paliers), payload.logistique?.prixComposants));
+      : { lignes: [], totalParMois: [], totalGeneral: 0, moisLabels: [] }, nameByRef, coutsAchatParRef(payload.mapping, campagnes.flatMap(c => c.paliers), payload.logistique?.prixComposants), typesParRef(payload.mapping, campagnes.flatMap(c => c.paliers)));
 
     // 2bis) Onglet Synthèse CA annuelle : CA/marge par campagne + total année.
     writeSyntheseAnnuelleSheet(wb, campagnes.map(c => ({ nom: c.nom, paliers: c.paliers })));
