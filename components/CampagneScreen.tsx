@@ -464,7 +464,7 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
             <div style={{ fontSize: 13 }}>Les ventes des offres, produits et notes de la campagne seront agrégées sans doublons.</div>
           </div>
         ) : (
-          <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div style={{ maxWidth: 1800, margin: "0 auto" }}>
             {selected && selected.produits.length > 0 && (!selected.dateDebut || !selected.dateFin) && (
               <div style={{ marginBottom: 14, padding: "10px 14px", background: C.redSoft, border: `1px solid ${C.red}33`, borderRadius: 10, fontSize: 12.5, color: C.red, fontWeight: 600 }}>
                 ⚠ Cette campagne a {selected.produits.length} article(s) seul(s) mais pas de période : toutes leurs ventes, tous temps confondus, sont comptées. Renseigne la période dans « Gérer les campagnes ».
