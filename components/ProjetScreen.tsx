@@ -163,7 +163,7 @@ function FormulaireProjet({ projet, onSave, onCancel, onToast }: {
 
   return (
     <div style={{ flex:1, overflowY:"auto", padding:"24px 32px" }}>
-      <div style={{ maxWidth:920, margin:"0 auto" }}>
+      <div style={{ maxWidth:1800, margin:"0 auto" }}>
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:28 }}>
           <button onClick={onCancel} style={{ width:34,height:34,display:"flex",alignItems:"center",justifyContent:"center",background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,cursor:"pointer",flexShrink:0 }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.text} strokeWidth="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>

@@ -447,7 +447,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
 
   return (
     <div style={{ flex: 1, height: "100%", overflowY: "auto", padding: 24 }}>
-    <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ maxWidth: 1800, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: "13px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div style={{ minWidth: 220 }}>
           <h1 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: 0, letterSpacing: "-0.01em" }}>{camp.nom?.trim() || "Créer une campagne"}</h1>

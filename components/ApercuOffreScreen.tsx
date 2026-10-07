@@ -314,7 +314,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
 
   return (
     <div style={{ flex: 1, height: "100%", overflowY: "auto", padding: 24 }}>
-    <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ maxWidth: 1800, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Aperçu interactif de l'offre</h1>
         <span style={{ fontSize: 13, color: C.textMuted }}>Édite les paramètres → tout se recalcule en direct.</span>
