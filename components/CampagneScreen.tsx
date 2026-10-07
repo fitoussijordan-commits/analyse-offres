@@ -6,7 +6,7 @@ import { fetchCampaign, type CampaignResult, type StateFilter, type EtapeAnalyse
 import AnalyseLoader from "@/components/AnalyseLoader";
 import { buildPreco } from "@/lib/preco";
 import { precoToCampagne } from "@/lib/create-campaign";
-import { ChartGrid, CarteBarres, type MesureCarte } from "./CampagneCharts";
+import { ChartCard, HBarChart, PieChart, SplitBar, fmtEurShort } from "./CampagneCharts";
 
 import { C } from "@/lib/theme";
 const fmtEur = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
@@ -483,65 +483,48 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
               {kpi("Commandes", fmtNum(result.nbCommandes), C.purple, result.reassort && result.reassort.nbCommandes > 0 ? dontReassort(fmtNum(result.reassort!.nbCommandes)) : undefined)}
               {result.margeTotal != null && kpi("Marge €", fmtEur(result.margeTotal), C.green)}
               {result.margeTotal != null && kpi("Marge %", `${(Math.round((result.margePct || 0) * 1000) / 10).toFixed(1)} %`, C.green)}
-              {result.split && filter === "all" && (() => {
-                // Validé (facturé) / à venir dans une seule carte, avec la barre de répartition.
-                const v = result.split!.valide.ca, a = result.split!.avenir.ca, t = v + a;
-                const pv = t > 0 ? (v / t) * 100 : 0;
-                return (
-                  <div style={{ flex: "2 1 320px", minWidth: 280, background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: C.shadow }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                      <div>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>CA validé (facturé)</div>
-                        <div style={{ fontSize: 22, fontWeight: 800, color: C.green, marginTop: 4 }}>{fmtEur(v)}</div>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>À venir</div>
-                        <div style={{ fontSize: 22, fontWeight: 800, color: C.amber, marginTop: 4 }}>{fmtEur(a)}</div>
-                      </div>
-                    </div>
-                    {t > 0 && (
-                      <div style={{ marginTop: 10 }}>
-                        <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", background: C.bg }}>
-                          <div style={{ width: `${pv}%`, background: C.green }} />
-                          <div style={{ width: `${100 - pv}%`, background: C.amber }} />
-                        </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.textMuted, marginTop: 4 }}>
-                          <span>{pv.toFixed(0)} % facturé</span><span>{(100 - pv).toFixed(0)} % à venir</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
+              {result.split && filter === "all" && kpi("CA validé", fmtEur(result.split.valide.ca), C.green)}
+              {result.split && filter === "all" && kpi("CA à venir", fmtEur(result.split.avenir.ca), C.amber)}
             </div>
 
-            {/* Graphiques : grille régulière ; une carte cliquée s'agrandit (liste complète,
-                choix de la mesure, toutes les mesures en colonnes). */}
-            {(() => {
-              // « [1010214] Sérum Hydratant Plus » → désignation d'abord, référence en petit.
-              const sansRef = (nom: string) => nom.replace(/^\[[^\]]*\]\s*/, "");
-              const CA: MesureCarte = { cle: "ca", label: "CA", fmt: fmtEur };
-              const UNITES: MesureCarte = { cle: "qty", label: "Unités", fmt: fmtNum };
-              const CMDS: MesureCarte = { cle: "cmd", label: "Commandes", fmt: fmtNum };
-              const MARGE: MesureCarte = { cle: "marge", label: "Marge", fmt: fmtEur };
-              const clients = (liste: typeof result.categories) => liste.map(x => ({ label: x.name, valeurs: { ca: x.ca, qty: x.qtyVendue, cmd: x.nbCommandes } }));
-              return (
-                <ChartGrid>
-                  <CarteBarres title="CA par offre" color={C.teal} mesures={[CA, { cle: "qty", label: "Offres vendues", fmt: fmtNum }, MARGE]}
-                    lignes={result.perOffre.map(o => ({ label: o.label || o.code, sub: o.label ? o.code : undefined, valeurs: { ca: o.caTotal, qty: o.qtyTotal, marge: o.margeTotal } }))} />
-                  <CarteBarres title="Top produits" color={C.blue} mesures={[CA, UNITES, MARGE]}
-                    lignes={result.produits.map(p => ({ label: sansRef(p.name), sub: p.ref || undefined, valeurs: { ca: p.ca, qty: p.qtyVendue, marge: p.ca - (p.cout || 0) } }))} />
-                  <CarteBarres title="Top délégués" color={C.purple} mesures={[CA, UNITES]}
-                    lignes={result.delegues.map(d => ({ label: d.name, valeurs: { ca: d.ca, qty: d.qtyVendue } }))} />
-                  <CarteBarres title="Par catégorie statistique" color={C.teal} mesures={[CA, UNITES, CMDS]} repartition libelleVide="sans catégorie renseignée"
-                    lignes={clients(result.categories)} />
-                  <CarteBarres title="Par statut client" color={C.blue} mesures={[CA, UNITES, CMDS]} repartition libelleVide="sans statut renseigné"
-                    lignes={clients(result.statuts)} />
-                  <CarteBarres title="Par adhérent réseau" color={C.purple} mesures={[CA, UNITES, CMDS]} repartition libelleVide="hors réseau (sans adhérent)"
-                    lignes={clients(result.adherents)} />
-                </ChartGrid>
-              );
-            })()}
+            {/* Graphiques */}
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+              {filter === "all" && result.split && (result.split.valide.ca > 0 || result.split.avenir.ca > 0) && (
+                <ChartCard title="Validé vs à venir">
+                  <SplitBar valide={result.split.valide.ca} avenir={result.split.avenir.ca} />
+                </ChartCard>
+              )}
+              {result.perOffre.filter(o => o.caTotal > 0).length > 0 && (
+                <ChartCard title="CA par offre">
+                  <HBarChart data={result.perOffre.filter(o => o.caTotal > 0).sort((a, b) => b.caTotal - a.caTotal).map(o => ({ label: o.label || o.code, value: o.caTotal }))} color={C.teal} valueFmt={fmtEurShort} />
+                </ChartCard>
+              )}
+              {result.categories.filter(c => c.ca > 0).length > 0 && (
+                <ChartCard title="Répartition par catégorie statistique">
+                  <PieChart data={result.categories.map(c => ({ label: c.name, value: c.ca }))} />
+                </ChartCard>
+              )}
+              {result.adherents.filter(a => a.ca > 0).length > 0 && (
+                <ChartCard title="Répartition par adhérent réseau">
+                  <PieChart data={result.adherents.map(a => ({ label: a.name, value: a.ca }))} />
+                </ChartCard>
+              )}
+              {result.statuts.filter(s => s.ca > 0).length > 0 && (
+                <ChartCard title="Répartition par statut client">
+                  <PieChart data={result.statuts.map(s => ({ label: s.name, value: s.ca }))} />
+                </ChartCard>
+              )}
+              {result.delegues.filter(d => d.ca > 0).length > 0 && (
+                <ChartCard title="Top délégués (CA)">
+                  <HBarChart data={result.delegues.slice(0, 8).map(d => ({ label: d.name, value: d.ca }))} color={C.purple} valueFmt={fmtEurShort} />
+                </ChartCard>
+              )}
+              {result.produits.filter(p => p.ca > 0).length > 0 && (
+                <ChartCard title="Top produits (CA)">
+                  <HBarChart data={result.produits.slice(0, 8).map(p => ({ label: p.name, value: p.ca }))} color={C.blue} valueFmt={fmtEurShort} />
+                </ChartCard>
+              )}
+            </div>
 
             {/* Tabs */}
             <div style={{ display: "flex", gap: 4, marginBottom: 12, flexWrap: "wrap" }}>
