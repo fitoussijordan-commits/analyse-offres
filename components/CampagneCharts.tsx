@@ -186,109 +186,31 @@ function Empty() {
 
 export { fmtEurShort };
 
-// ── Carte de barres agrandissable ─────────────────────────────────────────────
-// Repliée : top de la mesure principale. Cliquée : pleine largeur, liste complète,
-// choix de la mesure (CA / unités / commandes / marge) qui retrie, et toutes les mesures
-// en colonnes. Un nouveau clic sur l'en-tête (ou « Réduire ») la replie.
+// ── Carte de barres ───────────────────────────────────────────────────────────
+// Top de la première mesure (CA en général), « Voir tout » au-delà de 8 lignes. Pour les
+// répartitions, la part « Non renseigné » est mise de côté et indiquée sous le graphique.
 export interface MesureCarte { cle: string; label: string; fmt: (n: number) => string; }
 export interface LigneCarte { label: string; sub?: string; valeurs: Record<string, number>; }
 
 export function CarteBarres({ title, lignes, mesures, color = C.teal, repartition, libelleVide = "sans valeur renseignée" }: {
   title: string; lignes: LigneCarte[]; mesures: MesureCarte[]; color?: string;
-  repartition?: boolean;   // met de côté la part « Non renseigné » (catégories, statuts, réseaux)
+  repartition?: boolean;
   libelleVide?: string;
 }) {
-  const [agrandi, setAgrandi] = React.useState(false);
-  const [mesure, setMesure] = React.useState(mesures[0].cle);
-  const ref = React.useRef<HTMLDivElement>(null);
-  const m = mesures.find(x => x.cle === mesure) || mesures[0];
-  const totaux: Record<string, number> = {};
-  for (const ms of mesures) totaux[ms.cle] = lignes.reduce((s, l) => s + Math.max(0, l.valeurs[ms.cle] || 0), 0);
+  const m = mesures[0];
+  const total = lignes.reduce((s, l) => s + Math.max(0, l.valeurs[m.cle] || 0), 0);
   const estVide = (l: LigneCarte) => !!repartition && NON_RENSEIGNE.test(l.label);
-  const reelles = lignes.filter(l => !estVide(l) && (l.valeurs[m.cle] || 0) !== 0).sort((a, b) => (b.valeurs[m.cle] || 0) - (a.valeurs[m.cle] || 0));
-  const vides = lignes.filter(estVide);
-  const partVide = totaux[m.cle] > 0 ? vides.reduce((s, l) => s + Math.max(0, l.valeurs[m.cle] || 0), 0) / totaux[m.cle] * 100 : 0;
-  const basculer = () => {
-    setAgrandi(a => !a);
-    setTimeout(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
-  };
-  if (!lignes.length) return null;
-
-  const max = Math.max(...reelles.map(l => Math.abs(l.valeurs[m.cle] || 0)), 1);
-  const pct = (v: number, cle: string) => totaux[cle] > 0 ? (v / totaux[cle]) * 100 : 0;
-  const fmtPct = (p: number) => `${p.toFixed(p < 10 ? 1 : 0).replace(".", ",")} %`;
-
+  const reelles = lignes.filter(l => !estVide(l) && (l.valeurs[m.cle] || 0) > 0).sort((a, b) => (b.valeurs[m.cle] || 0) - (a.valeurs[m.cle] || 0));
+  if (!reelles.length) return null;
+  const partVide = total > 0 ? lignes.filter(estVide).reduce((s, l) => s + Math.max(0, l.valeurs[m.cle] || 0), 0) / total * 100 : 0;
   return (
-    <div ref={ref} style={{ background: C.white, border: `1px solid ${agrandi ? color + "88" : C.border}`, borderRadius: 12, padding: "16px 18px", boxShadow: agrandi ? C.shadowMd : C.shadow, minWidth: 0, gridColumn: agrandi ? "1 / -1" : undefined, transition: "box-shadow .2s, border-color .2s" }}>
-      <div onClick={basculer} role="button" aria-expanded={agrandi} title={agrandi ? "Réduire" : "Agrandir : liste complète et choix de la mesure"}
-        style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, cursor: "pointer", userSelect: "none" }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", flex: 1 }}>{title}</div>
-        {!agrandi && <span style={{ fontSize: 11, color: C.textMuted }}>{reelles.length > 8 ? `${reelles.length} lignes · ` : ""}agrandir ⤢</span>}
-        {agrandi && <span style={{ fontSize: 11, fontWeight: 600, color: C.textSec, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 8px" }}>Réduire ⤡</span>}
-      </div>
-
-      {agrandi && mesures.length > 1 && (
-        <div style={{ display: "inline-flex", gap: 3, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 3, marginBottom: 12 }}>
-          {mesures.map(ms => (
-            <button key={ms.cle} onClick={() => setMesure(ms.cle)}
-              style={{ padding: "4px 12px", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit",
-                background: mesure === ms.cle ? C.white : "transparent", color: mesure === ms.cle ? C.text : C.textMuted, boxShadow: mesure === ms.cle ? C.shadow : "none" }}>
-              {ms.label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {!agrandi ? (
-        <HBarChart data={reelles.map(l => ({ label: l.label, sub: l.sub, value: l.valeurs[m.cle] || 0 }))} color={color} valueFmt={m.fmt} total={totaux[m.cle]} limite={8} />
-      ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontVariantNumeric: "tabular-nums" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", fontSize: 11, color: C.textMuted, fontWeight: 700, padding: "6px 8px", borderBottom: `1px solid ${C.border}`, width: "28%" }}>#  Libellé</th>
-                <th style={{ fontSize: 11, color: C.textMuted, fontWeight: 700, padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>{m.label}</th>
-                {mesures.map(ms => (
-                  <th key={ms.cle} onClick={() => setMesure(ms.cle)} style={{ textAlign: "right", fontSize: 11, color: ms.cle === m.cle ? C.text : C.textMuted, fontWeight: 700, padding: "6px 8px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", whiteSpace: "nowrap" }}>
-                    {ms.label}{ms.cle === m.cle ? " ↓" : ""}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {reelles.map((l, i) => {
-                const v = l.valeurs[m.cle] || 0;
-                return (
-                  <tr key={i} onMouseEnter={e => (e.currentTarget.style.background = C.bg)} onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                    <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}`, minWidth: 180 }}>
-                      <span style={{ fontSize: 11, color: C.textMuted, marginRight: 8 }}>{i + 1}</span>
-                      <span style={{ fontSize: 13, color: C.text }}>{l.label}</span>
-                      {l.sub && <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 6, fontFamily: "ui-monospace, monospace" }}>{l.sub}</span>}
-                    </td>
-                    <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}`, minWidth: 140 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, height: 10, background: C.bg, borderRadius: 5, overflow: "hidden" }}>
-                          <div style={{ width: `${Math.max(Math.abs(v) / max * 100, v ? 1.5 : 0)}%`, height: "100%", background: v < 0 ? C.red : color, borderRadius: 5 }} />
-                        </div>
-                        <span style={{ fontSize: 11, color: C.textMuted, minWidth: 42, textAlign: "right" }}>{fmtPct(pct(v, m.cle))}</span>
-                      </div>
-                    </td>
-                    {mesures.map(ms => {
-                      const val = l.valeurs[ms.cle] || 0;
-                      return <td key={ms.cle} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, whiteSpace: "nowrap", fontWeight: ms.cle === m.cle ? 700 : 400, color: val < 0 ? C.red : ms.cle === m.cle ? C.text : C.textSec }}>{ms.fmt(val)}</td>;
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+    <ChartCard title={title}>
+      <HBarChart data={reelles.map(l => ({ label: l.label, sub: l.sub, value: l.valeurs[m.cle] || 0 }))} color={color} valueFmt={m.fmt} total={total} limite={8} />
       {partVide > 0 && (
         <div style={{ marginTop: 10, fontSize: 12, color: C.textMuted }}>
-          + <strong style={{ color: C.textSec }}>{partVide.toFixed(1).replace(".", ",")} %</strong> {m.cle === "ca" ? "du CA" : `des ${m.label.toLowerCase()}`} {libelleVide}
+          + <strong style={{ color: C.textSec }}>{partVide.toFixed(1).replace(".", ",")} %</strong> du CA {libelleVide}
         </div>
       )}
-    </div>
+    </ChartCard>
   );
 }
