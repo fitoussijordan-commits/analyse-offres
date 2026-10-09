@@ -77,6 +77,10 @@ function OffrePanel({ onClose, onToast, onChanged, session }: { onClose: () => v
   const save = async () => {
     const c = code.trim(); if (!c) { onToast("Code offre requis", "error"); return; }
     const refs = produits.split(/[\n\r,;]+/).map(r => r.trim()).filter(Boolean);
+    // Garde-fou : un code de pack existe déjà dans une autre fiche → doublon probable.
+    // (Plusieurs fiches restent possibles pour des variantes : l'analyse les fusionne.)
+    const existante = offres.find(x => x.id !== editId && x.code.trim().toLowerCase() === c.toLowerCase());
+    if (existante && !window.confirm(`Une offre ${c} existe déjà :\n« ${existante.label || "(sans libellé)"} »\n\nCréer quand même une seconde fiche pour ce code ?\n(Annuler puis modifier la fiche existante est préférable.)`)) return;
     const o: cp.Offre = { id: editId || cp.genId(), code: c, label: label.trim(), produits: refs, codeInterne: codeInterne.trim() || undefined };
     try { await cp.upsertOffre(o); setShowForm(false); reload(); onChanged(); onToast("Offre enregistrée", "success"); }
     catch (e: any) { onToast("Erreur : " + e.message, "error"); }
@@ -207,7 +211,8 @@ function CampagnePanel({ onClose, onToast, offres, onChanged }: { onClose: () =>
                 <label style={labelStyle}>Offres incluses ({selOffres.length})</label>
                 {offres.length === 0 ? <div style={{ fontSize: 12, color: C.textMuted }}>Aucune offre — créez-en via « Gérer les offres ».</div> : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 200, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 8, padding: 6 }}>
-                    {offres.map(o => {
+                    {offres.filter((o, i) => offres.findIndex(x => x.code === o.code) === i).map(o => {
+                      // Une ligne par code de pack : les fiches en double ne s'affichent plus deux fois.
                       const checked = selOffres.includes(o.code);
                       return (
                         <div key={o.id} onClick={() => toggleOffre(o.code)} style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 9px", borderRadius: 6, cursor: "pointer", background: checked ? C.blueSoft : "transparent" }}>

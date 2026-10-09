@@ -349,9 +349,19 @@ export interface EtapeAnalyse { label: string; detail?: string; de: number; a: n
 export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagne, configOffres: Offre[], filter: StateFilter = "all", onEtape?: (e: EtapeAnalyse) => void, exclus: string[] = []): Promise<CampaignResult> {
   clientsExclus = exclus;
   const etape = (e: EtapeAnalyse) => { try { onEtape?.(e); } catch { /* affichage seulement */ } };
-  const offresCfg = campagne.offres
-    .map(code => configOffres.find(o => o.code.toLowerCase() === code.toLowerCase()))
-    .filter(Boolean) as Offre[];
+  // Une même offre (code de pack Odoo) peut avoir plusieurs fiches (doublon, ou variantes
+  // de composition : générique, Marcel & Fils, SO BIO…). On les fusionne : composants
+  // réunis, libellé et note interne de la première fiche qui en a.
+  const offresCfg = campagne.offres.map(code => {
+    const fiches = configOffres.filter(o => o.code.toLowerCase() === code.toLowerCase());
+    if (!fiches.length) return null;
+    return {
+      ...fiches[0],
+      label: fiches.find(f => f.label)?.label || fiches[0].label,
+      codeInterne: fiches.find(f => f.codeInterne)?.codeInterne,
+      produits: [...new Set(fiches.flatMap(f => f.produits.map(r => r.trim())).filter(Boolean))],
+    } as Offre;
+  }).filter(Boolean) as Offre[];
 
   const allRecs: LineRec[] = [];
   const results: OffreAnalyse[] = [];
