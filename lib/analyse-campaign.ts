@@ -20,8 +20,9 @@ export interface ProduitStatut { ref: string; name: string; productId: number; q
 export interface DebugOrder { id: number; name: string; partnerName?: string; invoiceStatus?: string; ca?: number; invoiced?: boolean; orderTotal?: number;
   // Date d'expédition prévue (champ Odoo studio x_studio_date_dexpdition_prvue, "YYYY-MM-DD").
   dateExpedition?: string;
-  // Unités de la campagne dans cette commande, type de commande Odoo (x_type_de_commande_id)
-  // et drapeau réassort (type « Réassort », avec ou sans accent).
+  // Unités de la campagne dans cette commande, type de commande Odoo (x_type_de_commande_id,
+  // informatif) et drapeau réassort : la commande contient un article que ce client avait
+  // déjà commandé plus tôt dans la campagne.
   qty?: number; typeCommande?: string; reassort?: boolean; }
 
 export interface OffreAnalyse {
@@ -49,7 +50,8 @@ export interface CampaignResult {
   results: OffreAnalyse[];        // détail par offre (+ produits autonomes)
   catchalls: CatchallResult[];    // détail par note
   split?: { valide: { qty: number; ca: number }; avenir: { qty: number; ca: number } };
-  // Part des commandes de type « Réassort » DANS les totaux ci-dessus (pas en plus).
+  // Réassort = 2e commande (et suivantes) d'un même article par un même client dans le
+  // périmètre de la campagne. Part DANS les totaux ci-dessus (pas en plus).
   reassort?: { nbCommandes: number; qty: number; ca: number };
   error: string | null;
 }
@@ -120,14 +122,11 @@ async function orderFields(session: odoo.OdooSession): Promise<string[]> {
   }
   return (await typeCommandeDispo.get(key)) ? [...BASE_ORDER_FIELDS, "x_type_de_commande_id"] : BASE_ORDER_FIELDS;
 }
-/** « Réassort », « Reassort », « RÉ-ASSORT »… : accents, casse et ponctuation ignorés. */
-export function estReassort(type?: string): boolean {
-  return !!type && type.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z]/g, "").includes("reassort");
-}
 /** Champs commune à tous les debugOrders : unités de la campagne et type de commande. */
 function infosCommande(o: any, qtyByOrder: Record<number, number>) {
   const typeCommande = Array.isArray(o.x_type_de_commande_id) ? String(o.x_type_de_commande_id[1] || "") : undefined;
-  return { qty: qtyByOrder[o.id] || 0, typeCommande, reassort: estReassort(typeCommande) };
+  // Le drapeau réassort est posé plus tard (2e commande d'un article par un même client).
+  return { qty: qtyByOrder[o.id] || 0, typeCommande, reassort: false };
 }
 
 /** Complète le coût unitaire des lignes sans purchase_price avec le coût actuel du produit. */
@@ -564,18 +563,41 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) tally(o);
   }
 
-  // Réassort : même découpage que le CA total (CA propre de chaque commande, par source),
-  // donc inclus dans les totaux, jamais ajouté. Une commande n'est comptée qu'une fois.
+  // Réassort : pour chaque (client, article), la PREMIÈRE commande de la campagne est
+  // l'implantation ; les lignes de cet article dans les commandes suivantes de ce client
+  // sont du réassort. Calcul sur les lignes dédoublonnées (offres, articles seuls, notes) :
+  // c'est une part des totaux, jamais un ajout. Une commande compte une fois.
   const reassort = { nbCommandes: 0, qty: 0, ca: 0 };
   {
-    const vues = new Set<number>();
-    const compter = (o: DebugOrder) => {
-      if (!o.reassort) return;
-      reassort.ca += o.ca ?? 0; reassort.qty += o.qty ?? 0;
-      if (!vues.has(o.id)) { vues.add(o.id); reassort.nbCommandes += 1; }
-    };
-    for (const r of results) for (const o of r.debugOrders) compter(o);
-    for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) compter(o);
+    const toutes = [...byId.values()];
+    const idsCmd = [...new Set(toutes.map(l => l.orderId))];
+    const infos = idsCmd.length
+      ? await odoo.searchRead(session, "sale.order", [["id", "in", idsCmd]], ["id", "partner_id", "date_order"], 0)
+      : [];
+    const clientDe: Record<number, number> = {}, dateDe: Record<number, string> = {};
+    for (const o of (infos || []) as any[]) {
+      clientDe[o.id] = Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id;
+      dateDe[o.id] = o.date_order || "";
+    }
+    // Première commande (date, puis n° interne) de chaque couple client × article.
+    const avant = (a: number, b: number) => (dateDe[a] || "") < (dateDe[b] || "") || ((dateDe[a] || "") === (dateDe[b] || "") && a < b);
+    const premiere = new Map<string, number>();
+    for (const l of toutes) {
+      const cle = `${clientDe[l.orderId] ?? "?"}|${l.productId}`;
+      const p = premiere.get(cle);
+      if (p == null || avant(l.orderId, p)) premiere.set(cle, l.orderId);
+    }
+    const cmdsReassort = new Set<number>();
+    for (const l of toutes) {
+      const client = clientDe[l.orderId];
+      if (client == null) continue;
+      if (premiere.get(`${client}|${l.productId}`) === l.orderId) continue;
+      reassort.qty += l.qty; reassort.ca += l.subtotal;
+      cmdsReassort.add(l.orderId);
+    }
+    reassort.nbCommandes = cmdsReassort.size;
+    for (const r of results) for (const o of r.debugOrders) o.reassort = cmdsReassort.has(o.id);
+    for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) o.reassort = cmdsReassort.has(o.id);
   }
 
   // Quantité campagne = offres vendues (packs) + unités produits autonomes + commandes notées

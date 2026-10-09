@@ -398,7 +398,7 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
   );
   // Part réassort DANS chaque total (pas en plus) : « dont X en réassort ».
   const dontReassort = (texte: string) => (
-    <span title="Commandes dont le type Odoo est « Réassort » : déjà incluses dans le chiffre au-dessus.">
+    <span title="Réassort = commande d'un article par un client qui l'avait déjà commandé plus tôt dans la campagne (sa 1re commande = implantation). Déjà inclus dans le chiffre au-dessus.">
       dont <strong style={{ color: C.purple }}>{texte}</strong> en réassort
     </span>
   );
@@ -940,9 +940,8 @@ function CommandesTab({ result, baseUrl }: { result: CampaignResult; baseUrl: st
                     <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: isNote ? "#f97316" : C.teal, borderBottom: `1px solid ${C.border}`, fontFamily: "monospace" }}>{r.code}</td>
                     <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, borderBottom: `1px solid ${C.border}` }}>{r.label}</td>
                     <td style={{ padding: "9px 14px", fontSize: 12, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>
-                      {r.reassort
-                        ? <span style={{ fontWeight: 700, color: C.purple, background: C.purpleSoft, border: `1px solid ${C.purple}33`, borderRadius: 5, padding: "2px 8px" }}>↻ {r.typeCommande}</span>
-                        : <span style={{ color: C.textMuted }}>{r.typeCommande || "—"}</span>}
+                      {r.reassort && <span title="Le client avait déjà commandé un article de la campagne plus tôt" style={{ fontWeight: 700, color: C.purple, background: C.purpleSoft, border: `1px solid ${C.purple}33`, borderRadius: 5, padding: "2px 8px", marginRight: 6 }}>↻ réassort</span>}
+                      <span style={{ color: C.textMuted }}>{r.typeCommande || (r.reassort ? "" : "—")}</span>
                     </td>
                     <td style={{ padding: "9px 14px", fontSize: 13, color: C.textSec, textAlign: "right", borderBottom: `1px solid ${C.border}`, fontVariantNumeric: "tabular-nums" }}>{fmtNum(r.qty)}</td>
                     <td style={{ padding: "9px 14px", fontSize: 13, fontWeight: 600, color: C.text, textAlign: "right", borderBottom: `1px solid ${C.border}` }}>{fmtEur(r.ca)}</td>
