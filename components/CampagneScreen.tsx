@@ -327,17 +327,26 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
   const [filter, setFilter] = useState<StateFilter>("all");
   const [result, setResult] = useState<CampaignResult | null>(null);
   const [etape, setEtape] = useState<EtapeAnalyse | null>(null);
-  // Clients exclus de l'analyse (ex. comptes internes de réservation), mémorisés dans le
-  // navigateur. Un motif exclut tout client dont le nom le contient.
-  const CLE_EXCLUS = "ao_clients_exclus";
+  // Clients exclus de l'analyse (comptes internes : réservation, Eshop…). Liste COMMUNE à
+  // toute l'équipe, stockée en base (parametres_app) : mêmes chiffres pour tout le monde.
+  // Un motif exclut tout client dont le nom le contient.
   const [exclus, setExclus] = useState<string[]>(["Réservation"]);
   const [nouvelExclu, setNouvelExclu] = useState("");
   useEffect(() => {
-    try { const v = localStorage.getItem(CLE_EXCLUS); if (v) setExclus(JSON.parse(v)); } catch { /* défaut */ }
+    cp.lireParametre<string[]>("clients_exclus", ["Réservation"]).then(setExclus)
+      .catch(e => onToast("Clients exclus non chargés : " + e.message, "error"));
   }, []);
-  const majExclus = (liste: string[]) => {
+  const majExclus = async (liste: string[]) => {
+    const avant = exclus;
     setExclus(liste);
-    try { localStorage.setItem(CLE_EXCLUS, JSON.stringify(liste)); } catch { /* non bloquant */ }
+    try {
+      // Relit la liste commune juste avant d'écrire, pour ne pas écraser l'ajout d'un collègue.
+      const commune = await cp.lireParametre<string[]>("clients_exclus", []);
+      const ajoutes = liste.filter(x => !avant.includes(x)), retires = avant.filter(x => !liste.includes(x));
+      const finale = [...commune.filter(x => !retires.includes(x)), ...ajoutes.filter(x => !commune.some(c => c.toLowerCase() === x.toLowerCase()))];
+      await cp.ecrireParametre("clients_exclus", finale);
+      setExclus(finale);
+    } catch (e: any) { setExclus(avant); onToast("Clients exclus non enregistrés : " + e.message, "error"); }
   };
   const ajouterExclu = () => {
     const m = nouvelExclu.trim();
@@ -445,7 +454,7 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
         </div>
         <button onClick={analyser} disabled={!selected || loading} style={{ padding: "9px 20px", background: !selected || loading ? C.border : C.teal, color: !selected || loading ? C.textMuted : "#fff", border: "none", borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: !selected || loading ? "default" : "pointer", fontFamily: "inherit" }}>{loading ? "Analyse…" : "Analyser"}</button>
         {result && <button onClick={exportExcel} disabled={exporting} style={{ padding: "9px 16px", background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 9, fontSize: 13, fontWeight: 600, color: C.green, cursor: exporting ? "default" : "pointer", fontFamily: "inherit" }}>{exporting ? "Export…" : "⬇ Export Excel"}</button>}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginLeft: 6 }} title="Les commandes de ces clients sont ignorées (CA, quantités, marge). Un motif exclut tout client dont le nom le contient.">
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginLeft: 6 }} title="Liste commune à toute l'équipe. Les commandes de ces clients sont ignorées (CA, quantités, marge). Un motif exclut tout client dont le nom le contient.">
           <span style={{ fontSize: 12, color: C.textMuted }}>Clients exclus :</span>
           {exclus.map(m => (
             <span key={m} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, color: C.textSec, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 4px 3px 8px" }}>

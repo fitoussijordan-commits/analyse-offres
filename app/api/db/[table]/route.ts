@@ -11,7 +11,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rateLimiter";
 
 const TABLES = new Set([
   "campagnes", "campagnes_creees", "analyse_offres", "projets_kits",
-  "planning_produits", "planning_quantites", "planning_historique",
+  "planning_produits", "planning_quantites", "planning_historique", "parametres_app",
 ]);
 const PREFER_OK = /^(resolution=(merge|ignore)-duplicates|return=(minimal|representation))(,\s*(resolution=(merge|ignore)-duplicates|return=(minimal|representation)))*$/;
 // Paramètres PostgREST qui ne sont pas des filtres de lignes.

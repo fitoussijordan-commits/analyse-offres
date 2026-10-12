@@ -188,3 +188,14 @@ export async function hardDeleteCampagneCreee(id: string): Promise<void> {
   const { error } = await supabase.from("campagnes_creees").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
+
+// ─── Paramètres partagés (table parametres_app : clé → valeur JSON) ─────────────
+export async function lireParametre<T>(cle: string, defaut: T): Promise<T> {
+  const { data, error } = await supabase.from("parametres_app").select("valeur").eq("cle", cle);
+  if (error) throw new Error(error.message);
+  return data && data.length ? (data[0].valeur as T) : defaut;
+}
+export async function ecrireParametre(cle: string, valeur: unknown): Promise<void> {
+  const { error } = await supabase.from("parametres_app").upsert({ cle, valeur, updated_at: new Date().toISOString() });
+  if (error) throw new Error(error.message);
+}
