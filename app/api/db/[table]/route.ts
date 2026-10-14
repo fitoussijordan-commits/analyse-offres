@@ -5,7 +5,8 @@
 // modification/suppression sans filtre, rate limit par IP.
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireOdooSession } from "@/lib/server/odoo-auth";
+import { requireOdooUser } from "@/lib/server/odoo-auth";
+import { lireAvant, journaliser } from "@/lib/server/journal";
 import { SUPABASE_REST, adminHeaders } from "@/lib/server/supabase-admin";
 import { checkRateLimit, getClientIp } from "@/lib/rateLimiter";
 
@@ -23,8 +24,8 @@ async function relay(req: NextRequest, table: string, method: "GET" | "POST" | "
 
   if (!TABLES.has(table)) return NextResponse.json({ error: "Table non autorisée" }, { status: 403 });
 
-  const auth = await requireOdooSession(req);
-  if (auth instanceof NextResponse) return auth;
+  const user = await requireOdooUser(req);
+  if (user instanceof NextResponse) return user;
 
   const params = req.nextUrl.searchParams;
   // Jointures imbriquées (select=*,autre_table(*)) interdites : elles ouvriraient d'autres tables.
@@ -40,13 +41,17 @@ async function relay(req: NextRequest, table: string, method: "GET" | "POST" | "
   if (prefer && PREFER_OK.test(prefer.trim())) headers.Prefer = prefer.trim();
 
   const qs = params.toString();
+  const corps = method === "GET" || method === "DELETE" ? "" : await req.text();
+  // Journal : version d'avant relue juste avant l'écriture.
+  const avant = method === "GET" ? null : await lireAvant(table, method, params, corps);
   const res = await fetch(`${SUPABASE_REST}/${table}${qs ? `?${qs}` : ""}`, {
     method,
     headers,
-    body: method === "GET" || method === "DELETE" ? undefined : await req.text(),
+    body: method === "GET" || method === "DELETE" ? undefined : corps,
     cache: "no-store",
   });
   const body = await res.text();
+  if (method !== "GET" && res.ok) await journaliser(user, table, method, corps, avant);
   return new NextResponse(body || null, {
     status: res.status,
     headers: { "Content-Type": res.headers.get("content-type") || "application/json" },

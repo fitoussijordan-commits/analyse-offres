@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import * as odoo from "@/lib/odoo";
 import CampagneScreen from "@/components/CampagneScreen";
 import CreerCampagneScreen from "@/components/CreerCampagneScreen";
+import JournalScreen, { accesJournal } from "@/components/JournalScreen";
 import ApercuOffreScreen from "@/components/ApercuOffreScreen";
 import ProjetScreen from "@/components/ProjetScreen";
 
@@ -19,7 +20,7 @@ function saveSession(s: odoo.OdooSession) { try { localStorage.setItem(LS_SESSIO
 function clearSession() { try { localStorage.removeItem(LS_SESSION); } catch {} }
 
 interface Toast { msg: string; type: "success" | "error" | "info"; id: number; }
-type AppView = "hub" | "analyse" | "creer" | "apercu" | "projets";
+type AppView = "hub" | "analyse" | "creer" | "apercu" | "projets" | "journal";
 
 // ── Nav item ──────────────────────────────────────────────────────────────────
 function NavItem({ icon, label, active, locked, onClick }: { icon: React.ReactNode; label: string; active?: boolean; locked?: boolean; onClick?: () => void; }) {
@@ -145,6 +146,9 @@ export default function Home() {
   const [ready, setReady] = useState(false);
   const [view, setView] = useState<AppView>("hub");
   // Brouillon de campagne transféré depuis l'analyse (préco N+1) vers "Créer une campagne".
+  // Journal des modifications : entrée visible seulement si l'utilisateur y a droit (serveur).
+  const [journalOk, setJournalOk] = useState(false);
+  useEffect(() => { if (session) accesJournal().then(setJournalOk); else setJournalOk(false); }, [session]);
   const [transferDraft, setTransferDraft] = useState<import("@/lib/create-campaign").CampagneCreee | null>(null);
 
   useEffect(() => {
@@ -261,6 +265,12 @@ export default function Home() {
             icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>}
             label="Aperçu offre" active={view === "apercu"} onClick={() => setView("apercu")}
           />
+          {journalOk && (
+            <NavItem
+              icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>}
+              label="Journal" active={view === "journal"} onClick={() => setView("journal")}
+            />
+          )}
         </nav>
 
         {/* User */}
@@ -279,6 +289,7 @@ export default function Home() {
         {view === "hub" && <HubView onNavigate={setView} />}
         {view === "analyse" && <CampagneScreen session={session} onToast={showToast} onTransferToCreer={(draft) => { setTransferDraft(draft); setView("creer"); }} />}
         {view === "creer" && <CreerCampagneScreen session={session} onToast={showToast} initialDraft={transferDraft} onDraftConsumed={() => setTransferDraft(null)} />}
+        {view === "journal" && journalOk && <JournalScreen session={session} onToast={showToast} />}
         {view === "apercu" && <ApercuOffreScreen session={session} onToast={showToast} onGoAnalyse={() => setView("analyse")} />}
         {view === "projets" && <ProjetScreen session={session} onToast={showToast} />}
       </main>
