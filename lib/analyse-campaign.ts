@@ -545,32 +545,28 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   }
   void lineIds;
 
-  // Le CA total doit toujours égaler la somme du détail affiché (offres + standalone + notes).
-  // On le recalcule explicitement pour éviter toute divergence avec les lignes agrégées.
-  const caDetail = results.reduce((s, r) => s + (r.caTotal || 0), 0) + catchalls.reduce((s, c) => s + (c.data?.caTotal || 0), 0);
-  caTotal = caDetail;
-  // Marge sur exactement le même périmètre que le CA (offres + standalone + notes).
-  const coutDetail = results.reduce((s, r) => s + (r.coutTotal || 0), 0) + catchalls.reduce((s, c) => s + (c.data?.coutTotal || 0), 0);
+  // CA total = lignes DÉDOUBLONNÉES (offres + articles seuls) + commandes notées, c'est-à-dire
+  // exactement le total du tableau Produits. Ne PAS sommer le CA de chaque offre : une même
+  // ligne peut appartenir à plusieurs offres (composant commun, ex. sérum présent dans les
+  // 4 MEA d'une campagne) et serait comptée autant de fois. caTotal est déjà calculé ainsi
+  // plus haut (lignes + notes) ; coût et split suivent le même périmètre.
+  const coutDetail = lines.reduce((s, l) => s + l.qty * (l.cost || 0), 0)
+    + catchalls.reduce((s, c) => s + (c.data?.coutTotal || 0), 0);
   const margeTotal = caTotal - coutDetail;
 
-  // Split validé / à venir : recalculé directement à partir du CA par commande et de son
-  // statut de facturation réel, sur TOUTES les commandes (offres + notes). Cela garantit
-  // valide + avenir = caTotal sans écart résiduel injecté artificiellement en "à venir".
+  // Split validé / à venir sur ce même périmètre : chaque ligne dédoublonnée selon la
+  // facturation réelle de sa commande, puis les commandes notées. valide + avenir = caTotal.
   if (filter === "all") {
     split.valide = { qty: 0, ca: 0 };
     split.avenir = { qty: 0, ca: 0 };
-    // On somme le CA propre de chaque commande de chaque source (offres + notes), exactement
-    // comme caTotal est construit, pour garantir valide + avenir = caTotal.
-    const seenForQty = new Set<number>();
-    const tally = (o: DebugOrder) => {
-      const ca = o.ca ?? 0;
-      const newOrder = !seenForQty.has(o.id);
-      if (newOrder) seenForQty.add(o.id);
-      if (isInvoiced(o.id)) { split.valide.ca += ca; if (newOrder) split.valide.qty += 1; }
-      else { split.avenir.ca += ca; if (newOrder) split.avenir.qty += 1; }
+    const vues = new Set<number>();
+    const ajouter = (orderId: number, ca: number) => {
+      const cote = isInvoiced(orderId) ? split.valide : split.avenir;
+      cote.ca += ca;
+      if (!vues.has(orderId)) { vues.add(orderId); cote.qty += 1; }
     };
-    for (const r of results) for (const o of r.debugOrders) tally(o);
-    for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) tally(o);
+    for (const l of lines) ajouter(l.orderId, l.subtotal);
+    for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) ajouter(o.id, o.ca ?? 0);
   }
 
   // Réassort : pour chaque (client, article), la PREMIÈRE commande de la campagne est
