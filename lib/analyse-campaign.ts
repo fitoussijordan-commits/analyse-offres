@@ -37,6 +37,15 @@ export interface OffreAnalyse {
 }
 export interface CatchallResult { codeInterne: string; data: { caTotal: number; qtyTotal: number; coutTotal?: number; produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[] } | null; }
 
+export interface LigneDebug {
+  source: string;          // porte d'entrée retenue : offre (code), article seul, note
+  aussiDans: string;       // autres offres qui contenaient aussi cette ligne (dédoublonnée)
+  commande: string; date: string; client: string; delegue: string;
+  ref: string; produit: string; qte: number; ca: number;
+  coutUnitaire: number; coutSource: string; cout: number;
+  facture: boolean; reassort: boolean;
+}
+
 export interface CampaignResult {
   nom: string;
   caTotal: number; qtyTotal: number; nbCommandes: number;
@@ -53,6 +62,8 @@ export interface CampaignResult {
   // Réassort = 2e commande (et suivantes) d'un même article par un même client dans le
   // périmètre de la campagne. Part DANS les totaux ci-dessus (pas en plus).
   reassort?: { nbCommandes: number; qty: number; ca: number };
+  // Mode debug : toutes les lignes retenues, avec leur origine (somme du CA = CA total).
+  debug?: LigneDebug[];
   error: string | null;
 }
 
@@ -364,6 +375,9 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   }).filter(Boolean) as Offre[];
 
   const allRecs: LineRec[] = [];
+  // Origine de chaque ligne (debug) : toutes les portes qui l'ont trouvée, dans l'ordre.
+  const sourcesLigne = new Map<number, string[]>();
+  const noter = (recs: LineRec[], source: string) => { for (const r of recs) (sourcesLigne.get(r.id) || sourcesLigne.set(r.id, []).get(r.id)!).push(source); };
   const results: OffreAnalyse[] = [];
 
   // 1. Offres (détail + lignes pour dédoublonnage)
@@ -378,6 +392,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     const { res, recs } = await analyseOffre(session, offre, filter);
     results.push(res);
     allRecs.push(...recs);
+    noter(recs, `Offre ${offre.code}`);
     lineIdsByOffre.set(res, new Set(recs.map(r => r.id)));
     for (const d of res.debugOrders) offerOrderIds.add(d.id);
   }
@@ -386,7 +401,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   etape({ label: "Produits hors offre", de: 55, a: 65 });
   const offerLineIds = new Set<number>(allRecs.map(r => r.id));
   const { res: standalone, recs: standaloneRecs } = await analyseStandalone(session, campagne.produits, filter, offerLineIds, { debut: campagne.dateDebut, fin: campagne.dateFin });
-  if (standalone) { results.push(standalone); allRecs.push(...standaloneRecs); }
+  if (standalone) { results.push(standalone); allRecs.push(...standaloneRecs); noter(standaloneRecs, "Article seul (période)"); }
 
   // 3. Notes : CA des commandes rattachées par note interne (hors commandes déjà comptées
   //    dans une offre), MAIS restreint aux seuls produits de la campagne. On passe donc la
@@ -399,6 +414,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     const { res, recs } = await analyseNote(session, note, [...offerOrderIds], campagne.offres, filter, campaignRefs);
     catchalls.push(res);
     allRecs.push(...recs);
+    noter(recs, `Note ${note}`);
   }
 
   // 4. Déduplication par ligne. On isole les commandes notées : leur CA sera rattaché
@@ -574,11 +590,12 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   // sont du réassort. Calcul sur les lignes dédoublonnées (offres, articles seuls, notes) :
   // c'est une part des totaux, jamais un ajout. Une commande compte une fois.
   const reassort = { nbCommandes: 0, qty: 0, ca: 0 };
+  let debug: LigneDebug[] = [];
   {
     const toutes = [...byId.values()];
     const idsCmd = [...new Set(toutes.map(l => l.orderId))];
     const infos = idsCmd.length
-      ? await odoo.searchRead(session, "sale.order", [["id", "in", idsCmd]], ["id", "partner_id", "date_order"], 0)
+      ? await odoo.searchRead(session, "sale.order", [["id", "in", idsCmd]], ["id", "name", "partner_id", "date_order", "user_id"], 0)
       : [];
     const clientDe: Record<number, number> = {}, dateDe: Record<number, string> = {};
     for (const o of (infos || []) as any[]) {
@@ -594,13 +611,29 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
       if (p == null || avant(l.orderId, p)) premiere.set(cle, l.orderId);
     }
     const cmdsReassort = new Set<number>();
+    const lignesReassort = new Set<number>();
     for (const l of toutes) {
       const client = clientDe[l.orderId];
       if (client == null) continue;
       if (premiere.get(`${client}|${l.productId}`) === l.orderId) continue;
       reassort.qty += l.qty; reassort.ca += l.subtotal;
       cmdsReassort.add(l.orderId);
+      lignesReassort.add(l.id);
     }
+    // Debug : une ligne par ligne de commande retenue (déjà dédoublonnée).
+    const infoCmd = new Map(((infos || []) as any[]).map(o => [o.id, o]));
+    debug = toutes.map(l => {
+      const o = infoCmd.get(l.orderId) || {};
+      const srcs = sourcesLigne.get(l.id) || [];
+      return {
+        source: srcs[0] || "", aussiDans: srcs.slice(1).join(", "),
+        commande: o.name || String(l.orderId), date: (o.date_order || "").slice(0, 10),
+        client: Array.isArray(o.partner_id) ? o.partner_id[1] : "", delegue: Array.isArray(o.user_id) ? o.user_id[1] : "",
+        ref: l.ref, produit: l.productName, qte: l.qty, ca: l.subtotal,
+        coutUnitaire: l.cost || 0, coutSource: l.costActuel ? "fiche produit (actuel)" : "commande (à la vente)",
+        cout: l.qty * (l.cost || 0), facture: isInvoiced(l.orderId), reassort: lignesReassort.has(l.id),
+      };
+    });
     reassort.nbCommandes = cmdsReassort.size;
     for (const r of results) for (const o of r.debugOrders) o.reassort = cmdsReassort.has(o.id);
     for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) o.reassort = cmdsReassort.has(o.id);
@@ -618,6 +651,6 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     delegues: Object.values(delMap).sort((a, b) => b.ca - a.ca),
     categories: finalize(catMap), adherents: finalize(adhMap), statuts: finalize(statMap),
     produitsParStatut: Object.values(prodStatMap).sort((a, b) => b.ca - a.ca),
-    perOffre, results, catchalls, split, reassort, error: null,
+    perOffre, results, catchalls, split, reassort, debug, error: null,
   };
 }

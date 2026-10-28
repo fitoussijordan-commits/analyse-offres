@@ -4,6 +4,7 @@ import * as odoo from "@/lib/odoo";
 import * as cp from "@/lib/campaigns";
 import { fetchCampaign, type CampaignResult, type StateFilter, type EtapeAnalyse } from "@/lib/analyse-campaign";
 import AnalyseLoader from "@/components/AnalyseLoader";
+import { accesJournal } from "@/components/JournalScreen";
 import { buildPreco } from "@/lib/preco";
 import { precoToCampagne } from "@/lib/create-campaign";
 import { ChartCard, HBarChart, PieChart, SplitBar, fmtEurShort } from "./CampagneCharts";
@@ -327,6 +328,28 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
   const [filter, setFilter] = useState<StateFilter>("all");
   const [result, setResult] = useState<CampaignResult | null>(null);
   const [etape, setEtape] = useState<EtapeAnalyse | null>(null);
+  // Mode debug (admin seul) : fichier détaillant chaque ligne du calcul, téléchargeable
+  // une fois par analyse (le lien disparaît ensuite, revient à la prochaine analyse).
+  const [admin, setAdmin] = useState(false);
+  const [debugDispo, setDebugDispo] = useState(false);
+  useEffect(() => { accesJournal().then(setAdmin); }, []);
+  const telechargerDebug = async () => {
+    if (!result?.debug || !selected) return;
+    setDebugDispo(false);
+    try {
+      const sessionId = (() => { try { return JSON.parse(localStorage.getItem("ao_session") || "null")?.sessionId || ""; } catch { return ""; } })();
+      const res = await fetch("/api/export-debug", {
+        method: "POST", headers: { "Content-Type": "application/json", "x-odoo-session": sessionId },
+        body: JSON.stringify({
+          nom: selected.nom, caTotal: result.caTotal, margeTotal: result.margeTotal, lignes: result.debug, exclus,
+          config: { offres: selected.offres, produits: selected.produits, notes: selected.notes, periode: selected.dateDebut && selected.dateFin ? `${selected.dateDebut} → ${selected.dateFin}` : "" },
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a"); a.href = url; a.download = `debug_${(selected.nom || "campagne").replace(/[^a-zA-Z0-9_-]+/g, "_")}.xlsx`; a.click(); URL.revokeObjectURL(url);
+    } catch (e: any) { onToast("Debug : " + e.message, "error"); setDebugDispo(true); }
+  };
   // Clients exclus de l'analyse (comptes internes : réservation, Eshop…). Liste COMMUNE à
   // toute l'équipe, stockée en base (parametres_app) : mêmes chiffres pour tout le monde.
   // Un motif exclut tout client dont le nom le contient.
@@ -379,7 +402,7 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
     setLoading(true); setResult(null); setEtape(null);
     try {
       const res = await fetchCampaign(session, selected, offres, filter, setEtape, exclus);
-      setResult(res); setTab("produits");
+      setResult(res); setTab("produits"); setDebugDispo(!!res.debug?.length);
       onToast(`Analyse terminée : ${fmtEur(res.caTotal)}`, "success");
     } catch (e: any) { onToast("Erreur analyse : " + e.message, "error"); }
     finally { setLoading(false); }
@@ -453,6 +476,10 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
           )}
         </div>
         <button onClick={analyser} disabled={!selected || loading} style={{ padding: "9px 20px", background: !selected || loading ? C.border : C.teal, color: !selected || loading ? C.textMuted : "#fff", border: "none", borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: !selected || loading ? "default" : "pointer", fontFamily: "inherit" }}>{loading ? "Analyse…" : "Analyser"}</button>
+        {admin && debugDispo && result && (
+          <button onClick={telechargerDebug} title="Détail ligne par ligne du calcul (téléchargeable une fois)"
+            style={{ padding: "4px 8px", background: "transparent", border: `1px dashed ${C.border}`, borderRadius: 6, fontSize: 11, color: C.textMuted, cursor: "pointer", fontFamily: "inherit" }}>debug ⬇</button>
+        )}
         {result && <button onClick={exportExcel} disabled={exporting} style={{ padding: "9px 16px", background: C.greenSoft, border: `1px solid ${C.green}44`, borderRadius: 9, fontSize: 13, fontWeight: 600, color: C.green, cursor: exporting ? "default" : "pointer", fontFamily: "inherit" }}>{exporting ? "Export…" : "⬇ Export Excel"}</button>}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginLeft: 6 }} title="Liste commune à toute l'équipe. Les commandes de ces clients sont ignorées (CA, quantités, marge). Un motif exclut tout client dont le nom le contient.">
           <span style={{ fontSize: 12, color: C.textMuted }}>Clients exclus :</span>
