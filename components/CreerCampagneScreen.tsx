@@ -5,7 +5,7 @@ import { genereCA, estOpca, coutOpca, TYP_OPCA } from "@/lib/type-produit";
 import { STATUTS_INSTITUT, TYPOLOGIES } from "@/lib/calc-offre";
 import {
   CampagneCreee, PalierSaisi, ArticleCampagne, ComposantKit, genId,
-  analyseCampagneCreee, toExportPayload, qtyParPack, totalPacks, ventilationPalier, TYPES_PRODUIT,
+  analyseCampagneCreee, rafraichirCouts, toExportPayload, qtyParPack, totalPacks, ventilationPalier, TYPES_PRODUIT,
   GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT, erreurDatesCampagne,
 } from "@/lib/create-campaign";
 import { loadCampagnesCreees, upsertCampagneCreee, deleteCampagneCreee, loadCampagnesCreeesCorbeille, restoreCampagneCreee, hardDeleteCampagneCreee } from "@/lib/campaigns";
@@ -294,6 +294,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
 
   const charger = (c: CampagneCreee) => {
     setCamp(c); setAnalysed(false);
+    // Coûts Odoo actuels (coût moyen pondéré) à la place de ceux enregistrés.
+    rafraichirCouts(session, [c]).then(([maj]) => setCamp(cur => cur.id === c.id ? { ...cur, articles: maj.articles } : cur));
     // Auto-analyse à l'ouverture si la campagne a déjà tout ce qu'il faut (période N-1 + articles),
     // pour arriver directement avec les données. Silencieux si les prérequis manquent.
     if (c.periodeDebut && c.periodeFin && c.articles.some(a => a.ref.trim())) {
@@ -349,7 +351,8 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
   };
 
   const exporter = async () => {
-    const payload: any = toExportPayload(camp);
+    const [campAJour] = await rafraichirCouts(session, [camp]);
+    const payload: any = toExportPayload(campAJour);
     if (!payload.paliers.length) { onToast("Aucun article à exporter", "error"); return; }
     setExporting(true);
     try {
@@ -381,11 +384,12 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
       // Enrichir chaque campagne (conso N-1 + pricing + libellés) si incomplet, puis payload.
       // On ré-analyse dès qu'un article n'a pas de libellé OU pas de prix, pour garantir
       // que la synthèse logistique affiche bien les libellés.
-      const enriched: CampagneCreee[] = [];
+      const brutes: CampagneCreee[] = [];
       for (const c of choisies) {
         const complet = c.articles.length > 0 && c.articles.every(a => !a.ref.trim() || (a.name && a.listPrice != null));
-        enriched.push(complet ? c : await analyseCampagneCreee(session, c));
+        brutes.push(complet ? c : await analyseCampagneCreee(session, c));
       }
+      const enriched = await rafraichirCouts(session, brutes);
       const campagnes = enriched.map(c => toExportPayload(c)).map((p, i) => ({ nom: enriched[i].nom, paliers: p.paliers }));
       const logistique = buildSyntheseLogistique(enriched);
       // Catalogue Odoo : libellés + prix d'achat (dont composants de kits) pour la logistique.

@@ -522,3 +522,32 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
     }).filter(p => p.produits.length),
   };
 }
+
+/**
+ * Coûts d'achat à jour : le coût Odoo (standard_price) est un coût moyen pondéré qui évolue à
+ * chaque réception ; celui stocké dans la campagne n'est qu'une photo prise au chargement.
+ * On relit le coût actuel des articles Odoo (hors saisie manuelle) et des composants de kits
+ * issus d'Odoo. Les prix de vente ne sont pas touchés. En cas d'échec Odoo : campagne inchangée.
+ */
+export async function rafraichirCouts(session: odoo.OdooSession, camps: CampagneCreee[]): Promise<CampagneCreee[]> {
+  const refs = new Set<string>();
+  for (const c of camps) for (const a of c.articles) {
+    if (a.ref.trim() && !a.manuel && a.typProd !== TYP_OPCA) refs.add(a.ref.trim());
+    for (const k of a.composants || []) if (k.ref?.trim() && !k.manuel) refs.add(k.ref.trim());
+  }
+  if (!refs.size) return camps;
+  let cout: Record<string, number> = {};
+  try {
+    const prods = await odoo.searchRead(session, "product.product", [["default_code", "in", [...refs]]], ["default_code", "standard_price"], 0);
+    for (const p of (prods || []) as any[]) if (p.default_code && typeof p.standard_price === "number") cout[p.default_code] = p.standard_price;
+  } catch { return camps; }
+  return camps.map(c => ({
+    ...c,
+    articles: c.articles.map(a => {
+      const r = a.ref.trim();
+      const maj = !a.manuel && cout[r] != null ? { standardPrice: cout[r] } : {};
+      const composants = a.composants?.map(k => !k.manuel && k.ref && cout[k.ref.trim()] != null ? { ...k, cout: cout[k.ref.trim()] } : k);
+      return { ...a, ...maj, ...(composants ? { composants } : {}) };
+    }),
+  }));
+}

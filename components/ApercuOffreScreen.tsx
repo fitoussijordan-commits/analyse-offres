@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadCampagnesCreees, upsertCampagne, upsertCampagneCreee } from "@/lib/campaigns";
-import { CampagneCreee, PalierSaisi, ArticleCampagne, GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT, qtyParPack, qtyKeyLib, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse, articlesPalier, qtyPalierOpca, REMISES_OPCA } from "@/lib/create-campaign";
+import { CampagneCreee, PalierSaisi, ArticleCampagne, GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT, qtyParPack, qtyKeyLib, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse, rafraichirCouts, articlesPalier, qtyPalierOpca, REMISES_OPCA } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef, detailPalier, calcGrandsComptes,
@@ -89,7 +89,16 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
     catch (e: any) { onToast("Erreur chargement : " + e.message, "error"); }
   })(); }, []);
 
+  // Affiche tout de suite, puis remplace par les coûts Odoo actuels (coût moyen pondéré).
   function selectCamp(c: CampagneCreee) {
+    appliquerCamp(c);
+    rafraichirCouts(session, [c]).then(([maj]) => setCamp(cur => {
+      if (cur?.id !== c.id) return cur;
+      setPaliers(toPaliersEdit(maj));
+      return maj;
+    }));
+  }
+  function appliquerCamp(c: CampagneCreee) {
     setCamp(c); setPaliers(toPaliersEdit(c));
     setGcEnseignes(c.gcEnseignes != null ? c.gcEnseignes.map(e => ({ ...e, qties: { ...e.qties } })) : GC_ENSEIGNES_DEFAUT.map(e => ({ ...e, qties: {} })));
     setCanauxNb(c.canauxNonB2B != null ? c.canauxNonB2B.map(e => ({ ...e, qties: { ...e.qties } })) : CANAUX_NONB2B_DEFAUT.map(e => ({ ...e, qties: {} })));
@@ -271,10 +280,10 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
 
   const [exportingAnnuel, setExportingAnnuel] = useState(false);
   const exporterAnnuel = async () => {
-    const choisies = selectionExport;
-    if (!choisies.length) { onToast("Coche au moins une campagne", "error"); return; }
+    if (!selectionExport.length) { onToast("Coche au moins une campagne", "error"); return; }
     setExportingAnnuel(true);
     try {
+      const choisies = await rafraichirCouts(session, selectionExport);
       const campagnes = choisies.map(c => toExportPayload(c));
       const logistique = buildSyntheseLogistique(choisies);
       const body: any = { campagnes, logistique };
