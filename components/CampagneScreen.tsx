@@ -527,8 +527,11 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
                 const mat = result.materiel;
                 const pct = (v: number) => `${(Math.round(v * 1000) / 10).toFixed(1)} %`;
                 if (!mat || mat.cout <= 0) return (<>
-                  {kpi("Marge €", fmtEur(result.margeTotal), C.green)}
-                  {kpi("Marge %", pct(result.margePct || 0), C.green)}
+                  {kpi("Marge produits", fmtEur(result.margeTotal), C.green, <span>{pct(result.margePct || 0)} · sans PLV &amp; co</span>)}
+                  {kpi("Marge après PLV & co", fmtEur(result.margeTotal), C.teal,
+                    <span title="Aucune ligne de type PLV / Testeur dans les commandes de la campagne. Pour la compter, ajoute les références de PLV et testeurs aux produits de l'offre (Gérer les offres).">
+                      {pct(result.margePct || 0)} · aucune PLV / testeur détecté ⓘ
+                    </span>)}
                 </>);
                 const caProd = result.caTotal - mat.ca, mp = result.margeProduits ?? result.margeTotal;
                 return (<>
