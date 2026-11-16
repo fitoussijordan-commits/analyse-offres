@@ -136,6 +136,7 @@ function rowToCampagneCreee(row: any): CampagneCreee {
     annee: d.annee || "",
     gcEnseignes: d.gcEnseignes || undefined,
     canauxNonB2B: d.canauxNonB2B || undefined,
+    materiel: d.materiel || undefined,
     createdAt: row.created_at,
   };
 }
@@ -148,7 +149,7 @@ function campagneCreeeToRow(c: CampagneCreee) {
     date_fin: c.dateFin || null,
     periode_debut: c.periodeDebut || null,
     periode_fin: c.periodeFin || null,
-    data: { articles: c.articles, paliers: c.paliers, annee: c.annee || "", gcEnseignes: c.gcEnseignes || undefined, canauxNonB2B: c.canauxNonB2B || undefined },
+    data: { articles: c.articles, paliers: c.paliers, annee: c.annee || "", gcEnseignes: c.gcEnseignes || undefined, canauxNonB2B: c.canauxNonB2B || undefined, materiel: c.materiel || undefined },
   };
 }
 

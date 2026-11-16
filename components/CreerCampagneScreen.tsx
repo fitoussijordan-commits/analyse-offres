@@ -4,7 +4,7 @@ import * as odoo from "@/lib/odoo";
 import { genereCA, estOpca, coutOpca, TYP_OPCA } from "@/lib/type-produit";
 import { STATUTS_INSTITUT, TYPOLOGIES } from "@/lib/calc-offre";
 import {
-  CampagneCreee, PalierSaisi, ArticleCampagne, ComposantKit, genId,
+  CampagneCreee, PalierSaisi, ArticleCampagne, ComposantKit, MaterielCampagne, TYPES_MATERIEL, estPlv, coutMateriel, genId,
   analyseCampagneCreee, rafraichirCouts, toExportPayload, qtyParPack, totalPacks, ventilationPalier, TYPES_PRODUIT,
   GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT, erreurDatesCampagne,
 } from "@/lib/create-campaign";
@@ -390,7 +390,7 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
         brutes.push(complet ? c : await analyseCampagneCreee(session, c));
       }
       const enriched = await rafraichirCouts(session, brutes);
-      const campagnes = enriched.map(c => toExportPayload(c)).map((p, i) => ({ nom: enriched[i].nom, paliers: p.paliers }));
+      const campagnes = enriched.map(c => toExportPayload(c)).map((p, i) => ({ nom: enriched[i].nom, paliers: p.paliers, materiel: p.materiel }));
       const logistique = buildSyntheseLogistique(enriched);
       // Catalogue Odoo : libellés + prix d'achat (dont composants de kits) pour la logistique.
       let mapping: any[] | undefined;
@@ -1118,6 +1118,76 @@ export default function CreerCampagneScreen({ session, onToast, initialDraft, on
       ))}
 
       <button onClick={addPalier} style={{ alignSelf: "flex-start", padding: "8px 16px", background: C.white, border: `1px dashed ${C.blue}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.blueDark, fontFamily: "inherit" }}>+ Ajouter un palier</button>
+
+      {/* Bloc MATÉRIEL : PLV, testeurs, panneaux, stop-rayons… Quantité TOTALE saisie à la
+          main (sans lien avec le nb d'offres), coût Odoo, pas de CA. Logistique : PLV à M-1. */}
+      {(() => {
+        const mat = camp.materiel || [];
+        const maj = (i: number, patch: Partial<MaterielCampagne>) => setCamp(c => ({ ...c, materiel: (c.materiel || []).map((m, j) => j === i ? { ...m, ...patch } : m) }));
+        const ajouter = () => setCamp(c => ({ ...c, materiel: [...(c.materiel || []), { ref: "", typProd: "PLV", qty: 0 }] }));
+        const retirer = (i: number) => setCamp(c => ({ ...c, materiel: (c.materiel || []).filter((_, j) => j !== i) }));
+        const total = coutMateriel(mat);
+        return (
+          <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+            <div style={{ padding: "12px 16px", background: "#f0fdf4", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace", background: C.teal, color: "#fff", borderRadius: 5, padding: "2px 8px" }}>MATÉRIEL</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>PLV, testeurs, panneaux, stop-rayons…</span>
+              <span style={{ fontSize: 11.5, color: C.textMuted }}>quantité totale pour la campagne · sans CA · PLV livrée à M-1, testeurs au rythme des offres</span>
+              <div style={{ flex: 1 }} />
+              {total > 0 && <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Coût total : {total.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })}</span>}
+            </div>
+            <div style={{ padding: "10px 16px 14px" }}>
+              {mat.length > 0 && (
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>{["Code", "Désignation", "Type", "Quantité totale", "Coût unit.", "Coût total", ""].map((h, i) => (
+                      <th key={i} style={{ padding: "6px 6px", fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.03em", textAlign: i >= 3 && i <= 5 ? "right" : "left", borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                    ))}</tr>
+                  </thead>
+                  <tbody>
+                    {mat.map((m, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
+                          <ArticleAutocomplete session={session} value={m.ref} width={110} mono placeholder="Code"
+                            onType={ref => maj(i, { ref, manuel: true })}
+                            onPick={p => maj(i, { ref: p.ref, name: p.name, cout: p.standardPrice || undefined, manuel: false, ...(p.typProd ? { typProd: p.typProd } : {}) })} />
+                        </td>
+                        <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
+                          <ArticleAutocomplete session={session} value={m.name ?? ""} width={260} placeholder="Désignation (Odoo ou libre)"
+                            onType={name => maj(i, { name, manuel: true })}
+                            onPick={p => maj(i, { ref: p.ref, name: p.name, cout: p.standardPrice || undefined, manuel: false, ...(p.typProd ? { typProd: p.typProd } : {}) })} />
+                        </td>
+                        <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}` }}>
+                          <select value={m.typProd} onChange={e => maj(i, { typProd: e.target.value })} style={{ ...inputStyle, width: 120, padding: "5px 6px" }}>
+                            {[...new Set([...TYPES_MATERIEL, m.typProd])].map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                          <div style={{ fontSize: 10.5, color: C.textMuted, marginTop: 2 }}>{estPlv(m.typProd) ? "livré à M-1" : "au rythme des offres"}</div>
+                        </td>
+                        <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>
+                          <input type="number" min={0} step="1" value={m.qty || ""} onChange={e => maj(i, { qty: parseFloat(e.target.value) || 0 })} placeholder="0"
+                            style={{ ...inputStyle, width: 90, padding: "5px 6px", textAlign: "right", fontWeight: 700, color: C.blue }} />
+                        </td>
+                        <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right" }}>
+                          <input type="number" min={0} step="0.01" value={m.cout ?? ""} onChange={e => maj(i, { cout: e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0) })} placeholder="€"
+                            title="Coût d'achat Odoo (relu à l'ouverture), modifiable"
+                            style={{ ...inputStyle, width: 80, padding: "5px 6px", textAlign: "right" }} />
+                        </td>
+                        <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "right", fontSize: 13, fontWeight: 600, color: C.text }}>
+                          {((m.qty || 0) * (m.cout || 0)).toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })}
+                        </td>
+                        <td style={{ padding: "5px 6px", borderBottom: `1px solid ${C.border}`, textAlign: "center" }}>
+                          <button onClick={() => retirer(i)} aria-label="Retirer" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMuted, fontSize: 15 }}>×</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <button onClick={ajouter} style={{ marginTop: mat.length ? 10 : 0, padding: "5px 12px", background: C.white, border: `1px dashed ${C.teal}`, borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.teal, fontFamily: "inherit" }}>+ Ajouter du matériel</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Bloc GRANDS COMPTES : 6 enseignes (qté + remise par article), sauvegardé avec la campagne. */}
       {articlesValides.length > 0 && (

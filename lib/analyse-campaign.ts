@@ -44,6 +44,7 @@ export interface LigneDebug {
   ref: string; produit: string; qte: number; ca: number;
   coutUnitaire: number; coutSource: string; cout: number;
   facture: boolean; reassort: boolean;
+  typeProduit: string; materiel: boolean;
 }
 
 export interface CampaignResult {
@@ -52,6 +53,10 @@ export interface CampaignResult {
   // Marge = CA − coût des lignes vendues. Coût = purchase_price de la ligne de commande
   // (coût figé à la vente, module sale_margin) ; à défaut, coût actuel du produit.
   margeTotal: number; margePct: number;
+  // Matériel (lignes de type Odoo PLV, Testeur, panneau, stop-rayon…) : coût inclus dans
+  // margeTotal. margeProduits = marge hors matériel (« sans PLV & co »).
+  materiel?: { cout: number; qty: number; ca: number };
+  margeProduits?: number;
   produits: ProduitCA[]; delegues: DelegueCA[];
   categories: ClientStat[]; adherents: ClientStat[]; statuts: ClientStat[];
   produitsParStatut: ProduitStatut[];  // croisement produit × statut client (pour préco N+1)
@@ -149,6 +154,9 @@ async function completerCouts(session: odoo.OdooSession, recs: LineRec[]): Promi
   for (const p of prods as any[]) cout[p.id] = typeof p.standard_price === "number" ? p.standard_price : 0;
   for (const r of recs) if (r.cost == null) { r.cost = cout[r.productId] || 0; r.costActuel = true; }
 }
+/** Matériel (non vendu) : PLV, testeurs, panneaux, stop-rayons, displays… d'après le type Odoo. */
+export const estMateriel = (type?: string) => /plv|testeur|panneau|stop|display|glorif|pr[ée]sentoir/i.test(type || "");
+
 /** Ajoute à un produit le coût et les indicateurs de diagnostic d'une ligne. */
 function cumulDiag(p: ProduitCA, r: LineRec) {
   p.cout = (p.cout || 0) + r.qty * (r.cost || 0);
@@ -591,6 +599,7 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
   // c'est une part des totaux, jamais un ajout. Une commande compte une fois.
   const reassort = { nbCommandes: 0, qty: 0, ca: 0 };
   let debug: LigneDebug[] = [];
+  const materiel = { cout: 0, qty: 0, ca: 0 };
   {
     const toutes = [...byId.values()];
     const idsCmd = [...new Set(toutes.map(l => l.orderId))];
@@ -632,8 +641,28 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
         ref: l.ref, produit: l.productName, qte: l.qty, ca: l.subtotal,
         coutUnitaire: l.cost || 0, coutSource: l.costActuel ? "fiche produit (actuel)" : "commande (à la vente)",
         cout: l.qty * (l.cost || 0), facture: isInvoiced(l.orderId), reassort: lignesReassort.has(l.id),
+        typeProduit: "", materiel: false,
       };
     });
+    // Type de produit Odoo (x_type_de_produit_id…) des articles vendus → part « matériel ».
+    try {
+      const typ = await odoo.champTypeProduit(session);
+      const pids = [...new Set(toutes.map(l => l.productId))];
+      if (typ && pids.length) {
+        const prods = await odoo.searchRead(session, "product.product", [["id", "in", pids]], ["id", typ.champ], 0);
+        const typeDe: Record<number, string> = {};
+        for (const p of (prods || []) as any[]) {
+          const v = p[typ.champ];
+          typeDe[p.id] = Array.isArray(v) ? String(v[1] || "") : v ? String(typ.libelles[v] ?? v) : "";
+        }
+        toutes.forEach((l, i) => {
+          const t = typeDe[l.productId] || "";
+          debug[i].typeProduit = t;
+          debug[i].materiel = estMateriel(t);
+          if (debug[i].materiel) { materiel.cout += l.qty * (l.cost || 0); materiel.qty += l.qty; materiel.ca += l.subtotal; }
+        });
+      }
+    } catch { /* type de produit indisponible : pas de distinction matériel */ }
     reassort.nbCommandes = cmdsReassort.size;
     for (const r of results) for (const o of r.debugOrders) o.reassort = cmdsReassort.has(o.id);
     for (const c of catchalls) for (const o of c.data?.debugOrders ?? []) o.reassort = cmdsReassort.has(o.id);
@@ -651,6 +680,6 @@ export async function fetchCampaign(session: odoo.OdooSession, campagne: Campagn
     delegues: Object.values(delMap).sort((a, b) => b.ca - a.ca),
     categories: finalize(catMap), adherents: finalize(adhMap), statuts: finalize(statMap),
     produitsParStatut: Object.values(prodStatMap).sort((a, b) => b.ca - a.ca),
-    perOffre, results, catchalls, split, reassort, debug, error: null,
+    perOffre, results, catchalls, split, reassort, debug, materiel, margeProduits: margeTotal + materiel.cout - materiel.ca, error: null,
   };
 }

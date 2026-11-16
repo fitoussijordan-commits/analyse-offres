@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import * as odoo from "@/lib/odoo";
 import { loadCampagnesCreees, upsertCampagne, upsertCampagneCreee } from "@/lib/campaigns";
-import { CampagneCreee, PalierSaisi, ArticleCampagne, GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT, qtyParPack, qtyKeyLib, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse, rafraichirCouts, articlesPalier, qtyPalierOpca, REMISES_OPCA } from "@/lib/create-campaign";
+import { CampagneCreee, PalierSaisi, ArticleCampagne, GcEnseigne, GC_ENSEIGNES_DEFAUT, CANAUX_NONB2B_DEFAUT, qtyParPack, qtyKeyLib, totalPacks, ventilationPalier, toExportPayload, campagneCreeeToAnalyse, rafraichirCouts, coutMateriel, estPlv, articlesPalier, qtyPalierOpca, REMISES_OPCA } from "@/lib/create-campaign";
 import {
   TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT,
   CalcPalier, calcPalier, calcSynthese, calcBesoinParRef, detailPalier, calcGrandsComptes,
@@ -231,6 +231,7 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
         nom,
         gcEnseignes,
         canauxNonB2B: canauxNb,
+        materiel: (camp?.materiel || []).filter(m => m.qty > 0),
         paliers: paliers.map(p => ({
           code: p.code, label: p.label, qtyPacks: p.nbPacks, descriptif: p.descriptif,
           pctOffres: p.pcts, remises: p.remises, remiseAddTaux: p.remiseAdd,
@@ -386,25 +387,37 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
         </div>
       )}
 
-      {/* KPI synthèse globale */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        {gc.caTotal > 0 ? (
-          <>
-            <Kpi label="CA Retail + Institut" value={fmtEur(synthese.caTotal)} color={C.teal} />
-            <Kpi label="CA Grands Comptes" value={fmtEur(gc.caTotal)} color={C.blue} />
-            <Kpi label="CA total (RI + GC)" value={fmtEur(synthese.caTotal + gc.caTotal)} color={C.blueDark} />
-            <Kpi label="Marge totale (RI + GC)" value={fmtEur(synthese.margeTotal + gc.margeTotal)} color={C.green} />
-            <Kpi label="Marge % globale" value={fmtPct((synthese.caTotal + gc.caTotal) > 0 ? (synthese.margeTotal + gc.margeTotal) / (synthese.caTotal + gc.caTotal) : 0)} color={C.green} />
-          </>
-        ) : (
-          <>
-            <Kpi label="CA total campagne" value={fmtEur(synthese.caTotal)} color={C.blue} />
-            <Kpi label="Marge totale" value={fmtEur(synthese.margeTotal)} color={C.teal} />
-            <Kpi label="Marge %" value={fmtPct(synthese.margePct)} color={C.green} />
-            <Kpi label="Nb offres (tous paliers)" value={fmtNum(synthese.nbPacks)} color={C.amber} />
-          </>
-        )}
-      </div>
+      {/* KPI synthèse globale. Marges « avant matériel » (produits) et « après matériel »
+          (PLV, testeurs… saisis en quantité totale, coût sans CA). */}
+      {(() => {
+        const mat = coutMateriel(camp?.materiel);
+        const ca = synthese.caTotal + gc.caTotal, marge = synthese.margeTotal + gc.margeTotal;
+        const apres = mat > 0 ? `après matériel : ${fmtEur(marge - mat)} · ${fmtPct(ca > 0 ? (marge - mat) / ca : 0)}` : undefined;
+        const nbPlv = (camp?.materiel || []).filter(m => m.qty > 0 && estPlv(m.typProd)).reduce((x, m) => x + m.qty, 0);
+        const nbAutre = (camp?.materiel || []).filter(m => m.qty > 0 && !estPlv(m.typProd)).reduce((x, m) => x + m.qty, 0);
+        return (
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {gc.caTotal > 0 ? (
+              <>
+                <Kpi label="CA Retail + Institut" value={fmtEur(synthese.caTotal)} color={C.teal} />
+                <Kpi label="CA Grands Comptes" value={fmtEur(gc.caTotal)} color={C.blue} />
+                <Kpi label="CA total (RI + GC)" value={fmtEur(ca)} color={C.blueDark} />
+                <Kpi label="Marge totale (RI + GC)" value={fmtEur(marge)} color={C.green} sous={apres} />
+                <Kpi label="Marge % globale" value={fmtPct(ca > 0 ? marge / ca : 0)} color={C.green} />
+              </>
+            ) : (
+              <>
+                <Kpi label="CA total campagne" value={fmtEur(synthese.caTotal)} color={C.blue} />
+                <Kpi label="Marge totale" value={fmtEur(synthese.margeTotal)} color={C.teal} sous={apres} />
+                <Kpi label="Marge %" value={fmtPct(synthese.margePct)} color={C.green} />
+                <Kpi label="Nb offres (tous paliers)" value={fmtNum(synthese.nbPacks)} color={C.amber} />
+              </>
+            )}
+            {mat > 0 && <Kpi label="Matériel (PLV, testeurs…)" value={fmtEur(mat)} color={C.textSec}
+              sous={[nbPlv ? `${fmtNum(nbPlv)} PLV` : "", nbAutre ? `${fmtNum(nbAutre)} testeurs & co` : ""].filter(Boolean).join(" · ")} />}
+          </div>
+        );
+      })()}
 
       {/* Sous-onglets */}
       <div style={{ display: "flex", gap: 6, borderBottom: `1px solid ${C.border}` }}>
@@ -900,11 +913,12 @@ function SyntheseTab({ paliers, calcPaliers, gc }: { paliers: PalierEdit[]; calc
   );
 }
 
-function Kpi({ label, value, color }: { label: string; value: string; color: string }) {
+function Kpi({ label, value, color, sous }: { label: string; value: string; color: string; sous?: string }) {
   return (
     <div style={{ flex: "1 1 180px", background: C.white, border: `1px solid ${C.border}`, borderLeft: `3px solid ${color}`, borderRadius: 10, padding: "12px 16px", boxShadow: C.shadow }}>
       <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 700 }}>{label}</div>
       <div style={{ fontSize: 20, fontWeight: 800, color, marginTop: 3 }}>{value}</div>
+      {sous && <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{sous}</div>}
     </div>
   );
 }

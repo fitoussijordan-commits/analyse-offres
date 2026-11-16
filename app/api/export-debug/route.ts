@@ -71,17 +71,17 @@ export async function POST(req: NextRequest) {
 
   // ── Toutes les lignes ─────────────────────────────────────────────────────
   const wl = wb.addWorksheet("Lignes");
-  wl.columns = [24, 26, 14, 11, 32, 22, 12, 40, 8, 13, 11, 22, 12, 9, 9].map(w => ({ width: w }));
-  titre(wl, ["Origine", "Aussi dans", "Commande", "Date", "Client", "Délégué", "Réf", "Produit", "Qté", "CA HT", "Coût unit.", "Source du coût", "Coût", "Facturée", "Réassort"]);
+  wl.columns = [24, 26, 14, 11, 32, 22, 12, 40, 14, 8, 13, 11, 22, 12, 9, 9].map(w => ({ width: w }));
+  titre(wl, ["Origine", "Aussi dans", "Commande", "Date", "Client", "Délégué", "Réf", "Produit", "Type produit", "Qté", "CA HT", "Coût unit.", "Source du coût", "Coût", "Facturée", "Réassort"]);
   for (const l of [...lignes].sort((a, b) => a.date.localeCompare(b.date) || a.commande.localeCompare(b.commande))) {
-    const r = wl.addRow([l.source, l.aussiDans, l.commande, l.date, l.client, l.delegue, l.ref, l.produit, l.qte, l.ca, l.coutUnitaire, l.coutSource, l.cout, l.facture ? "oui" : "non", l.reassort ? "oui" : ""]);
-    [10, 11, 13].forEach(c => (r.getCell(c).numFmt = EUR));
-    if (l.ca === 0) r.getCell(10).font = { color: { argb: "FFB91C1C" } };
+    const r = wl.addRow([l.source, l.aussiDans, l.commande, l.date, l.client, l.delegue, l.ref, l.produit, l.typeProduit + (l.materiel ? " (matériel)" : ""), l.qte, l.ca, l.coutUnitaire, l.coutSource, l.cout, l.facture ? "oui" : "non", l.reassort ? "oui" : ""]);
+    [11, 12, 14].forEach(c => (r.getCell(c).numFmt = EUR));
+    if (l.ca === 0) r.getCell(11).font = { color: { argb: "FFB91C1C" } };
   }
   const n = lignes.length + 1;
-  const rs = wl.addRow(["TOTAL (lignes filtrées)", "", "", "", "", "", "", "", { formula: `SUBTOTAL(109,I2:I${n})` }, { formula: `SUBTOTAL(109,J2:J${n})` }, "", "", { formula: `SUBTOTAL(109,M2:M${n})` }]);
-  rs.font = { bold: true }; [10, 13].forEach(c => (rs.getCell(c).numFmt = EUR));
-  wl.autoFilter = { from: "A1", to: `O${n}` };
+  const rs = wl.addRow(["TOTAL (lignes filtrées)", "", "", "", "", "", "", "", "", { formula: `SUBTOTAL(109,J2:J${n})` }, { formula: `SUBTOTAL(109,K2:K${n})` }, "", "", { formula: `SUBTOTAL(109,N2:N${n})` }]);
+  rs.font = { bold: true }; [11, 14].forEach(c => (rs.getCell(c).numFmt = EUR));
+  wl.autoFilter = { from: "A1", to: `P${n}` };
   wl.views = [{ state: "frozen", ySplit: 1 }];
 
   const buf = await wb.xlsx.writeBuffer();

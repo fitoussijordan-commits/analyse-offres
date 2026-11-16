@@ -522,8 +522,20 @@ export default function CampagneScreen({ session, onToast, onTransferToCreer }: 
                 ? dontReassort(`${fmtEur(result.reassort!.ca)} (${String(result.caTotal > 0 ? Math.round((result.reassort!.ca / result.caTotal) * 1000) / 10 : 0).replace(".", ",")} %)`) : undefined)}
               {kpi("Unités vendues", fmtNum(result.produits.reduce((s, p) => s + p.qtyVendue, 0)), C.blue, result.reassort && result.reassort.nbCommandes > 0 ? dontReassort(fmtNum(result.reassort!.qty)) : undefined)}
               {kpi("Commandes", fmtNum(result.nbCommandes), C.purple, result.reassort && result.reassort.nbCommandes > 0 ? dontReassort(fmtNum(result.reassort!.nbCommandes)) : undefined)}
-              {result.margeTotal != null && kpi("Marge €", fmtEur(result.margeTotal), C.green)}
-              {result.margeTotal != null && kpi("Marge %", `${(Math.round((result.margePct || 0) * 1000) / 10).toFixed(1)} %`, C.green)}
+              {result.margeTotal != null && (() => {
+                // Deux résultats : marge produits (sans PLV & co) et marge après PLV & co.
+                const mat = result.materiel;
+                const pct = (v: number) => `${(Math.round(v * 1000) / 10).toFixed(1)} %`;
+                if (!mat || mat.cout <= 0) return (<>
+                  {kpi("Marge €", fmtEur(result.margeTotal), C.green)}
+                  {kpi("Marge %", pct(result.margePct || 0), C.green)}
+                </>);
+                const caProd = result.caTotal - mat.ca, mp = result.margeProduits ?? result.margeTotal;
+                return (<>
+                  {kpi("Marge produits", fmtEur(mp), C.green, <span title="Hors PLV, testeurs, panneaux… (type de produit Odoo)">{pct(caProd > 0 ? mp / caProd : 0)} · sans PLV &amp; co</span>)}
+                  {kpi("Marge après PLV & co", fmtEur(result.margeTotal), C.teal, <span title={`${fmtNum(mat.qty)} unités de PLV / testeurs envoyées`}>{pct(result.margePct || 0)} · dont {fmtEur(mat.cout)} de PLV &amp; co</span>)}
+                </>);
+              })()}
               {result.split && filter === "all" && kpi("CA validé", fmtEur(result.split.valide.ca), C.green)}
               {result.split && filter === "all" && kpi("CA à venir", fmtEur(result.split.avenir.ca), C.amber)}
             </div>

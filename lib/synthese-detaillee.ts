@@ -4,7 +4,7 @@
 
 import type ExcelJS from "exceljs";
 import { calcPalier, CalcPalier, TYPOLOGIES, DEFAULT_PCTS, DEFAULT_REMISES, REMISE_ADD_DEFAUT, calcGrandsComptes, GcEnseigneCalc, GcProduitInfo } from "@/lib/calc-offre";
-import type { PropPalier, GcEnseignePayload, PropProduit } from "@/lib/fill-proposition";
+import type { PropPalier, GcEnseignePayload, PropProduit, MaterielPayload } from "@/lib/fill-proposition";
 import { genereCA, remiseAddLigne } from "@/lib/type-produit";
 
 /** Pricing par article pour le calcul GC : la clé suit la même logique que fill-proposition
@@ -48,7 +48,7 @@ function toCalc(p: PropPalier): CalcPalier {
 }
 
 /** Écrit l'onglet "Synthèse détaillée" dans le classeur. */
-export function writeSyntheseDetailleeSheet(wb: ExcelJS.Workbook, paliers: PropPalier[], gcEnseignes?: GcEnseignePayload[]) {
+export function writeSyntheseDetailleeSheet(wb: ExcelJS.Workbook, paliers: PropPalier[], gcEnseignes?: GcEnseignePayload[], materiel?: MaterielPayload[]) {
   // Supprime un onglet existant du même nom (idempotent).
   const existant = wb.getWorksheet("Synthèse détaillée");
   if (existant) wb.removeWorksheet(existant.id);
@@ -104,6 +104,15 @@ export function writeSyntheseDetailleeSheet(wb: ExcelJS.Workbook, paliers: PropP
     if (gc.caTotal > 0) {
       writeTot("TOTAL Grands Comptes", "", gc.caTotal, gc.margeTotal, BLUE);
       writeTot("TOTAL GÉNÉRAL (RI + GC)", "", caRI + gc.caTotal, mgRI + gc.margeTotal, DARK);
+    }
+    // Matériel (PLV, testeurs…) : coût sans CA → marge « après matériel ».
+    const coutMat = (materiel || []).reduce((s, m) => s + (m.qty || 0) * (m.cout || 0), 0);
+    if (coutMat > 0) {
+      ws.getCell(row, 1).value = "Matériel (PLV, testeurs…) — coût";
+      ws.getCell(row, 2).value = (materiel || []).reduce((s, m) => s + (m.qty || 0), 0);
+      const c4 = ws.getCell(row, 4); c4.value = -coutMat; c4.numFmt = FMT_EUR;
+      row += 1;
+      writeTot("TOTAL APRÈS MATÉRIEL", "", caRI + gc.caTotal, mgRI + gc.margeTotal - coutMat, DARK);
     }
     row += 1;
 
@@ -165,14 +174,15 @@ export function writeSyntheseDetailleeSheet(wb: ExcelJS.Workbook, paliers: PropP
 }
 
 /** Onglet "Synthèse CA annuelle" : CA/marge/marge% par campagne + total sur l'année. */
-export function writeSyntheseAnnuelleSheet(wb: ExcelJS.Workbook, campagnes: { nom: string; paliers: PropPalier[] }[]) {
+export function writeSyntheseAnnuelleSheet(wb: ExcelJS.Workbook, campagnes: { nom: string; paliers: PropPalier[]; materiel?: MaterielPayload[] }[]) {
   const existant = wb.getWorksheet("Synthèse CA annuelle");
   if (existant) wb.removeWorksheet(existant.id);
   const ws = wb.addWorksheet("Synthèse CA annuelle", { views: [{ showGridLines: false }] });
-  ws.columns = [{ width: 34 }, { width: 12 }, { width: 16 }, { width: 16 }, { width: 12 }];
+  ws.columns = [{ width: 34 }, { width: 12 }, { width: 16 }, { width: 16 }, { width: 12 }, { width: 16 }, { width: 18 }, { width: 14 }];
 
   const titre = ws.getCell(1, 1); titre.value = "Synthèse CA annuelle — toutes campagnes"; titre.font = { bold: true, color: { argb: BLUE }, size: 14 };
-  const head = ["Campagne", "Nb offres", "CA", "Marge €", "Marge %"];
+  // Marge produits, puis coût du matériel (PLV, testeurs…) et marge après matériel.
+  const head = ["Campagne", "Nb offres", "CA", "Marge €", "Marge %", "Coût matériel", "Marge après matériel", "Marge % après"];
   head.forEach((h, i) => {
     const c = ws.getCell(3, i + 1); c.value = h;
     c.font = { bold: true, color: { argb: WHITE } };
@@ -180,7 +190,7 @@ export function writeSyntheseAnnuelleSheet(wb: ExcelJS.Workbook, campagnes: { no
     c.alignment = { horizontal: i === 0 ? "left" : "right" };
   });
 
-  let row = 4, caGrand = 0, mgGrand = 0, nbGrand = 0;
+  let row = 4, caGrand = 0, mgGrand = 0, nbGrand = 0, matGrand = 0;
   for (let ci = 0; ci < campagnes.length; ci++) {
     const camp = campagnes[ci];
     const calcs = (camp.paliers || []).map(toCalc);
@@ -192,7 +202,12 @@ export function writeSyntheseAnnuelleSheet(wb: ExcelJS.Workbook, campagnes: { no
     const cca = ws.getCell(row, 3); cca.value = ca; cca.numFmt = FMT_EUR;
     const cmg = ws.getCell(row, 4); cmg.value = mg; cmg.numFmt = FMT_EUR;
     const cmp = ws.getCell(row, 5); cmp.value = ca > 0 ? mg / ca : 0; cmp.numFmt = FMT_PCT;
-    if (ci % 2 === 1) for (let c = 1; c <= 5; c++) ws.getCell(row, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: SOFT } };
+    const mat = (camp.materiel || []).reduce((s, m) => s + (m.qty || 0) * (m.cout || 0), 0);
+    matGrand += mat;
+    const c6 = ws.getCell(row, 6); c6.value = mat; c6.numFmt = FMT_EUR;
+    const c7 = ws.getCell(row, 7); c7.value = mg - mat; c7.numFmt = FMT_EUR;
+    const c8 = ws.getCell(row, 8); c8.value = ca > 0 ? (mg - mat) / ca : 0; c8.numFmt = FMT_PCT;
+    if (ci % 2 === 1) for (let c = 1; c <= 8; c++) ws.getCell(row, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: SOFT } };
     row += 1;
   }
   // Total annuel
@@ -201,5 +216,8 @@ export function writeSyntheseAnnuelleSheet(wb: ExcelJS.Workbook, campagnes: { no
   const tca = ws.getCell(row, 3); tca.value = caGrand; tca.numFmt = FMT_EUR; tca.font = { bold: true, color: { argb: TEAL } };
   const tmg = ws.getCell(row, 4); tmg.value = mgGrand; tmg.numFmt = FMT_EUR; tmg.font = { bold: true, color: { argb: TEAL } };
   const tmp = ws.getCell(row, 5); tmp.value = caGrand > 0 ? mgGrand / caGrand : 0; tmp.numFmt = FMT_PCT; tmp.font = { bold: true, color: { argb: TEAL } };
+  const t6 = ws.getCell(row, 6); t6.value = matGrand; t6.numFmt = FMT_EUR; t6.font = { bold: true, color: { argb: TEAL } };
+  const t7 = ws.getCell(row, 7); t7.value = mgGrand - matGrand; t7.numFmt = FMT_EUR; t7.font = { bold: true, color: { argb: TEAL } };
+  const t8 = ws.getCell(row, 8); t8.value = caGrand > 0 ? (mgGrand - matGrand) / caGrand : 0; t8.numFmt = FMT_PCT; t8.font = { bold: true, color: { argb: TEAL } };
   return ws;
 }

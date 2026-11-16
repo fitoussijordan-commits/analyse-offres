@@ -10,7 +10,7 @@
 
 import type ExcelJS from "exceljs";
 import type { CampagneCreee } from "@/lib/create-campaign";
-import { qtyParPack, totalPacks, ventilationPalier, articlesPalier, qtyPalierOpca, qtyKeyLib } from "@/lib/create-campaign";
+import { qtyParPack, totalPacks, ventilationPalier, articlesPalier, qtyPalierOpca, qtyKeyLib, estPlv } from "@/lib/create-campaign";
 import { estOpca } from "@/lib/type-produit";
 
 export const MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
@@ -249,7 +249,7 @@ function ecrireTableauLogistique(ws: ExcelJS.Worksheet, log: SyntheseLogistique,
   // Notes de bas de tableau
   ws.addRow([]);
   const notes = [
-    "Profil de livraison : 40 % le mois précédant le début de l'offre, puis 60 % lissé à parts égales jusqu'à 1 mois avant la fin. Les mois s'étendent sur l'année suivante si une offre déborde. Composants de kits : 100 % à M-2 du début de campagne (assemblage avant lancement).",
+    "Profil de livraison : 40 % le mois précédant le début de l'offre, puis 60 % lissé à parts égales jusqu'à 1 mois avant la fin. Les mois s'étendent sur l'année suivante si une offre déborde. Composants de kits : 100 % à M-2 du début de campagne (assemblage avant lancement). Matériel : PLV à M-1, testeurs au rythme des offres.",
     "Prix d'achat = coût unitaire Odoo. Les kits ne sont pas valorisés (leurs composants le sont). Modifier un prix met à jour les achats et les totaux.",
   ];
   if (prixManquants) notes.push(`⚠ ${prixManquants} référence(s) sans prix d'achat (cases jaunes) : non comptées dans les achats. Complète le prix pour les inclure.`);
@@ -409,6 +409,20 @@ export function buildSyntheseLogistique(campagnes: CampagneCreee[]): SyntheseLog
     // (assemblage avant lancement), au prorata du nombre de kits de chaque offre.
     const kitParRef = new Map(camp.articles.filter(a => a.kit && a.ref.trim() && (a.composants || []).length).map(a => [a.ref.trim(), a]));
     for (const r of kitParRef.keys()) refsKit.add(r);
+    // Matériel : quantité totale saisie. PLV en une fois à M-1 ; testeurs & co au rythme des offres.
+    for (const m of camp.materiel || []) {
+      const ref = (m.ref || "").trim() || (m.name || "").trim();
+      if (!ref || !(m.qty > 0)) continue;
+      if ((m.cout || 0) > 0) prixComposants[ref] = m.cout!;
+      const rep = estPlv(m.typProd) ? new Map([[ad - 1, m.qty]]) : repartirAbsolu(m.qty, ad, af);
+      if (!accum[ref]) accum[ref] = { name: m.name || nameByRef[ref] || "", parMoisAbs: new Map() };
+      detailAbs.push({ ref, name: m.name || "", campagne: camp.nom || "(sans nom)", palier: `Matériel — ${m.typProd || "?"}`, parMoisAbs: rep });
+      for (const [mo, q] of rep) {
+        accum[ref].parMoisAbs.set(mo, (accum[ref].parMoisAbs.get(mo) || 0) + q);
+        if (mo < minAbs) minAbs = mo;
+        if (mo > maxAbs) maxAbs = mo;
+      }
+    }
     for (const b of besoinsParOffre(camp)) {
       const kit = kitParRef.get(b.ref);
       if (kit) {

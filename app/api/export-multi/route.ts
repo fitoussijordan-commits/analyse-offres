@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
       : { lignes: [], totalParMois: [], totalGeneral: 0, moisLabels: [] }, nameByRef, coutsAchatParRef(payload.mapping, campagnes.flatMap(c => c.paliers), payload.logistique?.prixComposants), typesParRef(payload.mapping, campagnes.flatMap(c => c.paliers)));
 
     // 2bis) Onglet Synthèse CA annuelle : CA/marge par campagne + total année.
-    writeSyntheseAnnuelleSheet(wb, campagnes.map(c => ({ nom: c.nom, paliers: c.paliers })));
+    writeSyntheseAnnuelleSheet(wb, campagnes.map(c => ({ nom: c.nom, paliers: c.paliers, materiel: c.materiel })));
 
     // 3) Supprimer les onglets du gabarit de base (Proposition modèle + Synthese).
     //    On GARDE l'onglet Mapping : les RECHERCHEV des feuilles campagnes en dépendent

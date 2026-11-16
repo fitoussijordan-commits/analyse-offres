@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
     fillPropositionWorkbook(wb, payload);
 
     // Onglet "Synthèse détaillée" (CA/marge par offre + par statut).
-    if (paliers.length) writeSyntheseDetailleeSheet(wb, paliers, payload.gcEnseignes);
+    if (paliers.length) writeSyntheseDetailleeSheet(wb, paliers, payload.gcEnseignes, payload.materiel);
 
     // Onglet "Synthèse logistique" (réf × mois). TOUJOURS réécrit : sinon un éventuel
     // contenu résiduel du gabarit ressortirait tel quel dans l'export (données d'une

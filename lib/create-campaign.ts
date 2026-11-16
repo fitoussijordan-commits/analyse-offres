@@ -97,6 +97,10 @@ export interface CampagneCreee {
   // Besoins NON B2B : canaux internes / directs (Maison Dr Hauschka, Eshop…), même structure
   // que les GC (remise + quantités par article). Colonnes ajoutées après le bloc GC dans l'Excel.
   canauxNonB2B?: GcEnseigne[];
+  // Matériel (PLV, testeurs, panneaux, stop-rayons…) : quantité TOTALE saisie à la main, sans
+  // lien avec le nombre d'offres. Pas de CA (gratuit), coût d'achat Odoo. Logistique : PLV à
+  // M-1 du début de campagne, testeurs au rythme des offres.
+  materiel?: MaterielCampagne[];
   createdAt?: string;
 }
 
@@ -457,10 +461,25 @@ export function ventilationPalier(articles: ArticleCampagne[], pal: PalierSaisi)
   return (pal.nbProduitsPack && pal.nbProduitsPack > 0) ? ventilerPack(articles, pal.nbProduitsPack, pal) : undefined;
 }
 
+export interface MaterielCampagne {
+  ref: string;
+  name?: string;
+  typProd: string;     // PLV, Testeur…
+  qty: number;         // quantité totale pour la campagne
+  cout?: number;       // coût d'achat unitaire (Odoo, relu ; modifiable)
+  manuel?: boolean;    // saisi hors catalogue Odoo
+}
+export const TYPES_MATERIEL = ["PLV", "Testeur", "Échantillon", "Autre"];
+/** PLV et assimilés (panneau, stop-rayon, display…) : livrés en une fois à M-1. */
+export const estPlv = (typ?: string) => /plv|panneau|stop|display|glorif|pr[ée]sentoir/i.test(typ || "");
+/** Coût total du matériel d'une campagne. */
+export const coutMateriel = (m?: MaterielCampagne[]) => (m || []).reduce((s, x) => s + (x.qty || 0) * (x.cout || 0), 0);
+
 export interface ExportPayload {
   nom: string;
   gcEnseignes?: GcEnseigne[]; // Grands Comptes : 6 enseignes (qté + remise par article)
   canauxNonB2B?: GcEnseigne[]; // Besoins non B2B (Maison Dr Hauschka, Eshop…)
+  materiel?: MaterielCampagne[]; // PLV, testeurs… (quantités totales, coût sans CA)
   paliers: Array<{
     code: string; label: string; qtyPacks: number; descriptif?: string;
     remiseStandard?: boolean; remiseStandardTaux?: number; remiseAddTaux?: number;
@@ -485,6 +504,7 @@ export function toExportPayload(camp: CampagneCreee): ExportPayload {
     // Non B2B « d'office » : même sans saisie, les colonnes Maison Dr Hauschka / Eshop
     // apparaissent dans l'Excel (comme les 6 GC fixes du template).
     canauxNonB2B: camp.canauxNonB2B ?? CANAUX_NONB2B_DEFAUT,
+    materiel: (camp.materiel || []).filter(m => (m.ref || m.name || "").trim() && m.qty > 0),
     paliers: camp.paliers.map(pal => {
       const vent = ventilationPalier(arts, pal);
       // Palier OPCA : composition = ligne OPCA (seuil) + gratuits, remises forcées à 0.
@@ -535,6 +555,7 @@ export async function rafraichirCouts(session: odoo.OdooSession, camps: Campagne
     if (a.ref.trim() && !a.manuel && a.typProd !== TYP_OPCA) refs.add(a.ref.trim());
     for (const k of a.composants || []) if (k.ref?.trim() && !k.manuel) refs.add(k.ref.trim());
   }
+  for (const c of camps) for (const m of c.materiel || []) if (m.ref?.trim() && !m.manuel) refs.add(m.ref.trim());
   if (!refs.size) return camps;
   let cout: Record<string, number> = {};
   try {
@@ -549,5 +570,6 @@ export async function rafraichirCouts(session: odoo.OdooSession, camps: Campagne
       const composants = a.composants?.map(k => !k.manuel && k.ref && cout[k.ref.trim()] != null ? { ...k, cout: cout[k.ref.trim()] } : k);
       return { ...a, ...maj, ...(composants ? { composants } : {}) };
     }),
+    ...(c.materiel ? { materiel: c.materiel.map(m => !m.manuel && m.ref && cout[m.ref.trim()] != null ? { ...m, cout: cout[m.ref.trim()] } : m) } : {}),
   }));
 }

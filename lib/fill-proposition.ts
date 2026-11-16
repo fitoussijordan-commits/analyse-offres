@@ -27,7 +27,8 @@ export interface PropPalier {
 // Ligne du Mapping (catalogue complet ou articles campagne).
 export interface MapRow { ref: string; name?: string; barcode?: string; standardPrice?: number; listPrice?: number; ppc?: number; }
 export interface GcEnseignePayload { nom: string; remise: number; qties: Record<string, number>; }
-export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; gcEnseignes?: GcEnseignePayload[]; canauxNonB2B?: GcEnseignePayload[]; }
+export interface MaterielPayload { ref: string; name?: string; typProd: string; qty: number; cout?: number; }
+export interface PropPayload { nom: string; paliers: PropPalier[]; mapping?: MapRow[]; gcEnseignes?: GcEnseignePayload[]; canauxNonB2B?: GcEnseignePayload[]; materiel?: MaterielPayload[]; }
 
 export const PROP_SHEET = "Proposition template";
 

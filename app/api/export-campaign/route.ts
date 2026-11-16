@@ -47,6 +47,7 @@ interface OffreAnalyse { offre: { code: string; label: string }; caTotal: number
 interface CatchallResult { codeInterne: string; data: { caTotal: number; qtyTotal: number; produits: ProduitCA[]; delegues: DelegueCA[]; debugOrders: DebugOrder[] } | null; }
 interface Payload {
   nom: string; caTotal: number; qtyTotal: number; nbCommandes: number; margeTotal?: number; margePct?: number;
+  materiel?: { cout: number; qty: number; ca: number }; margeProduits?: number;
   produits: ProduitCA[]; delegues: DelegueCA[]; categories: ClientStat[]; adherents: ClientStat[]; statuts?: ClientStat[];
   results: OffreAnalyse[]; catchalls: CatchallResult[];
   split?: { valide: { qty: number; ca: number }; avenir: { qty: number; ca: number } };
@@ -67,14 +68,25 @@ function buildRecap(wb: ExcelJS.Workbook, p: Payload) {
   let r = 4;
   const kpis: [string, number, boolean][] = [["CA total (sans doublons)", Math.round(p.caTotal), true], ["Unités vendues", Math.round((p.produits || []).reduce((s, x) => s + (x.qtyVendue || 0), 0)), false], ["Nb commandes", p.nbCommandes, false]];
   if (p.split) { kpis.push(["CA validé (facturé)", Math.round(p.split.valide.ca), true]); kpis.push(["CA à venir", Math.round(p.split.avenir.ca), true]); }
-  if (p.margeTotal != null) kpis.push(["Marge €", Math.round(p.margeTotal), true]);
+  // Marge produits (sans PLV & co) puis marge après PLV & co, si du matériel a été envoyé.
+  if (p.materiel && p.materiel.cout > 0 && p.margeProduits != null) {
+    kpis.push(["Marge produits (sans PLV & co)", Math.round(p.margeProduits), true]);
+    kpis.push(["Coût PLV, testeurs & co", Math.round(p.materiel.cout), true]);
+    kpis.push(["Marge après PLV & co", Math.round(p.margeTotal ?? 0), true]);
+  } else if (p.margeTotal != null) kpis.push(["Marge €", Math.round(p.margeTotal), true]);
   for (const [label, val, isEur] of kpis) {
     ws.getCell(r, 1).value = label; ws.getCell(r, 1).font = { bold: true, size: 11, color: { argb: "FF334155" } };
     const v = ws.getCell(r, 3); v.value = val; v.font = { bold: true, size: 12, color: { argb: "FF" + TEAL } }; if (isEur) eur(v); else v.numFmt = "#,##0";
     r++;
   }
+  if (p.materiel && p.materiel.cout > 0 && p.margeProduits != null) {
+    const caProd = p.caTotal - (p.materiel.ca || 0);
+    ws.getCell(r, 1).value = "Marge % produits (sans PLV & co)"; ws.getCell(r, 1).font = { bold: true, size: 11, color: { argb: "FF334155" } };
+    const v = ws.getCell(r, 3); v.value = caProd > 0 ? p.margeProduits / caProd : 0; v.numFmt = "0.0%"; v.font = { bold: true, size: 12, color: { argb: "FF" + TEAL } };
+    r++;
+  }
   if (p.margePct != null) {
-    ws.getCell(r, 1).value = "Marge %"; ws.getCell(r, 1).font = { bold: true, size: 11, color: { argb: "FF334155" } };
+    ws.getCell(r, 1).value = p.materiel && p.materiel.cout > 0 ? "Marge % après PLV & co" : "Marge %"; ws.getCell(r, 1).font = { bold: true, size: 11, color: { argb: "FF334155" } };
     const v = ws.getCell(r, 3); v.value = p.margePct; v.numFmt = "0.0%"; v.font = { bold: true, size: 12, color: { argb: "FF" + TEAL } };
     r++;
   }
