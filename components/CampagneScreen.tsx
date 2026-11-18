@@ -105,7 +105,7 @@ function OffrePanel({ onClose, onToast, onChanged, session }: { onClose: () => v
               <div ref={meaRef} style={{ position: "relative" }}>
                 <label style={labelStyle}>Charger depuis Odoo (modèle de devis)</label>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input value={meaQuery} onChange={e => { setMeaQuery(e.target.value); searchMea(e.target.value); }} placeholder="Rechercher une MEA par nom…" style={{ ...inputStyle, flex: 1 }} />
+                  <input value={meaQuery} onChange={e => { setMeaQuery(e.target.value); searchMea(e.target.value); }} placeholder="Rechercher une MEA par nom ou par code (ex. 7131459)…" style={{ ...inputStyle, flex: 1 }} />
                   {meaLoading && <span style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${C.blue}`, borderTopColor: "transparent", display: "inline-block", animation: "spin 0.7s linear infinite", flexShrink: 0 }} />}
                 </div>
                 {meaDropOpen && meaSuggestions.length > 0 && (

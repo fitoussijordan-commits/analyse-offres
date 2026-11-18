@@ -49,10 +49,28 @@ export async function searchMeaTemplates(session: OdooSession, query: string): P
   const words = norm(q).split(/\s+/).filter(Boolean);
   const surs = words.filter(w => /^[a-z0-9]+$/.test(w) && w.length >= 2);
   const domain: any[] = [["active", "in", [true, false]], ...surs.map(w => ["name", "ilike", w])];
-  const all = await searchRead(session, "sale.order.template", domain, ["id", "name", "active"], 300, "active desc, name", { active_test: false });
-  if (!all?.length) return [];
-  return (all as any[])
-    .filter(r => words.every(w => norm(r.name).includes(w)))
+  const ctx = { active_test: false };
+  const parNom = ((await searchRead(session, "sale.order.template", domain, ["id", "name", "active"], 300, "active desc, name", ctx)) || []) as any[];
+  // Recherche par CODE (ex. 7131459, code du pack ou d'un article) : modèles de devis dont une
+  // ligne ou un produit optionnel porte cet article, archivés compris.
+  let parCode: any[] = [];
+  if (/^[A-Za-z0-9._-]{3,}$/.test(q) && !/\s/.test(q)) {
+    const prods = ((await searchRead(session, "product.product", [["default_code", "=ilike", q], ["active", "in", [true, false]]], ["id"], 50, "", ctx)) || []) as any[];
+    const pids = prods.map(p => p.id);
+    if (pids.length) {
+      const ids = new Set<number>();
+      for (const modele of ["sale.order.template.line", "sale.order.template.option"]) {
+        try {
+          const ls = ((await searchRead(session, modele, [["product_id", "in", pids]], ["sale_order_template_id"], 0, "", ctx)) || []) as any[];
+          for (const l of ls) if (Array.isArray(l.sale_order_template_id)) ids.add(l.sale_order_template_id[0]);
+        } catch { /* modèle optionnel absent */ }
+      }
+      if (ids.size) parCode = ((await searchRead(session, "sale.order.template", [["id", "in", [...ids]], ["active", "in", [true, false]]], ["id", "name", "active"], 0, "active desc, name", ctx)) || []) as any[];
+    }
+  }
+  const vus = new Set<number>();
+  return [...parCode, ...parNom.filter(r => words.every(w => norm(r.name).includes(w)))]
+    .filter(r => !vus.has(r.id) && vus.add(r.id))
     .map(r => ({ id: r.id, name: r.name, active: r.active !== false }));
 }
 
