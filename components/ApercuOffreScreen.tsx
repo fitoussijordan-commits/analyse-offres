@@ -391,8 +391,11 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
           (PLV, testeurs… saisis en quantité totale, coût sans CA). */}
       {(() => {
         const mat = coutMateriel(camp?.materiel);
-        const ca = synthese.caTotal + gc.caTotal, marge = synthese.margeTotal + gc.margeTotal;
-        const apres = mat > 0 ? `après matériel : ${fmtEur(marge - mat)} · ${fmtPct(ca > 0 ? (marge - mat) / ca : 0)}` : undefined;
+        // Marge principale = APRÈS le bloc Matériel (PLV, testeurs… en quantité totale).
+        // Le matériel saisi DANS les paliers (qté par offre) est déjà déduit des marges de palier.
+        const ca = synthese.caTotal + gc.caTotal, margeAvant = synthese.margeTotal + gc.margeTotal;
+        const marge = margeAvant - mat;
+        const avant = mat > 0 ? `avant matériel : ${fmtEur(margeAvant)} · ${fmtPct(ca > 0 ? margeAvant / ca : 0)}` : undefined;
         const nbPlv = (camp?.materiel || []).filter(m => m.qty > 0 && estPlv(m.typProd)).reduce((x, m) => x + m.qty, 0);
         const nbAutre = (camp?.materiel || []).filter(m => m.qty > 0 && !estPlv(m.typProd)).reduce((x, m) => x + m.qty, 0);
         return (
@@ -402,14 +405,14 @@ export default function ApercuOffreScreen({ session, onToast, onGoAnalyse }: Pro
                 <Kpi label="CA Retail + Institut" value={fmtEur(synthese.caTotal)} color={C.teal} />
                 <Kpi label="CA Grands Comptes" value={fmtEur(gc.caTotal)} color={C.blue} />
                 <Kpi label="CA total (RI + GC)" value={fmtEur(ca)} color={C.blueDark} />
-                <Kpi label="Marge totale (RI + GC)" value={fmtEur(marge)} color={C.green} sous={apres} />
+                <Kpi label="Marge totale (RI + GC)" value={fmtEur(marge)} color={C.green} sous={avant} />
                 <Kpi label="Marge % globale" value={fmtPct(ca > 0 ? marge / ca : 0)} color={C.green} />
               </>
             ) : (
               <>
                 <Kpi label="CA total campagne" value={fmtEur(synthese.caTotal)} color={C.blue} />
-                <Kpi label="Marge totale" value={fmtEur(synthese.margeTotal)} color={C.teal} sous={apres} />
-                <Kpi label="Marge %" value={fmtPct(synthese.margePct)} color={C.green} />
+                <Kpi label="Marge totale" value={fmtEur(marge)} color={C.teal} sous={avant} />
+                <Kpi label="Marge %" value={fmtPct(ca > 0 ? marge / ca : 0)} color={C.green} />
                 <Kpi label="Nb offres (tous paliers)" value={fmtNum(synthese.nbPacks)} color={C.amber} />
               </>
             )}
