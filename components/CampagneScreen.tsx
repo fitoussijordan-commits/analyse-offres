@@ -62,9 +62,11 @@ function OffrePanel({ onClose, onToast, onChanged, session }: { onClose: () => v
     try {
       const lines = await odoo.getMeaTemplateLines(session, tpl.id);
       if (!lines.length) { onToast("Aucun produit trouvé dans ce modèle", "error"); return; }
-      setProduits(lines.map(l => l.productCode).join("\n"));
+      // Les produits sans référence interne ne peuvent pas être suivis : on les signale à part.
+      const sansRef = lines.filter(l => l.productCode.startsWith("(sans réf.)"));
+      setProduits(lines.filter(l => !l.productCode.startsWith("(sans réf.)")).map(l => l.productCode).join("\n"));
       if (!label) setLabel(tpl.name);
-      onToast(`${lines.length} produit(s) chargé(s) depuis "${tpl.name}"`, "success");
+      onToast(`${lines.length - sansRef.length} produit(s) chargé(s) depuis "${tpl.name}"${tpl.active ? "" : " (archivé)"}${sansRef.length ? ` — ${sansRef.length} sans référence ignoré(s) : ${sansRef.map(l => l.productName).join(", ")}` : ""}`, sansRef.length ? "info" : "success");
     } catch (e: any) { onToast("Erreur chargement MEA : " + e.message, "error"); }
     finally { setMeaLoading(false); }
   };

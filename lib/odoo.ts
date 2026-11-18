@@ -41,31 +41,45 @@ function norm(s: string): string {
 export async function searchMeaTemplates(session: OdooSession, query: string): Promise<MeaTemplate[]> {
   const q = query.trim();
   if (!q) return [];
-  // On cherche mot par mot pour contourner les problèmes de caractères spéciaux
-  const firstWord = q.split(/\s+/)[0];
-  const all = await searchRead(session, "sale.order.template", [["name", "ilike", firstWord]], ["id", "name", "active"], 50, "name", { active_test: false });
-  if (!all?.length) return [];
-  // Filtrage côté client sur tous les mots, insensible aux accents et à la casse
+  // Archivés inclus : filtre explicite sur active (le contexte active_test seul ne suffit pas
+  // toujours via l'API) + contexte. Recherche Odoo sur chaque mot SANS accent ni caractère
+  // spécial (« Noël » s'écrit parfois « Noel »), puis filtre côté client sur tous les mots.
+  // Avant : seul le 1er mot était envoyé, avec une limite de 50 résultats → avec « MEA … »,
+  // les modèles archivés (souvent plus anciens) étaient coupés.
   const words = norm(q).split(/\s+/).filter(Boolean);
+  const surs = words.filter(w => /^[a-z0-9]+$/.test(w) && w.length >= 2);
+  const domain: any[] = [["active", "in", [true, false]], ...surs.map(w => ["name", "ilike", w])];
+  const all = await searchRead(session, "sale.order.template", domain, ["id", "name", "active"], 300, "active desc, name", { active_test: false });
+  if (!all?.length) return [];
   return (all as any[])
     .filter(r => words.every(w => norm(r.name).includes(w)))
     .map(r => ({ id: r.id, name: r.name, active: r.active !== false }));
 }
 
-/** Récupère les lignes produits d'un modèle de devis */
+/** Tous les produits d'un modèle de devis (MEA) : lignes ET produits optionnels, produits
+ *  archivés compris (une MEA passée référence souvent des articles archivés depuis). */
 export async function getMeaTemplateLines(session: OdooSession, templateId: number): Promise<MeaTemplateLine[]> {
-  const lines = await searchRead(session, "sale.order.template.line", [["sale_order_template_id","=",templateId],["product_id","!=",false]], ["product_id","display_type"], 0);
-  const productLines = (lines||[]).filter((l:any) => !l.display_type && l.product_id);
-  if (!productLines.length) return [];
-  const productIds: number[] = [...new Set<number>(productLines.map((l:any) => l.product_id[0] as number))];
-  const prods = await searchRead(session, "product.product", [["id","in",productIds]], ["id","default_code","name"], 0);
-  const prodMap: Record<number,{code:string;name:string}> = {};
-  for (const p of (prods||[]) as any[]) if (p.default_code) prodMap[p.id] = { code: p.default_code, name: p.name };
+  const ctx = { active_test: false };
+  const lines = await searchRead(session, "sale.order.template.line", [["sale_order_template_id", "=", templateId]], ["product_id", "display_type"], 0, "sequence, id", ctx);
+  let options: any[] = [];
+  try {
+    options = await searchRead(session, "sale.order.template.option", [["sale_order_template_id", "=", templateId]], ["product_id"], 0, "id", ctx) || [];
+  } catch { /* modèle sans produits optionnels (module absent) */ }
+  const productIds: number[] = [...new Set<number>([...(lines || []), ...options]
+    .filter((l: any) => !l.display_type && Array.isArray(l.product_id))
+    .map((l: any) => l.product_id[0] as number))];
+  if (!productIds.length) return [];
+  const prods = await searchRead(session, "product.product", [["id", "in", productIds], ["active", "in", [true, false]]], ["id", "default_code", "name"], 0, "", ctx);
+  const prodMap: Record<number, { code: string; name: string }> = {};
+  for (const p of (prods || []) as any[]) prodMap[p.id] = { code: p.default_code || "", name: p.name };
   const seen = new Set<string>();
   const result: MeaTemplateLine[] = [];
-  for (const l of productLines) {
-    const entry = prodMap[(l as any).product_id[0]];
-    if (entry && !seen.has(entry.code)) { seen.add(entry.code); result.push({ productCode: entry.code, productName: entry.name }); }
+  for (const id of productIds) {
+    const e = prodMap[id];
+    if (!e) continue;
+    // Produit sans référence interne : signalé par son nom (à compléter dans Odoo).
+    const code = e.code || `(sans réf.) ${e.name}`;
+    if (!seen.has(code)) { seen.add(code); result.push({ productCode: code, productName: e.name }); }
   }
   return result;
 }
